@@ -2,15 +2,16 @@
 
 ## One-Line Thesis
 
-Aletheia is a professional AgentOps + Evidence Workspace for high-risk work. It
-is not a legal chatbot; it turns documents and bounded agent runs into
-evidence-linked, reviewed, gated, audited, and eval-ready deliverables.
+Aletheia is a local-first agent harness for sensitive professional document
+work: Codex for confidential matters. It is not a legal chatbot; it turns local
+source documents and bounded agent runs into typed, evidence-linked, reviewed,
+gated, audited, and eval-ready deliverables.
 
-## Why Professional AgentOps Matters
+## Why Sensitive-Work Agent Harnesses Matter
 
 Most agent demos optimize for impressive answers. Professional work optimizes
-for defensible decisions. In legal, compliance, audit, due diligence, and
-regulatory settings, a reviewer needs to know:
+for defensible decisions. In sensitive contract, diligence, compliance, audit,
+and regulatory settings, a reviewer needs to know:
 
 - what sources were used;
 - which claims are supported, contradicted, or unsupported;
@@ -22,6 +23,12 @@ regulatory settings, a reviewer needs to know:
 
 Aletheia treats those requirements as the product surface, not as metadata
 hidden behind chat.
+
+Aletheia should be read as a Kernel plus Domain Packs. The Kernel provides the
+local vault, bounded agent loop runtime, typed artifact graph, permission/tool
+policy, review/gate console, audit trace, eval replay, and human-approved
+skills. Domain Packs configure those mechanics for specific professional
+workflows.
 
 ## Why High-Risk Work Needs Evidence, Review, Gates, Audit, And Eval
 
@@ -43,6 +50,13 @@ The core loop is:
 
 ```text
 Evidence -> Issue/Risk -> Draft -> Review -> Gate -> Audit -> Eval
+```
+
+The Codex analogy is:
+
+```text
+Codex: repo -> agent edits code -> tests run -> diff opens -> human reviews -> merge
+Aletheia: local matter vault -> agent creates professional artifacts -> gates run -> review packet opens -> expert reviews -> final export
 ```
 
 ## Inspirations, Rebuilt For Professional Work
@@ -76,10 +90,10 @@ playbooks, reviewer feedback, playbook improvement proposals, and eval cases.
 
 ## What The Prototype Proves
 
-Aletheia demonstrates that agent products for professional domains should not
-center on a blank chat box. They should center on matter context, typed
-artifacts, evidence registries, run traces, review queues, gates, audit packs,
-and eval loops.
+Aletheia demonstrates that agent products for sensitive professional domains
+should not center on a blank chat box. They should center on local matter
+vaults, typed artifacts, evidence registries, run traces, review queues, gates,
+audit packs, and eval loops.
 
 The repository currently shows a local-first MVP/private pilot candidate, not a
 production legal advice system. That boundary is intentional: it proves product
@@ -96,8 +110,8 @@ The founder profile fits this problem because it combines:
 - professional domain insight, which reframes the product away from generic
   chat and toward reviewable deliverables;
 - product and engineering prototype ability, shown by a working local-first
-  AgentOps + Evidence Workspace with backend, frontend, audits, exports, and
-  eval artifacts.
+  local-first sensitive-work harness with backend, frontend, audits, exports,
+  and eval artifacts.
 
 For AGI core business training, the important signal is not that Aletheia
 automates legal work. The signal is that it understands how advanced agents must

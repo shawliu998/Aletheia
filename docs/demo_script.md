@@ -2,10 +2,10 @@
 
 ## Opening Position
 
-"Aletheia 明证 is not a legal chatbot. It is a professional AgentOps +
-Evidence Workspace for high-stakes work. The product turns documents and
-bounded agent runs into evidence-linked, reviewed, gated, audited, and
-eval-ready deliverables."
+"Aletheia 明证 is not a legal chatbot. It is a local-first agent harness for
+sensitive professional document work: Codex for confidential matters. It turns
+local source documents and bounded agent runs into typed, evidence-linked,
+reviewed, gated, audited, and eval-ready deliverables."
 
 Current stage: local-first MVP / private pilot candidate.
 
@@ -16,13 +16,14 @@ Current stage: local-first MVP / private pilot candidate.
      products, not a blank chat box."
 
 2. Create or open a Matter.
-   - "For the demo, I will use a Legal Matter Review matter. The same workspace
-     pattern also supports compliance impact review and deal due diligence."
+   - "For the demo, I will use the Private Contract / Due Diligence Review pack.
+     The same Kernel can support compliance obligation, audit evidence,
+     regulatory response, and litigation chronology packs."
 
 3. Upload or load sample documents.
    - "The workflow starts from a document registry: agreements, emails,
-     payment records, demand letters, policy documents, VDR files, or
-     regulatory materials."
+     payment records, demand letters, policy documents, VDR files, or other
+     confidential professional materials."
 
 4. Show the Matter Command Center.
    - "This is the command center: matter profile, documents, agent plan, run
@@ -45,7 +46,7 @@ Current stage: local-first MVP / private pilot candidate.
      Register. Issues are grouped by risk and linked back to evidence."
 
 7. Show Memo Agent draft.
-   - "The Memo Agent drafts a Red Flag Memo or legal review memo. The key point
+   - "The Memo Agent drafts a Red Flag Memo or contract review memo. The key point
      is that the memo is a structured work product with citations, not a
      one-shot answer."
 
@@ -63,7 +64,7 @@ Current stage: local-first MVP / private pilot candidate.
 
 10. Expert approves or edits.
     - "The expert can approve, edit, reject, or tag the work. Aletheia is built
-      for expert-in-the-loop review, not unsupervised legal advice."
+      for expert-in-the-loop review, not unsupervised professional advice."
 
 11. Generate Audit Pack.
     - "The Audit Pack packages matter profile, documents, evidence, work
@@ -87,8 +88,8 @@ Current stage: local-first MVP / private pilot candidate.
 ## V1 Private-Pilot Demo Caveats
 
 - This demo is local/private-pilot only; it is not production SaaS.
-- Aletheia supports expert review and auditability, not legal advice generation
-  or guaranteed legal correctness.
+- Aletheia supports expert review and auditability, not legal advice generation,
+  guaranteed legal correctness, or replacement of professional judgment.
 - Supabase V1 document/chunk/source listing and Supabase V1 runtime persistence
   are unavailable.
 - There is no public `persistV1RuntimeResult` route and no approval retry
@@ -136,9 +137,9 @@ first 60-90 seconds.
 
 ## 60-Second Reviewer Version
 
-"Aletheia is a local-first professional AgentOps + Evidence Workspace. It is
-not a chatbot. It demonstrates how agents can support legal, compliance, audit,
-due diligence, and regulatory work by making every deliverable evidence-bound,
+"Aletheia is a local-first agent harness for sensitive professional document
+work. It is not a chatbot. The first pack is Private Contract / Due Diligence
+Review, and the reusable Kernel makes every deliverable evidence-bound,
 human-reviewed, gate-controlled, audit-ready, and eval-driven.
 
 The demo path is simple: open a matter, load documents, inspect the Matter
@@ -151,7 +152,7 @@ For a reviewer-facing path through the repository, use
 
 ## Screenshot Checklist
 
-- Matter Queue with Legal Matter Review visible.
+- Matter Queue with Private Contract / Due Diligence Review visible.
 - Matter workspace with document registry and agent plan.
 - Matter-scoped adapter-backed Command Center.
 - Source Map or material checklist when source documents are loaded.

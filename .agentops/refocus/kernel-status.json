@@ -1,0 +1,33 @@
+{
+  "agent": "kernel-implementation",
+  "status": "done",
+  "last_cycle_summary": "Added a reusable local-first Aletheia Kernel facade over the existing V1 AgentOps contracts. The new kernel module names the core modules, exposes the default least-privilege tool policy, binds Private Contract / Due Diligence Review as a domain pack, fails final export closed unless gates and explicit export permission pass, blocks external model/tool capabilities by default, and keeps skill activation dependent on approved skill status plus approved playbook provenance.",
+  "files_changed": [
+    "frontend/src/aletheia/agentops/kernel.ts",
+    "frontend/src/aletheia/agentops/index.ts",
+    "frontend/tests/agentops/kernel.test.ts",
+    ".agentops/refocus/kernel-status.json"
+  ],
+  "kernel_modules_touched": [
+    "permission_tool_policy",
+    "review_gate_console",
+    "audit_trace",
+    "eval_replay",
+    "human_approved_skills",
+    "typed_artifact_graph"
+  ],
+  "tests_run": [
+    "cd frontend && ../backend/node_modules/.bin/tsx --test tests/agentops/kernel.test.ts tests/agentops/v1Runtime.test.ts tests/agentops/exportPackage.test.ts tests/agentops/skillsEval.test.ts",
+    "cd frontend && npx tsc --noEmit --pretty false",
+    "cd frontend && npm run lint",
+    "jq -e . .agentops/refocus/kernel-status.json",
+    "node .agentops/scripts/check-agentops.mjs",
+    "git diff --check"
+  ],
+  "blockers": [],
+  "next_actions": [
+    "Wire kernel export decisions into the Remote Matter final export UI/API boundary so the facade becomes the single final-export authorization path.",
+    "Add a small kernel architecture doc that points public docs from Kernel to Domain Packs without duplicating V1 implementation details.",
+    "Consider moving existing V1 runtime policy checks to consume evaluateKernelModelPolicy directly."
+  ]
+}

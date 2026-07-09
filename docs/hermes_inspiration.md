@@ -11,9 +11,9 @@ Hermes-style procedural memory maps to Aletheia `Matter Playbooks`.
 
 Examples:
 
-- Legal Matter Review Playbook
-- Compliance Impact Review Playbook
-- Deal Due Diligence Playbook
+- Private Contract / Due Diligence Review Playbook
+- Compliance Obligation Pack Playbook
+- Audit Evidence Pack Playbook
 - Citation Verification Playbook
 - Human Review Playbook
 
@@ -26,11 +26,12 @@ Matter memory is bounded to one matter. It can include:
 
 - confirmed facts;
 - preferred output format;
-- excluded legal or diligence paths;
+- excluded professional or diligence paths;
 - missing and supplemented materials;
 - reviewer corrections and prior edits.
 
-There should be no global legal memory that can contaminate unrelated matters.
+There should be no global professional memory that can contaminate unrelated
+matters.
 
 ### Tool Adapter
 

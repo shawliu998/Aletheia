@@ -8,8 +8,21 @@ reading the whole codebase.
 Start with `README.md`.
 
 Aletheia 明证 is not a legal chatbot. It is a local-first MVP/private pilot
-candidate for a professional Agent Workspace: an AgentOps + Evidence Workspace
-for expert-led legal, compliance, audit, due diligence, and regulatory work.
+candidate for a sensitive-work agent harness: Codex for confidential
+professional document work.
+
+The shortest mental model is:
+
+```text
+Codex: repo -> agent edits code -> tests run -> diff opens -> human reviews -> merge
+Aletheia: local matter vault -> agent creates professional artifacts -> gates run -> review packet opens -> expert reviews -> final export
+```
+
+Aletheia should be read as an Aletheia Kernel plus Domain Packs. The Kernel
+provides the local vault, bounded agent loop runtime, typed artifact graph,
+permission/tool policy, review/gate console, audit trace, eval replay, and
+human-approved skills. The first public/private-pilot pack is Private Contract /
+Due Diligence Review.
 
 The core loop is:
 
@@ -21,9 +34,9 @@ Evidence -> Issue/Risk -> Draft -> Review -> Gate -> Audit -> Eval
 
 Read `docs/deepseek_pitch.md`.
 
-The pitch explains why professional AgentOps matters, why high-risk work needs
+The pitch explains why sensitive professional work needs
 evidence/review/gates/audit/eval, and how Aletheia adapts ideas from Herdr,
-Tutti, and Hermes without becoming a generic autonomous agent console.
+Tutti, Hermes, and Codex without becoming a generic autonomous agent console.
 
 ## 3. Demo Path
 
@@ -43,14 +56,13 @@ http://localhost:3000/aletheia
 The intended path is:
 
 1. Open or create a Matter.
-2. Load sample or uploaded source documents.
+2. Load Private Contract / Due Diligence Review sample documents or uploaded
+   source documents.
 3. Inspect the matter workspace.
 4. Open the matter-scoped Command Center route when available:
    `/aletheia/matters/[matterId]/agentops`.
 5. Treat the generic `/aletheia/agentops` route as a fixture-backed prototype
    view, not persisted product truth.
-   The deterministic local demo matter may link there intentionally because its
-   source data is fixture-backed.
 6. Review source-linked evidence.
 7. Inspect the Issue Map and Red Flag Register.
 8. Review the draft memo.
@@ -94,12 +106,14 @@ The reviewer path should show:
 
 Read `docs/feature_map.md`.
 
-The map explains the four product modules:
+The map explains the Kernel and Domain Pack structure:
 
-- Aletheia Core: matter workspace, documents, evidence, work products.
-- Aletheia AgentOps: run traces, roles, budgets, tool calls, checkpoints.
-- Aletheia Trust Layer: source provenance, review, gates, audit, isolation.
-- Aletheia Eval Lab: feedback datasets, retrieval evals, badcase regression.
+- Aletheia Kernel: Local Vault, Agent Loop Runtime, Typed Artifact Graph,
+  Permission + Tool Policy, Review + Gate Console, Audit Trace, Eval Replay,
+  and Human-approved Skills.
+- Domain Packs: Private Contract / Due Diligence Review first, with compliance,
+  audit, regulatory response, and litigation chronology as adjacent pack
+  framing.
 
 ## 6. Current Status
 
@@ -107,23 +121,20 @@ Read `docs/status.md`.
 
 The important boundary is that Aletheia is a local-first MVP/private pilot
 candidate. It has meaningful local validation and demo depth, but it should not
-be presented as production-ready legal advice software.
+be presented as production-ready SaaS, legal advice software, or a replacement
+for expert judgment.
 
-As of the current coordination status, the Matter Command Center is complete
-for its view-layer goal. Persistence semantics remain the next boundary: gates,
-Big @ references, typed handoff provenance, eval snapshots, and export
-provenance still need backend/audit ownership before they can be described as
-first-class persisted records.
+The Matter Command Center should be described as a local/private-pilot reviewer
+surface unless the relevant persistence, gate, audit, and export boundaries are
+explicitly validated for a stronger claim.
 
 ## 7. Screenshot And Smoke Evidence
 
 For screenshot expectations and automated UI smoke checks, read
 `docs/ui_smoke.md`.
 
-Focused adapter-backed route smoke has covered the matter-scoped Command
-Center, but the full UI smoke suite is under recovery triage in the current
-`.agentops` status. Do not treat a focused route screenshot as a full release
-validation substitute.
+Focused adapter-backed route smoke can support a demo claim, but it should not
+be treated as a full release validation substitute.
 
 The screenshot set should show:
 

@@ -1,6 +1,6 @@
 # Workflow Templates
 
-## Legal Matter Review
+## Private Contract / Due Diligence Review
 
 Flow:
 
@@ -9,9 +9,9 @@ Matter Intake
 -> Chronology Builder
 -> Issue Spotting
 -> Evidence Matrix
--> Legal Authority Mapping
+-> Source Support Mapping
 -> Risk Analysis
--> Draft Legal Memo
+-> Draft Red Flag Memo
 -> Human Review
 -> Audit Log
 ```
@@ -23,14 +23,16 @@ Outputs:
 - Issue Map;
 - Evidence Matrix;
 - Missing Materials List;
-- Draft Legal Memo;
+- Draft Red Flag Memo;
 - Review Log;
 - Audit Pack JSON;
 - Feedback Eval Dataset JSON.
 
-Risk posture: do not state final legal conclusions. Present risk, evidence strength, assumptions, and missing facts.
+Risk posture: do not state final legal conclusions or autonomous professional
+advice. Present risk, evidence strength, assumptions, and missing facts for
+expert review.
 
-## Compliance Impact Review
+## Compliance Obligation Pack
 
 Flow:
 
@@ -56,30 +58,30 @@ Outputs:
 - Compliance Impact Memo;
 - Audit Pack JSON.
 
-## Deal Due Diligence Memo
+## Audit Evidence Pack
 
 Flow:
 
 ```text
-Deal Intake
--> VDR Indexing
--> Red Flag Screening
--> Contract Matrix
+Evidence Intake
+-> Workpaper Indexing
+-> Control Evidence Screening
+-> Evidence Matrix
 -> Evidence Mapping
 -> Risk Materiality
--> Draft DD Memo
+-> Draft Readiness Memo
 -> Human Review
 -> Audit Log
 ```
 
 Outputs:
 
-- Deal Profile;
-- VDR Index;
-- Red Flag Dashboard;
-- Contract Matrix;
+- Audit Profile;
+- Workpaper Index;
+- Evidence Readiness Dashboard;
+- Control Evidence Matrix;
 - Evidence Panel;
-- Diligence Question List;
-- Draft DD Memo;
+- Open Question List;
+- Draft Readiness Memo;
 - Audit Pack JSON;
 - Feedback Eval Dataset JSON.

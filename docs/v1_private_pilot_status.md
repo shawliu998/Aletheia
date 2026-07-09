@@ -4,9 +4,9 @@ Current stage: **V1 local/private-pilot candidate completed; production/SaaS
 not claimed.**
 
 Aletheia V1 is complete for bounded local reviewer evaluation. The validated
-path shows a local-first professional AgentOps + Evidence Workspace for
-high-risk legal, compliance, audit, due diligence, and regulatory workflows.
-It is not legal advice software, not production SaaS, and not a replacement for
+path shows a local-first sensitive-work agent harness with the first
+public/private-pilot Domain Pack: Private Contract / Due Diligence Review. It
+is not legal advice software, not production SaaS, and not a replacement for
 qualified professional judgment.
 
 ## What Is Validated
@@ -70,4 +70,3 @@ Start with:
 - `docs/v1_acceptance_matrix.md`
 - `docs/demo_script.md`
 - `docs/release_notes_local_first_mvp.md`
-

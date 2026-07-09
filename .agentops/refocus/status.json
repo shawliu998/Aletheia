@@ -1,0 +1,52 @@
+{
+  "agent": "refocus-supervisor",
+  "status": "done",
+  "last_cycle_summary": "Heartbeat follow-up completed a secondary public-doc wording sweep. Updated remaining old first-pack labels in Hermes notes, workflow templates, local-first runtime, and product status; added docs/public_wording_checklist.md as a guardrail. Changes remain documentation-only and do not remove implemented features.",
+  "files_changed": [
+    ".agentops/refocus/PRODUCT_KERNEL.md",
+    ".agentops/refocus/ARCHITECTURE_DECISION.md",
+    ".agentops/refocus/FOCUS_CLEANUP_PLAN.md",
+    ".agentops/refocus/status.json",
+    ".agentops/v1/V1_PRODUCT_SPEC.md",
+    "README.md",
+    "docs/product_thesis.md",
+    "docs/feature_map.md",
+    "docs/reviewer_walkthrough.md",
+    "docs/demo_script.md",
+    "docs/architecture.md",
+    "docs/deepseek_pitch.md",
+    "docs/v1_private_pilot_status.md",
+    "docs/product_kernel.md",
+    "docs/domain_packs/private_contract_due_diligence_review.md",
+    "docs/hermes_inspiration.md",
+    "docs/workflow_templates.md",
+    "docs/local_first_runtime.md",
+    "docs/status.md",
+    "docs/public_wording_checklist.md"
+  ],
+  "positioning_changes": [
+    "Defined one-line positioning: Aletheia is a local-first agent harness for sensitive professional document work.",
+    "Reframed legal as founder/domain insight and the first domain pack rather than the whole product category.",
+    "Defined Aletheia Kernel as Local Vault, Agent Loop Runtime, Typed Artifact Graph, Permission + Tool Policy, Review + Gate Console, Audit Trace, Eval Replay, and Human-approved Skills.",
+    "Defined Domain Packs for Contract / Due Diligence Review, Compliance Obligation, Audit Evidence, Regulatory Response, and Litigation Chronology.",
+    "Made Private Contract / Due Diligence Review the first public/private-pilot domain pack.",
+    "Added Codex and Hermes analogies while preserving expert review, gates, audit, eval, and local-first boundaries.",
+    "Flagged internal development wording that should be removed from public-facing docs.",
+    "Updated public docs to lead with the local-first sensitive-work harness and Codex analogy.",
+    "Added public Kernel and first domain-pack docs.",
+    "Added a public wording checklist for future README, demo, pitch, and reviewer-facing doc changes.",
+    "Replaced remaining old first-pack labels in selected secondary public docs."
+  ],
+  "risks": [
+    "Secondary docs may still need opportunistic cleanup if they are promoted into public reviewer paths later.",
+    "Some docs still list legal, compliance, audit, due diligence, and regulatory workflows as examples; they should remain Domain Packs rather than the top-level category.",
+    "Internal .agentops files contain cycle, heartbeat, owner-thread, and worktree coordination language that should not leak into public docs.",
+    "The repository remains a local/private-pilot candidate; stronger production SaaS or compliance readiness claims would require additional implementation, security review, operations, and validation evidence."
+  ],
+  "next_actions": [
+    "Use docs/public_wording_checklist.md before future README, pitch, demo, or reviewer-facing doc edits.",
+    "Create docs/local_first_boundary.md, docs/review_gate_audit_eval_loop.md, docs/public_demo_path.md, and docs/non_goals.md if a more complete public documentation set is needed.",
+    "Keep implemented legal, compliance, audit, regulatory, eval, gates, and skills features, but regroup them under Kernel capabilities and Domain Packs.",
+    "Before any public demo or investor readme pass, remove or isolate internal wording such as this thread, heartbeat, supervisor cycle, owner thread, and dirty worktree."
+  ]
+}

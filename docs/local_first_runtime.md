@@ -67,8 +67,9 @@ structured artifacts.
   `evidence_matrix_generated` audit event.
 - Evidence matrices can be compiled into deterministic template-specific work
   products with structured review sections and source evidence IDs:
-  `draft_memo` for Legal Matter Review, `compliance_register` for Compliance
-  Impact Review, and `red_flag_memo` for Deal Due Diligence.
+  `draft_memo` for Private Contract / Due Diligence Review,
+  `compliance_register` for the Compliance Obligation Pack, and
+  `red_flag_memo` for contract/diligence review.
 - Agent runs now create a deterministic trace scaffold with workflow steps,
   least-privilege tool calls, an open human checkpoint, and `needs_human`
   status before final reliance.

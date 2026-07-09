@@ -1,18 +1,20 @@
 # Architecture
 
-Aletheia 明证 is an incremental workspace layer on top of the existing document, model, storage, and auth foundations.
+Aletheia 明证 is a local-first agent harness for sensitive professional
+document work. Architecturally, it is an Aletheia Kernel on top of existing
+document, model, storage, and auth foundations, with Domain Packs configured
+above the Kernel.
 
 ```text
 +--------------------------------------------------------------+
-| Aletheia Workspace Layer                                    |
-| Matter profile | Templates | Work products | Review states   |
+| Domain Packs                                                |
+| Contract diligence | Compliance | Audit | Regulatory         |
 +-----------------------------+--------------------------------+
-| Agent Workflow Layer        | Trust & Governance Layer        |
-| plan -> issues -> evidence  | audit log -> review -> eval     |
-| -> memo -> feedback         | attribution -> retention        |
+| Aletheia Kernel                                             |
+| Local Vault | Agent Loop | Typed Artifacts | Review Gates     |
 +-----------------------------+--------------------------------+
-| Knowledge & Document Layer                                   |
-| project documents | versions | parsed text | citations        |
+| Kernel Internals                                             |
+| documents | indexes | permissions | audit | eval | skills     |
 +--------------------------------------------------------------+
 | Base Application Layer                                       |
 | auth | projects | storage | LLM providers | API routes       |
@@ -25,18 +27,31 @@ Aletheia 明证 is an incremental workspace layer on top of the existing documen
 
 Provides authentication, project containers, document storage, model provider adapters, and existing API structure.
 
-### Aletheia Workspace Layer
+### Aletheia Kernel
 
-Adds matter-oriented surfaces:
+Adds the reusable local-first harness:
 
-- Matter Queue;
-- Template Registry;
-- Evidence Registry;
-- Human Review Queue;
-- Audit Timeline;
-- Matter-level workspace with Agent Plan, Issue Map, Evidence Matrix, Draft Memo, Review, and Feedback Summary.
+- Local Vault;
+- Agent Loop Runtime;
+- Typed Artifact Graph;
+- Permission + Tool Policy;
+- Review + Gate Console;
+- Audit Trace;
+- Eval Replay;
+- Human-approved Skills.
 
-### Agent Workflow Layer
+The Matter Queue, Template Registry, Evidence Registry, Human Review Queue,
+Audit Timeline, and matter-level workspace are current UI surfaces for the
+Kernel.
+
+### Domain Packs
+
+Domain Packs configure the Kernel for specific workflows. The first
+public/private-pilot pack is Private Contract / Due Diligence Review. Adjacent
+pack framing includes Compliance Obligation, Audit Evidence, Regulatory
+Response, and Litigation Chronology.
+
+### Agent Loop Runtime
 
 MVP functions are deterministic:
 
@@ -133,7 +148,7 @@ SQLite persistence, filesystem document storage, parsed source chunks, FTS5
 search, matter-scoped memory, draft/approved playbooks, agent run traces, and
 approval-gated high-risk exports.
 
-### Trust & Governance Layer
+### Review, Gates, Audit, Eval, And Skills
 
 Every meaningful event should become an audit event:
 
@@ -177,4 +192,4 @@ approval gates.
 
 `aletheia_matter_memory_items` and `aletheia_playbooks` capture matter-scoped
 procedural and factual context. They are deliberately attached to a matter so
-legal, compliance, and diligence context does not leak across unrelated work.
+sensitive professional context does not leak across unrelated work.

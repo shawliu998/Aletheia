@@ -2,22 +2,37 @@
 
 Current stage: **local-first MVP / private pilot candidate**. This repository
 shows a professional prototype and validation posture; it should not be
-overclaimed as production-ready legal advice software.
+overclaimed as production-ready SaaS, legal advice software, or a replacement
+for expert judgment.
 
-## Aletheia Core
+## Product Shape
 
-Purpose: matter-centered professional workspace.
+Aletheia is a local-first agent harness for sensitive professional document
+work. Read the system as an Aletheia Kernel plus Domain Packs.
+
+## Aletheia Kernel
+
+Purpose: reusable local-first harness for bounded professional agent loops.
 
 Key surfaces:
 
-- Matter Queue and matter profile.
-- Document Registry for uploaded or sample source documents.
-- Matter Command Center for plan, documents, evidence, issues, work products,
-  review, gates, audit, and feedback.
-- Workflow templates for Legal Matter Review, Compliance Impact Review, and
-  Deal Due Diligence Memo.
-- Local-first repository path with SQLite, filesystem documents, local exports,
-  deterministic fallback data, and private pilot defaults.
+- Local Vault: Matter Queue, matter profile, Document Registry, SQLite,
+  filesystem documents, local exports, deterministic fallback data, and private
+  pilot defaults.
+- Agent Loop Runtime: bounded run traces with steps, specialist role labels,
+  budgets, tool calls, workflow graph metadata, and human checkpoints.
+- Typed Artifact Graph: plans, evidence, issues, registers, memos, snapshots,
+  audit packs, feedback exports, and final exports.
+- Permission + Tool Policy: narrow Tool Adapter and least-privilege policy for
+  approved external-agent access.
+- Review + Gate Console: human review tags, unsupported-claim flags, approval
+  checkpoints, and fail-closed high-risk export gates.
+- Audit Trace: Audit Workbench, reviewable events, registry snapshots, JSON
+  exports, source provenance, and matter isolation.
+- Eval Replay: feedback datasets, retrieval evals, completion/source-provenance
+  audits, badcase regression, and playbook improvement proposals.
+- Human-approved Skills: matter-scoped memory, approved playbooks, candidate
+  skill proposals, and no autonomous playbook mutation.
 
 Representative artifacts:
 
@@ -33,70 +48,29 @@ Representative artifacts:
 Status: MVP path exists for local demos and private pilot evaluation. Supabase
 document upload/search remains a documented boundary.
 
-## Aletheia AgentOps
+## Domain Packs
 
-Purpose: make professional agent runs inspectable.
+Purpose: configure the Kernel for specific sensitive-work workflows.
 
-Key surfaces:
+- Private Contract / Due Diligence Review Pack: first public/private-pilot pack
+  with source-linked contracts, issue maps, evidence matrices, red flag memos,
+  diligence questions, review packets, gates, audit packs, and eval cases.
+- Compliance Obligation Pack: obligation/control evidence, Compliance Register,
+  human review, gate checks, and audit trail.
+- Audit Evidence Pack: workpaper/control evidence review, source support checks,
+  readiness packets, and audit exports.
+- Regulatory Response Pack: response chronology, source support, review tags,
+  approval gates, and export packet.
+- Litigation Chronology Pack: event chronology, document anchors, open issues,
+  review notes, and audit trail.
 
-- Agent run traces with steps, specialist role labels, budgets, tool calls, and
-  human checkpoints.
-- Workflow Graph metadata for run progression.
-- Agent Command Center concept connected to matters, evidence, gates, and audit
-  events.
-- Narrow Tool Adapter for approved external-agent access.
-
-Agent roles demonstrated or implied:
-
-- Evidence Agent: maps source chunks into evidence items.
-- Issue/Risk Agent: creates Issue Map and Red Flag Register.
-- Memo Agent: drafts structured professional work products.
-- Review Agent: identifies unsupported claims, missing facts, contradictions,
-  and overclaims.
-- Gate Engine: blocks high-risk exports until required checks pass.
-
-Status: runtime skeleton, run trace UI, Tool Adapter policy, and audits exist.
-The next safe direction is adapter-driven UI integration rather than a second
-persisted AgentOps model.
-
-## Aletheia Trust Layer
-
-Purpose: enforce professional boundaries for high-risk work.
-
-Key capabilities:
-
-- Source-linked evidence with document IDs, source chunk IDs, quotes, offsets,
-  support status, and provenance.
-- Human review tags for unsupported claims, missing facts, overclaims, accepted
-  analysis, and related review states.
-- Approval gates for high-risk exports.
-- Matter isolation for retrieval, memory, playbooks, and local indexes.
-- Audit Workbench with reviewable events, registry snapshots, and JSON exports.
-- Least-privilege Tool Adapter policy that avoids browser, terminal, email,
-  broad web, and destructive operations by default.
-
-Status: local-first trust checks and audit scripts exist. Production deployment
-would still require deeper security, compliance, and operational review.
-
-## Aletheia Eval Lab
-
-Purpose: turn expert review into measurable improvement.
-
-Key capabilities:
-
-- Feedback Eval Dataset export from review tags and work-product targets.
-- Retrieval eval for keyword, optional semantic, and hybrid retrieval behavior.
-- Completion and source-provenance audits for regression protection.
-- Playbook Improvement Proposals generated from review feedback without
-  mutating approved playbooks automatically.
-
-Status: eval-oriented exports and validation scripts exist for the local MVP.
-Future work should deepen benchmark coverage, adversarial cases, and
-domain-specific evaluation sets.
+Status: the local MVP path exists for demos and private pilot evaluation. The
+first pack should lead public storytelling. Supabase document upload/search and
+production deployment remain documented boundaries.
 
 ## Reviewer Takeaway
 
-Aletheia demonstrates a product thesis for professional agents:
+Aletheia demonstrates a product thesis for sensitive professional agents:
 
 ```text
 Documents + Agent Runs

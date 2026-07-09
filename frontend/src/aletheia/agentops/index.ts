@@ -6,6 +6,7 @@ export * from "./adapters";
 export * from "./exportPackage";
 export * from "./fixtures";
 export * from "./gateProvenance";
+export * from "./kernel";
 export * from "./matterMemory";
 export * from "./references";
 export * from "./v1Contracts";

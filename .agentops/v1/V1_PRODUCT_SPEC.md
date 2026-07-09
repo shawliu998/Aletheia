@@ -4,7 +4,7 @@ Updated: 2026-07-09
 
 ## Positioning
 
-Aletheia V1 is a local-first professional AgentOps + Evidence Workspace for high-stakes legal, compliance, audit, due diligence, and regulatory review.
+Aletheia V1 is a local-first agent harness for sensitive professional document work, with Private Contract / Due Diligence Review as the first public/private-pilot Domain Pack.
 
 It is not a legal chatbot and does not replace expert judgment. It helps professionals create evidence-bound, human-reviewed, gate-controlled, audit-ready, and eval-driven work products.
 
@@ -20,7 +20,7 @@ V1 must make that loop private-pilot usable with real documents, controlled mode
 
 ## Primary Use Case
 
-Private Due Diligence / Contract Red Flag Review Workspace:
+Private Contract / Due Diligence Review Workspace:
 
 1. Create a matter.
 2. Import 20-100 documents.
@@ -34,9 +34,9 @@ Private Due Diligence / Contract Red Flag Review Workspace:
 
 ## Personas
 
-- Legal reviewer handling contract review or due diligence.
-- Compliance reviewer handling regulatory or policy evidence.
-- Audit reviewer checking workpapers and control evidence.
+- Legal reviewer handling the first contract/diligence domain pack.
+- Compliance reviewer handling a future or secondary obligation pack.
+- Audit reviewer checking a future or secondary evidence pack.
 - Pilot admin operating a private local or single-tenant deployment.
 
 ## Module Map

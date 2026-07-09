@@ -1,12 +1,14 @@
 # Product Thesis
 
-Aletheia 明证 is built for high-stakes professional work where the cost of an unsupported answer is high.
+Aletheia 明证 is built for sensitive professional document work where the cost
+of an unsupported answer is high.
 
 The core product belief is simple: the agent should not hide behind a final answer. It should expose the plan, assumptions, source evidence, missing materials, review status, and audit trail that allow an expert to trust or reject the output.
 
 ## Why Not A Chatbot
 
-Chat is useful for exploration, but legal, compliance, and diligence work usually ends in structured work products:
+Chat is useful for exploration, but sensitive professional work usually ends in
+structured work products:
 
 - memos;
 - issue maps;
@@ -18,6 +20,12 @@ Chat is useful for exploration, but legal, compliance, and diligence work usuall
 
 Aletheia 明证 makes those artifacts the primary product surface. Chat can remain a supporting interface, but it is not the workflow.
 
+The product shape is Kernel plus Domain Packs. The Aletheia Kernel provides the
+local vault, bounded agent loop runtime, typed artifact graph, permission/tool
+policy, review/gate console, audit trace, eval replay, and human-approved
+skills. Domain Packs configure that Kernel for specific workflows. The first
+public/private-pilot pack is Private Contract / Due Diligence Review.
+
 The MVP exports this posture into two concrete artifacts:
 
 - Audit Pack JSON: one portable bundle for matter profile, documents, workflow artifacts, review log, audit log, and validation checks.
@@ -26,7 +34,7 @@ The MVP exports this posture into two concrete artifacts:
 ## Shared Workflow
 
 ```text
-Matter Workspace
+Local Matter Vault
 -> Document Upload / Document Registry
 -> Agent Plan
 -> Document Understanding
@@ -34,11 +42,14 @@ Matter Workspace
 -> Domain Analysis
 -> Draft Work Product
 -> Human Review
+-> Gate Decision
 -> Audit Log
 -> Feedback / Eval Export
 ```
 
-The same base workflow supports legal matter review, compliance impact assessment, and deal due diligence.
+The same Kernel can support compliance obligation, audit evidence, regulatory
+response, and litigation chronology packs without making the product a generic
+multi-industry SaaS.
 
 ## AGI Product Relevance
 

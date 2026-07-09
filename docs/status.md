@@ -127,7 +127,8 @@ checks, package preflight, frontend lint/build, and Playwright UI smoke.
 
 ## Completed Capabilities
 
-The product can demonstrate a full Legal Matter Review flow in local mode:
+The product can demonstrate the first Private Contract / Due Diligence Review
+pack in local mode:
 matter creation, document upload and parsing, SQLite FTS5 search, evidence
 mapping with deterministic claim/issue suggestions and audit-facing retrieval
 rank diagnostics, issue map generation with a reviewable Issue Map UI and echoed

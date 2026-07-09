@@ -1,14 +1,22 @@
 # Aletheia 明证
 
 **Aletheia 明证 is not a legal chatbot.** It is a local-first MVP and private
-pilot candidate for a high-stakes professional Agent Workspace: an AgentOps +
-Evidence Workspace for expert-led work.
+pilot candidate for a sensitive-work agent harness: a local vault plus bounded
+agent loops for expert-led professional document work.
 
-Aletheia turns documents and bounded agent runs into evidence-linked,
-reviewed, gated, audited, and eval-ready deliverables. The product is designed
-for legal, compliance, audit, due diligence, and regulatory workflows where a
-final answer is not enough: reviewers need citations, unsupported-claim flags,
-human approvals, gate decisions, audit packs, and feedback loops.
+Aletheia turns confidential source documents and bounded agent runs into typed,
+evidence-linked, reviewed, gated, audited, and eval-ready deliverables. The
+first public/private-pilot domain pack is **Private Contract / Due Diligence
+Review**. Compliance, audit, regulatory response, and litigation chronology are
+better described as Domain Packs on the same Kernel, not as separate product
+categories.
+
+Core analogy:
+
+```text
+Codex: repo -> agent edits code -> tests run -> diff opens -> human reviews -> merge
+Aletheia: local matter vault -> agent creates professional artifacts -> gates run -> diff/review packet opens -> expert reviews -> final export
+```
 
 The core product loop is:
 
@@ -18,8 +26,8 @@ Evidence -> Issue/Risk -> Draft -> Review -> Gate -> Audit -> Eval
 
 The repository demonstrates a professional agent-system pattern inspired by
 Herdr-style multi-agent observability, Tutti-style shared context and handoff,
-and Hermes-style skills/memory loops, rebuilt around evidence, expert control,
-local-first operation, audit readiness, and eval-driven improvement.
+and Hermes-style skills/memory loops, rebuilt around local-first operation,
+evidence binding, expert control, audit readiness, and eval-driven improvement.
 
 Current stage: **V1 local/private-pilot candidate completed; production/SaaS
 not claimed.** Aletheia is not positioned as production SaaS, legal advice
@@ -70,53 +78,80 @@ Unavailable or partial V1 scope:
 - High-risk exports are blocked until citation and human approval gates pass.
 - Expert review feedback becomes structured eval material instead of getting
   lost in comments.
-- The demo generalizes beyond legal review into compliance impact assessment,
-  audit review, deal due diligence, and regulatory workflows.
+- The Kernel generalizes beyond the first contract/diligence pack into
+  compliance obligation, audit evidence, regulatory response, and litigation
+  chronology packs without weakening expert review.
 
 ## Demo Flow
 
 1. Open `/aletheia`.
 2. Open or create a Matter from the Matter Queue.
-3. Load the sample Legal Matter Review documents or create a local matter with
-   uploaded source files.
+3. Load the sample Private Contract / Due Diligence Review documents or create a
+   local matter with uploaded source files.
 4. Show the Matter Command Center: document registry, agent plan, run trace,
    issue map, evidence matrix, work products, review queue, gate state, and
    audit log.
 5. Use the Evidence Agent flow to map source chunks into evidence items.
 6. Use the Issue/Risk flow to generate the Issue Map and Red Flag Register.
-7. Use the Memo flow to draft a Red Flag Memo or legal review memo.
+7. Use the Memo flow to draft a Red Flag Memo or contract review memo.
 8. Show the Review Agent flagging unsupported or weakly supported claims.
 9. Show the Gate Engine blocking final export until citation and human approval
    gates pass.
 10. Approve or edit as the expert reviewer.
 11. Export the Audit Pack JSON and Feedback Eval Dataset from the workspace.
-12. Open the Compliance Impact Review and Deal Due Diligence templates for
-    adjacent workflow previews.
+12. Open the Compliance Obligation and Audit Evidence pack previews as adjacent
+    workflows on the same Kernel.
 
-See `docs/v1_private_pilot_status.md`, `docs/v1_acceptance_matrix.md`,
+See `docs/product_kernel.md`,
+`docs/domain_packs/private_contract_due_diligence_review.md`,
+`docs/v1_private_pilot_status.md`, `docs/v1_acceptance_matrix.md`,
 `docs/reviewer_walkthrough.md`, `docs/demo_script.md`, `docs/feature_map.md`,
 and `docs/deepseek_pitch.md` for reviewer-facing walkthrough and positioning
 material.
 
-## Workflow Templates
+## Aletheia Kernel And Domain Packs
 
-- Legal Matter Review: full MVP demo with matter intake, chronology, issue map, evidence matrix, draft memo, human review, audit trail, and feedback summary.
-- Compliance Impact Review: local source-linked workflow with obligation/control evidence, issue map, evidence matrix, Compliance Register, human review, and audit trail.
-- Deal Due Diligence Memo: local source-linked workflow with VDR evidence, issue map, evidence matrix, Red Flag Memo, diligence questions, human review, and audit trail.
+Aletheia should be read as a Kernel plus Domain Packs.
+
+Kernel capabilities:
+
+- Local Vault;
+- Agent Loop Runtime;
+- Typed Artifact Graph;
+- Permission + Tool Policy;
+- Review + Gate Console;
+- Audit Trace;
+- Eval Replay;
+- Human-approved Skills.
+
+Domain Packs configure the Kernel for specific sensitive professional
+workflows:
+
+- Private Contract / Due Diligence Review: first public/private-pilot pack with
+  matter intake, chronology, issue map, evidence matrix, red flag memo,
+  diligence questions, human review, audit trail, and feedback summary.
+- Compliance Obligation Pack: source-linked obligation/control evidence,
+  Compliance Register, human review, and audit trail.
+- Audit Evidence Pack: workpaper/control evidence, source support review, gate
+  checks, and audit packet preparation.
+- Regulatory Response Pack and Litigation Chronology Pack: future pack framing
+  for the same local-first harness.
 
 ## Architecture
 
-Aletheia adds a structured workspace layer above the existing project, document, model, and storage foundations:
+Aletheia adds a Kernel layer above the existing project, document, model, and
+storage foundations:
 
 ```text
-Matter Workspace
+Local Matter Vault
   -> Document Registry
-  -> Agent Plan
+  -> Bounded Agent Plan
   -> Document Understanding
   -> Evidence Mapping
   -> Domain Analysis
   -> Draft Work Product
   -> Human Review
+  -> Gate Decision
   -> Audit Log
   -> Feedback / Eval Export
 ```
