@@ -180,7 +180,8 @@ ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity
 
 This validates the local audit chain without mutating data: export work products
 must have matching audit events, export files must exist under the local data
-directory, and high-risk exports must resolve to approved human checkpoints.
+directory, high-risk exports must resolve to approved human checkpoints, and
+local export files are reported with byte counts and sha256 hashes.
 
 The same validation posture is enforced on `main` and pull requests through
 `.github/workflows/aletheia-local-ci.yml`. The CI workflow installs backend and

@@ -53,7 +53,8 @@ Operational notes:
   before pointing a new deployment at a restored data directory.
 - Run `ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity`
   after a real workflow to verify export events, local export files, and
-  approved checkpoint links.
+  approved checkpoint links. The JSON output includes byte counts and sha256
+  hashes for local export files.
 - Treat `exports/` as client-sensitive output.
 - Do not enable external web/model tools unless the deployment owner explicitly
   configures them.

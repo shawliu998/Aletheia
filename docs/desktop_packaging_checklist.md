@@ -14,7 +14,8 @@ not a release process yet; it defines what must be true before packaging.
   the current git commit, validation commands, screenshots, and deployment docs.
 - `npm run check:aletheia:audit-integrity` verifies that local export work
   products have audit events, export files, local paths, and approved checkpoint
-  links for high-risk exports.
+  links for high-risk exports. Its output includes byte counts and sha256 hashes
+  for local export files.
 - `npm run test:aletheia:local` passes.
 - `npm run seed:aletheia:ui-smoke` creates a screenshot-ready matter.
 - `npm run dev:aletheia:local` starts or reuses local frontend/backend servers.
@@ -87,6 +88,7 @@ Restore should verify:
 - documents can be searched;
 - evidence items retain source chunk IDs;
 - audit events still reference export paths;
+- exported JSON files have recorded byte counts and sha256 hashes;
 - high-risk export audit events retain approved checkpoint IDs;
 - run traces still render.
 

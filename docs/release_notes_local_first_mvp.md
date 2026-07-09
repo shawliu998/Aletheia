@@ -57,7 +57,8 @@ and replayable audit records.
   defaults, and high-risk approval posture.
 - Local audit integrity command that verifies export work products have matching
   audit events, local export files, data-directory bounded paths, and approved
-  checkpoint links for high-risk exports.
+  checkpoint links for high-risk exports, with byte counts and sha256 hashes for
+  exported JSON files.
 - Completion audit command that verifies the repository still contains evidence
   for local-first storage, real document workflows, Matter Memory, Playbooks,
   Run Trace, approval gates, Tool Adapter/MCP, retrieval eval, private

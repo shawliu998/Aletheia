@@ -127,7 +127,8 @@ Current known result:
   defaults, and approval posture.
 - local audit integrity check passes and verifies export audit events, export
   file paths, local data-directory boundaries, and approved checkpoint links for
-  high-risk exports when a local database is present.
+  high-risk exports when a local database is present. It also reports local
+  export file byte counts and sha256 hashes for review packets.
 - fast operator health check passes, with a warning when the worktree contains
   uncommitted local changes that still need review/splitting.
 - GitHub Actions local CI is configured for `main` and pull requests.

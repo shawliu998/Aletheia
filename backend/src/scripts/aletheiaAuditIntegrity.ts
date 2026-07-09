@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -32,6 +33,15 @@ type CheckpointRow = {
   status: string;
   decision: string | null;
   decided_at: string | null;
+};
+
+type ExportFileRecord = {
+  workProductId: string;
+  matterId: string;
+  kind: string;
+  path: string;
+  bytes: number;
+  sha256: string;
 };
 
 const HIGH_RISK_EXPORTS: Record<string, string> = {
@@ -97,6 +107,14 @@ function count(db: DatabaseSync, sql: string) {
   return Number(row?.count ?? 0);
 }
 
+function fileDigest(target: string) {
+  const bytes = readFileSync(target);
+  return {
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
 function main() {
   const root = dataDir();
   const dbPath = path.join(root, "aletheia.db");
@@ -121,6 +139,7 @@ function main() {
     exportEvents: 0,
     highRiskExports: 0,
   };
+  const exportFiles: ExportFileRecord[] = [];
 
   if (existsSync(dbPath)) {
     const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -253,6 +272,16 @@ function main() {
           missingExportPaths.push(`${product.kind}:${product.id}`);
         } else if (!isSubpath(root, path.resolve(exportPath))) {
           escapedExportPaths.push(`${product.kind}:${product.id}`);
+        } else {
+          const digest = fileDigest(exportPath);
+          exportFiles.push({
+            workProductId: product.id,
+            matterId: product.matter_id,
+            kind: product.kind,
+            path: exportPath,
+            bytes: digest.bytes,
+            sha256: digest.sha256,
+          });
         }
 
         const checkpointType = HIGH_RISK_EXPORTS[product.kind];
@@ -338,6 +367,7 @@ function main() {
         dataDir: root,
         sqlite: dbPath,
         summary,
+        exportFiles,
         warnings: warnings.length,
         checks,
       },
