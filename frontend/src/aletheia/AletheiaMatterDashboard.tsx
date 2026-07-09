@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Scale } from "lucide-react";
+import {
+    ArrowRight,
+    CircleAlert,
+    Database,
+    FileCheck2,
+    Scale,
+    ShieldCheck,
+} from "lucide-react";
 import { templates } from "./mockData";
 import { getMatterSummaries, getReviewQueue } from "./workflow";
 import { NewMatterButton } from "./NewMatterButton";
@@ -110,26 +117,92 @@ export function AletheiaMatterDashboard({
 
     const totalEvidence = matters.reduce((sum, matter) => sum + matter.evidenceCount, 0);
     const totalReviews = matters.reduce((sum, matter) => sum + matter.reviewCount, 0);
+    const highRiskMatters = matters.filter((matter) => matter.riskLevel === "high").length;
+    const connected = apiState === "connected";
 
     return (
         <section className="flex min-h-full flex-col bg-white">
-            <div className="flex items-center justify-between px-8 py-4">
-                <div>
-                    <h1 className="font-serif text-2xl font-medium text-gray-900">
-                        Matters
-                    </h1>
-                    <p className="mt-1 text-xs text-gray-400">
-                        {apiState === "connected"
-                            ? "Database matters appear above demo matters."
-                            : apiState === "checking"
-                              ? "Checking API..."
-                              : "Demo fallback mode"}
-                    </p>
+            <div className="border-b border-gray-200 px-5 py-4 md:px-8">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h1 className="font-serif text-2xl font-medium text-gray-950">
+                                Matters
+                            </h1>
+                            <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                                V1 local
+                            </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                            {connected
+                                ? "Local records are connected; demo matters remain available."
+                                : apiState === "checking"
+                                  ? "Checking local workspace..."
+                                  : "Demo fallback mode"}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div
+                            className={cn(
+                                "hidden items-center gap-2 rounded-md border px-3 py-2 text-xs md:flex",
+                                connected
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : "border-amber-200 bg-amber-50 text-amber-700",
+                            )}
+                        >
+                            {connected ? (
+                                <Database className="h-3.5 w-3.5" />
+                            ) : (
+                                <CircleAlert className="h-3.5 w-3.5" />
+                            )}
+                            {connected ? "Local store online" : "Fallback mode"}
+                        </div>
+                        <NewMatterButton initialOpen={initialNewMatterOpen} />
+                    </div>
                 </div>
-                <NewMatterButton initialOpen={initialNewMatterOpen} />
+
+                <div className="mt-4 grid gap-2 md:grid-cols-4">
+                    {[
+                        {
+                            label: "Matters",
+                            value: matters.length,
+                            icon: Scale,
+                        },
+                        {
+                            label: "Evidence",
+                            value: totalEvidence,
+                            icon: FileCheck2,
+                        },
+                        {
+                            label: "Reviews",
+                            value: totalReviews,
+                            icon: ShieldCheck,
+                        },
+                        {
+                            label: "High risk",
+                            value: highRiskMatters,
+                            icon: CircleAlert,
+                        },
+                    ].map((item) => (
+                        <div
+                            key={item.label}
+                            className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                        >
+                            <div>
+                                <p className="text-[11px] font-medium uppercase text-gray-500">
+                                    {item.label}
+                                </p>
+                                <p className="mt-0.5 text-lg font-semibold text-gray-950">
+                                    {item.value}
+                                </p>
+                            </div>
+                            <item.icon className="h-4 w-4 text-gray-500" />
+                        </div>
+                    ))}
+                </div>
             </div>
 
-            <div className="flex h-10 items-center gap-5 border-b border-t border-gray-100 px-8 text-sm">
+            <div className="flex h-10 items-center gap-5 border-b border-gray-100 px-5 text-sm md:px-8">
                 <span className="font-medium text-gray-900">All Matters</span>
                 <Link
                     href="/aletheia/reviews"
@@ -143,17 +216,20 @@ export function AletheiaMatterDashboard({
                 >
                     Evidence
                 </Link>
-                <div className="ml-auto hidden items-center gap-6 text-xs text-gray-400 md:flex">
-                    <span>{matters.length} matters</span>
-                    <span>{totalEvidence} evidence</span>
-                    <span>{totalReviews} reviews</span>
+                <div className="ml-auto hidden items-center gap-2 text-xs text-gray-500 md:flex">
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                        Evidence-bound
+                    </span>
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                        Gate-controlled
+                    </span>
                 </div>
             </div>
 
             <div className="grid min-h-0 flex-1 lg:grid-cols-[1fr_340px]">
                 <section className="min-w-0 overflow-x-auto">
                     <div className="min-w-0 md:min-w-[900px]">
-                        <div className="flex h-8 items-center border-b border-gray-200 pr-8 text-xs font-medium text-gray-500">
+                        <div className="flex h-8 items-center border-b border-gray-200 bg-gray-50 pr-8 text-xs font-medium text-gray-500">
                             <div className="w-8 shrink-0" />
                             <div className="flex-1 min-w-0 pl-2 pr-4">Name</div>
                             <div className="hidden w-52 shrink-0 md:block">Template</div>
@@ -167,7 +243,7 @@ export function AletheiaMatterDashboard({
                                 <Link
                                     key={`${matter.source}-${matter.id}`}
                                     href={matter.href}
-                                    className="group flex h-14 items-center border-b border-gray-50 pr-8 transition-colors hover:bg-gray-50"
+                                    className="group flex h-16 items-center border-b border-gray-100 pr-8 transition-colors hover:bg-gray-50"
                                 >
                                     <div className="flex w-8 shrink-0 justify-center">
                                         <Scale className="h-3.5 w-3.5 text-gray-300 group-hover:text-gray-500" />
@@ -184,8 +260,8 @@ export function AletheiaMatterDashboard({
                                                 {matter.riskLevel ?? "low"}
                                             </Badge>
                                             {matter.source === "api" && (
-                                                <span className="text-[11px] text-gray-300">
-                                                    database
+                                                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">
+                                                    local
                                                 </span>
                                             )}
                                         </div>

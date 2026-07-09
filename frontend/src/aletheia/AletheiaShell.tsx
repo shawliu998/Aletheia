@@ -27,9 +27,9 @@ export function AletheiaShell({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
 
     return (
-        <div className="flex h-dvh bg-white text-gray-900">
-            <aside className="hidden w-64 shrink-0 flex-col border-r border-gray-200 bg-gray-50 md:flex">
-                <div className="mb-3 flex items-center justify-between px-5 py-4">
+        <div className="flex h-dvh bg-[#f7f8f8] text-gray-950">
+            <aside className="hidden w-64 shrink-0 flex-col border-r border-gray-200 bg-[#f4f5f5] md:flex">
+                <div className="mb-2 flex items-center justify-between px-5 py-4">
                     <Link
                         href="/aletheia"
                         className="flex items-center gap-2 transition-opacity hover:opacity-80"
@@ -41,7 +41,19 @@ export function AletheiaShell({ children }: { children: React.ReactNode }) {
                     </Link>
                 </div>
 
-                <nav className="space-y-1 px-2.5">
+                <div className="mx-3 mb-4 rounded-md border border-gray-200 bg-white px-3 py-2">
+                    <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        <span className="text-xs font-medium text-gray-900">
+                            Local V1
+                        </span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-4 text-gray-500">
+                        Private-pilot workspace
+                    </p>
+                </div>
+
+                <nav className="space-y-0.5 px-2.5">
                     {navItems.map((item) => {
                         const isActive =
                             pathname === item.href ||
@@ -54,11 +66,16 @@ export function AletheiaShell({ children }: { children: React.ReactNode }) {
                                 className={cn(
                                     "flex h-9 items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors",
                                     isActive
-                                        ? "bg-gray-100 text-gray-900"
-                                        : "text-gray-700 hover:bg-gray-100 hover:text-gray-900",
+                                        ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200"
+                                        : "text-gray-600 hover:bg-white hover:text-gray-950",
                                 )}
                             >
-                                <item.icon className="h-4 w-4 text-gray-900" />
+                                <item.icon
+                                    className={cn(
+                                        "h-4 w-4",
+                                        isActive ? "text-gray-950" : "text-gray-500",
+                                    )}
+                                />
                                 {item.label}
                             </Link>
                         );
@@ -76,17 +93,49 @@ export function AletheiaShell({ children }: { children: React.ReactNode }) {
             </aside>
 
             <div className="flex min-w-0 flex-1 flex-col">
-                <header className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 md:hidden">
-                    <Menu className="h-5 w-5 text-gray-500" />
-                    <Link
-                        href="/aletheia"
-                        className="flex items-center gap-2 transition-opacity hover:opacity-80"
-                    >
-                        <AletheiaIcon size={24} />
-                        <span className="font-serif text-xl font-light">Aletheia</span>
-                    </Link>
+                <header className="border-b border-gray-200 bg-white md:hidden">
+                    <div className="flex items-center gap-3 px-4 py-3">
+                        <Menu className="h-5 w-5 text-gray-500" />
+                        <Link
+                            href="/aletheia"
+                            className="flex items-center gap-2 transition-opacity hover:opacity-80"
+                        >
+                            <AletheiaIcon size={24} />
+                            <span className="font-serif text-xl font-light">
+                                Aletheia
+                            </span>
+                        </Link>
+                        <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                            Local V1
+                        </span>
+                    </div>
+                    <nav className="flex gap-1 overflow-x-auto px-3 pb-3">
+                        {navItems.map((item) => {
+                            const isActive =
+                                pathname === item.href ||
+                                (item.href !== "/aletheia" &&
+                                    pathname.startsWith(`${item.href}/`));
+                            return (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    className={cn(
+                                        "flex h-8 shrink-0 items-center gap-2 rounded-md border px-2.5 text-xs font-medium",
+                                        isActive
+                                            ? "border-gray-300 bg-gray-950 text-white"
+                                            : "border-gray-200 bg-white text-gray-600",
+                                    )}
+                                >
+                                    <item.icon className="h-3.5 w-3.5" />
+                                    {item.label}
+                                </Link>
+                            );
+                        })}
+                    </nav>
                 </header>
-                <main className="min-h-0 flex-1 overflow-y-auto bg-white">{children}</main>
+                <main className="min-h-0 flex-1 overflow-y-auto bg-white">
+                    {children}
+                </main>
             </div>
         </div>
     );
