@@ -32,7 +32,11 @@ function contains(root: string, relativePath: string, patterns: string[]) {
   return patterns.every((pattern) => text.includes(pattern));
 }
 
-function doesNotContain(root: string, relativePath: string, patterns: string[]) {
+function doesNotContain(
+  root: string,
+  relativePath: string,
+  patterns: string[],
+) {
   if (!fileExists(root, relativePath)) return false;
   const text = readText(root, relativePath);
   return patterns.every((pattern) => !text.includes(pattern));
@@ -285,11 +289,28 @@ function main() {
         packageScript(root, "backend/package.json", "check:aletheia:backup"),
         packageScript(root, "backend/package.json", "check:aletheia:restore"),
         packageScript(root, "backend/package.json", "check:aletheia:privacy"),
-        packageScript(root, "backend/package.json", "check:aletheia:tool-policy"),
-        packageScript(root, "backend/package.json", "check:aletheia:approval-policy"),
-        packageScript(root, "backend/package.json", "check:aletheia:matter-isolation"),
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:tool-policy",
+        ),
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:approval-policy",
+        ),
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:matter-isolation",
+        ),
+        packageScript(root, "backend/package.json", "check:aletheia:run-trace"),
         packageScript(root, "backend/package.json", "check:aletheia:evidence"),
-        packageScript(root, "backend/package.json", "check:aletheia:audit-integrity"),
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:audit-integrity",
+        ),
         packageScript(root, "backend/package.json", "test:aletheia:local"),
         packageScript(
           root,
@@ -298,7 +319,11 @@ function main() {
         ),
         packageScript(root, "backend/package.json", "check:aletheia:operator"),
         packageScript(root, "backend/package.json", "test:aletheia:package"),
-        packageScript(root, "backend/package.json", "test:aletheia:restore-drill"),
+        packageScript(
+          root,
+          "backend/package.json",
+          "test:aletheia:restore-drill",
+        ),
         packageScript(root, "frontend/package.json", "lint"),
         packageScript(root, "frontend/package.json", "build"),
         packageScript(root, "frontend/package.json", "test:aletheia:ui"),
@@ -311,6 +336,7 @@ function main() {
           "npm run check:aletheia:tool-policy",
           "npm run check:aletheia:approval-policy",
           "npm run check:aletheia:matter-isolation",
+          "npm run check:aletheia:run-trace",
           "npm run check:aletheia:evidence",
           "npm run check:aletheia:audit-integrity",
           "npm run test:aletheia:local",
@@ -328,6 +354,7 @@ function main() {
           "npm run check:aletheia:tool-policy",
           "npm run check:aletheia:approval-policy",
           "npm run check:aletheia:matter-isolation",
+          "npm run check:aletheia:run-trace",
           "npm run check:aletheia:evidence",
           "npm run check:aletheia:audit-integrity",
           "npm run test:aletheia:local",

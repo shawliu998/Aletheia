@@ -26,6 +26,7 @@ const VALIDATION_COMMANDS = [
   "cd backend && npm run check:aletheia:tool-policy",
   "cd backend && npm run check:aletheia:approval-policy",
   "cd backend && npm run check:aletheia:matter-isolation",
+  "cd backend && npm run check:aletheia:run-trace",
   "cd backend && npm run check:aletheia:evidence",
   "cd backend && npm run check:aletheia:audit-integrity",
   "cd backend && npm run check:aletheia:operator",
@@ -128,7 +129,9 @@ function check(
 function main() {
   const root = repoRoot();
   const docs = REQUIRED_DOCS.map((file) => evidenceFile(root, file));
-  const screenshots = REQUIRED_SCREENSHOTS.map((file) => evidenceFile(root, file));
+  const screenshots = REQUIRED_SCREENSHOTS.map((file) =>
+    evidenceFile(root, file),
+  );
   const statusShort = git(root, ["status", "--short"]) ?? "";
   const branch = git(root, ["branch", "--show-current"]);
   const commit = git(root, ["rev-parse", "HEAD"]);
@@ -148,19 +151,52 @@ function main() {
     ),
     check(
       "validation-entrypoints-present",
-        packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
+      packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
         packageScript(root, "backend/package.json", "check:aletheia:backup") &&
         packageScript(root, "backend/package.json", "check:aletheia:restore") &&
         packageScript(root, "backend/package.json", "check:aletheia:privacy") &&
-        packageScript(root, "backend/package.json", "check:aletheia:tool-policy") &&
-        packageScript(root, "backend/package.json", "check:aletheia:approval-policy") &&
-        packageScript(root, "backend/package.json", "check:aletheia:matter-isolation") &&
-        packageScript(root, "backend/package.json", "check:aletheia:evidence") &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:tool-policy",
+        ) &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:approval-policy",
+        ) &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:matter-isolation",
+        ) &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:run-trace",
+        ) &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:evidence",
+        ) &&
         packageScript(root, "backend/package.json", "test:aletheia:local") &&
-        packageScript(root, "backend/package.json", "test:aletheia:restore-drill") &&
-        packageScript(root, "backend/package.json", "test:aletheia:retrieval-eval") &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "test:aletheia:restore-drill",
+        ) &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "test:aletheia:retrieval-eval",
+        ) &&
         packageScript(root, "backend/package.json", "test:aletheia:package") &&
-        packageScript(root, "backend/package.json", "test:aletheia:completion") &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "test:aletheia:completion",
+        ) &&
         packageScript(root, "frontend/package.json", "lint") &&
         packageScript(root, "frontend/package.json", "build") &&
         packageScript(root, "frontend/package.json", "test:aletheia:ui"),
@@ -174,6 +210,7 @@ function main() {
         "npm run check:aletheia:tool-policy",
         "npm run check:aletheia:approval-policy",
         "npm run check:aletheia:matter-isolation",
+        "npm run check:aletheia:run-trace",
         "npm run test:aletheia:local",
         "npm run test:aletheia:restore-drill",
         "npm run test:aletheia:retrieval-eval",
@@ -226,7 +263,8 @@ function main() {
     posture: {
       product: "Aletheia 明证",
       stage: "local-first MVP / private pilot candidate",
-      privacyDefault: "local SQLite, local filesystem, no external web/model tools by default",
+      privacyDefault:
+        "local SQLite, local filesystem, no external web/model tools by default",
       highRiskActions: [
         "audit_pack_export",
         "feedback_dataset_export",

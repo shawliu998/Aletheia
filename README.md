@@ -214,6 +214,17 @@ This verifies matter/user-scoped repository access, SQLite FTS5 matter filters,
 per-matter semantic index files, matter-scoped memory/playbooks, cross-matter
 retrieval eval coverage, and documentation against cross-matter contamination.
 
+Run the Run Trace audit before changing agent runtime or review UI behavior:
+
+```bash
+cd backend
+npm run check:aletheia:run-trace
+```
+
+This verifies the AgentRun/AgentStep/ToolCall/HumanCheckpoint contract,
+Workflow Graph controls, specialist role tool allowlists, approval gates,
+resume behavior, and Run Trace UI/docs coverage.
+
 Generate the release evidence manifest before handoff:
 
 ```bash

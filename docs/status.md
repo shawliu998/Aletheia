@@ -66,6 +66,12 @@ The matter isolation audit entrypoint is:
 cd backend && npm run check:aletheia:matter-isolation
 ```
 
+The Run Trace runtime contract audit entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:run-trace
+```
+
 The release evidence manifest entrypoint is:
 
 ```bash
@@ -135,6 +141,7 @@ cd backend && npm run check:aletheia:privacy
 cd backend && npm run check:aletheia:tool-policy
 cd backend && npm run check:aletheia:approval-policy
 cd backend && npm run check:aletheia:matter-isolation
+cd backend && npm run check:aletheia:run-trace
 cd backend && npm run check:aletheia:evidence
 cd backend && npm run check:aletheia:audit-integrity
 cd backend && npm run check:aletheia:operator
@@ -199,6 +206,9 @@ Current known result:
   matter-scoped registry snapshots, template-specific Compliance Register and
   Red Flag Memo generation, and MCP smoke coverage, including specialist role
   tool-policy and Workflow Graph assertions.
+- Run Trace audit passes and verifies AgentRun, AgentStep, ToolCall, and
+  HumanCheckpoint persistence, Workflow Graph approval controls, specialist
+  tool allowlists, resume behavior, and UI/docs coverage.
 - local retrieval eval passes for fail-closed semantic policy, keyword search,
   optional local-json semantic search, hybrid search, and cross-matter
   isolation, including retrieval rank and ranking-basis diagnostics.

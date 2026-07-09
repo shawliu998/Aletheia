@@ -69,6 +69,9 @@ Operational notes:
 - Run `npm run check:aletheia:matter-isolation` before changing retrieval,
   memory, or playbook behavior. It verifies matter/user scoped access, per-matter
   indexes, and cross-matter retrieval isolation.
+- Run `npm run check:aletheia:run-trace` before changing agent runtime or review
+  UI behavior. It verifies AgentRun, AgentStep, ToolCall, and HumanCheckpoint
+  persistence, Workflow Graph controls, approval gates, and resume behavior.
 - Treat `exports/` as client-sensitive output.
 - Do not enable external web/model tools unless the deployment owner explicitly
   configures them.
@@ -139,6 +142,7 @@ Before upgrading:
 - run `npm run check:aletheia:tool-policy`;
 - run `npm run check:aletheia:approval-policy`;
 - run `npm run check:aletheia:matter-isolation`;
+- run `npm run check:aletheia:run-trace`;
 - run `ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity`;
 - run `npm run test:aletheia:local`;
 - run `npm run test:aletheia:restore-drill`;

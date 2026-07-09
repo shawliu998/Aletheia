@@ -22,6 +22,9 @@ not a release process yet; it defines what must be true before packaging.
 - `npm run check:aletheia:matter-isolation` verifies matter/user scoped access,
   matter-scoped memory/playbooks, per-matter retrieval indexes, and cross-matter
   retrieval eval coverage.
+- `npm run check:aletheia:run-trace` verifies AgentRun, AgentStep, ToolCall,
+  and HumanCheckpoint persistence, Workflow Graph controls, high-risk approval
+  gates, resume behavior, and Run Trace UI/docs coverage.
 - `npm run check:aletheia:evidence` produces the release evidence manifest for
   the current git commit, validation commands, screenshots, and deployment docs.
 - `npm run check:aletheia:audit-integrity` verifies that local export work
@@ -119,6 +122,7 @@ npm run check:aletheia:privacy
 npm run check:aletheia:tool-policy
 npm run check:aletheia:approval-policy
 npm run check:aletheia:matter-isolation
+npm run check:aletheia:run-trace
 ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence
 ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity
 npm run test:aletheia:local

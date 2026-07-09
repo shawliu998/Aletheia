@@ -67,6 +67,9 @@ and replayable audit records.
 - Matter isolation audit that verifies matter/user scoped access, matter-scoped
   memory/playbooks, per-matter retrieval indexes, and cross-matter retrieval
   eval coverage.
+- Run Trace audit that verifies AgentRun, AgentStep, ToolCall, and
+  HumanCheckpoint persistence, Workflow Graph controls, approval gates, resume
+  behavior, specialist role tool allowlists, and UI/docs coverage.
 - Local audit integrity command that verifies export work products have matching
   audit events, local export files, data-directory bounded paths, and approved
   checkpoint links for high-risk exports, with byte counts and sha256 hashes for
@@ -96,6 +99,7 @@ npm run check:aletheia:privacy
 npm run check:aletheia:tool-policy
 npm run check:aletheia:approval-policy
 npm run check:aletheia:matter-isolation
+npm run check:aletheia:run-trace
 npm run check:aletheia:evidence
 npm run check:aletheia:audit-integrity
 npm run test:aletheia:completion
