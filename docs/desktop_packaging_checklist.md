@@ -10,6 +10,8 @@ not a release process yet; it defines what must be true before packaging.
 - `npm run check:aletheia:backup` produces the backup scope manifest.
 - `npm run check:aletheia:restore` validates the restore source without
   copying, overwriting, or deleting local data.
+- `npm run check:aletheia:evidence` produces the release evidence manifest for
+  the current git commit, validation commands, screenshots, and deployment docs.
 - `npm run test:aletheia:local` passes.
 - `npm run seed:aletheia:ui-smoke` creates a screenshot-ready matter.
 - `npm run dev:aletheia:local` starts or reuses local frontend/backend servers.
@@ -92,6 +94,7 @@ npm run build
 npm run check:aletheia:doctor
 npm run check:aletheia:backup
 ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore
+ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence
 npm run test:aletheia:local
 npm run seed:aletheia:ui-smoke
 npm run package:aletheia:local

@@ -284,6 +284,7 @@ function main() {
         packageScript(root, "backend/package.json", "check:aletheia:doctor"),
         packageScript(root, "backend/package.json", "check:aletheia:backup"),
         packageScript(root, "backend/package.json", "check:aletheia:restore"),
+        packageScript(root, "backend/package.json", "check:aletheia:evidence"),
         packageScript(root, "backend/package.json", "test:aletheia:local"),
         packageScript(
           root,
@@ -300,6 +301,7 @@ function main() {
           "npm run check:aletheia:doctor",
           "npm run check:aletheia:backup",
           "npm run check:aletheia:restore",
+          "npm run check:aletheia:evidence",
           "npm run test:aletheia:local",
           "npm run test:aletheia:retrieval-eval",
           "npm run test:aletheia:package",
@@ -310,6 +312,7 @@ function main() {
           "npm run check:aletheia:doctor",
           "npm run check:aletheia:backup",
           "npm run check:aletheia:restore",
+          "npm run check:aletheia:evidence",
           "npm run test:aletheia:local",
           "npm run check:aletheia:operator",
           "npm run test:aletheia:retrieval-eval",
@@ -369,6 +372,10 @@ function main() {
           "Verified Signals",
           "Run Trace",
           "Audit Workbench",
+        ]),
+        contains(root, "docs/status.md", [
+          "release evidence manifest",
+          "npm run check:aletheia:evidence",
         ]),
         contains(root, "README.md", [
           "Local Pilot Mode",

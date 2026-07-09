@@ -159,6 +159,17 @@ This validates the restore source without copying or deleting data. It checks
 the local data boundary, required backup directories, symlink-free content,
 SQLite `quick_check`, core Aletheia tables, and an optional backup manifest.
 
+Generate the release evidence manifest before handoff:
+
+```bash
+cd backend
+ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence
+```
+
+This emits a reviewable JSON manifest for the current git commit, validation
+commands, demo screenshots with hashes, deployment/attribution documents,
+privacy defaults, and approval posture.
+
 The same validation posture is enforced on `main` and pull requests through
 `.github/workflows/aletheia-local-ci.yml`. The CI workflow installs backend and
 frontend dependencies, builds both apps, runs the local regression and retrieval

@@ -61,6 +61,7 @@ or model credentials.
 ## Contents
 
 - \`manifest.json\`: package metadata, checks, privacy posture, and startup commands.
+- \`release-evidence.example.json\`: schema hint for the release evidence manifest.
 - \`.env.local.example\`: local-first environment template.
 - \`start-backend.sh\`: starts the Express backend in local single-user mode.
 - \`start-frontend.sh\`: starts the Next.js frontend against the local backend.
@@ -69,7 +70,7 @@ or model credentials.
 ## Required Preflight
 
 \`\`\`bash
-cd backend && npm run build && npm run check:aletheia:doctor && npm run check:aletheia:backup && npm run check:aletheia:restore && npm run test:aletheia:local
+cd backend && npm run build && npm run check:aletheia:doctor && npm run check:aletheia:backup && npm run check:aletheia:restore && npm run check:aletheia:evidence && npm run test:aletheia:local
 cd frontend && npm run build
 \`\`\`
 
@@ -253,6 +254,7 @@ function main() {
       "cd backend && npm run check:aletheia:doctor",
       "cd backend && npm run check:aletheia:backup",
       "cd backend && npm run check:aletheia:restore",
+      "cd backend && npm run check:aletheia:evidence",
       "cd backend && npm run test:aletheia:local",
       "cd backend && npm run test:aletheia:retrieval-eval",
       "cd frontend && npm run build",
@@ -271,6 +273,25 @@ function main() {
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   writeFileSync(path.join(outDir, "README.md"), readme(packageId));
+  writeFileSync(
+    path.join(outDir, "release-evidence.example.json"),
+    `${JSON.stringify(
+      {
+        suite: "aletheia-release-evidence-v0",
+        command:
+          "cd backend && ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence",
+        includes: [
+          "git branch and commit",
+          "validation commands",
+          "demo evidence screenshots with sha256",
+          "deployment and attribution documents",
+          "privacy and approval posture",
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
   writeFileSync(path.join(outDir, ".env.local.example"), envTemplate());
   writeFileSync(
     path.join(outDir, "start-backend.sh"),

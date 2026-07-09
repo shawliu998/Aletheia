@@ -94,7 +94,8 @@ Pros:
 Tradeoffs:
 
 - less mature as a multi-tenant service boundary than Qdrant;
-- still needs explicit backup policy for index files.
+- index files must stay under `.data/aletheia/index/` so the backup manifest
+  and restore preflight cover them with the rest of the local matter workspace.
 
 ## Qdrant Option
 

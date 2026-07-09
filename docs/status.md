@@ -42,6 +42,12 @@ The restore preflight entrypoint is:
 cd backend && npm run check:aletheia:restore
 ```
 
+The release evidence manifest entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:evidence
+```
+
 Main branch pushes and pull requests are also covered by
 `.github/workflows/aletheia-local-ci.yml`, which runs the backend local-first
 checks, package preflight, frontend lint/build, and Playwright UI smoke.
@@ -89,6 +95,7 @@ cd backend && npm run build
 cd backend && npm run check:aletheia:doctor
 cd backend && npm run check:aletheia:backup
 cd backend && npm run check:aletheia:restore
+cd backend && npm run check:aletheia:evidence
 cd backend && npm run check:aletheia:operator
 cd backend && npm run test:aletheia:local
 cd backend && npm run test:aletheia:retrieval-eval
@@ -108,6 +115,9 @@ Current known result:
 - restore preflight passes and validates required backup directories, path
   boundaries, symlink-free backup content, SQLite integrity, and core Aletheia
   schema when a local database is present.
+- release evidence manifest passes and records the current git commit,
+  validation commands, screenshot hashes, deployment/attribution docs, privacy
+  defaults, and approval posture.
 - fast operator health check passes, with a warning when the worktree contains
   uncommitted local changes that still need review/splitting.
 - GitHub Actions local CI is configured for `main` and pull requests.

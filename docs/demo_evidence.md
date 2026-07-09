@@ -9,6 +9,19 @@ This file records the current local Aletheia demo evidence.
 - `docs/screenshots/aletheia-run-trace-desktop.jpg`
 - `docs/screenshots/aletheia-matter-mobile.jpg`
 
+## Release Evidence Manifest
+
+Generate a machine-readable evidence manifest for handoff:
+
+```bash
+cd backend
+ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence
+```
+
+The manifest records the current git commit, validation command list,
+deployment and attribution docs, screenshot sizes and sha256 hashes, privacy
+defaults, and high-risk approval posture.
+
 ## Capture Flow
 
 1. Seed a local UI smoke matter:

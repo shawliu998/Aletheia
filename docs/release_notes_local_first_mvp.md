@@ -52,6 +52,9 @@ and replayable audit records.
 - Strict local packaging preflight that generates a private deployment manifest
   and fails on missing build output, deployment docs, attribution notices, or
   demo evidence docs.
+- Release evidence manifest command that records the current git commit,
+  validation commands, deployment/attribution docs, screenshot hashes, privacy
+  defaults, and high-risk approval posture.
 - Completion audit command that verifies the repository still contains evidence
   for local-first storage, real document workflows, Matter Memory, Playbooks,
   Run Trace, approval gates, Tool Adapter/MCP, retrieval eval, private
@@ -69,6 +72,7 @@ and replayable audit records.
 cd backend
 npm run test:aletheia:local
 npm run test:aletheia:retrieval-eval
+npm run check:aletheia:evidence
 npm run test:aletheia:completion
 npm run seed:aletheia:ui-smoke
 npm run dev:aletheia:local
