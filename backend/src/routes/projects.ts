@@ -16,9 +16,26 @@ import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
 import { deleteUserProjects } from "../lib/userDataCleanup";
+import {
+  createGeneratedOfficeDocument,
+  normalizeGeneratedOfficeTitle,
+  type GeneratedOfficeKind,
+} from "../lib/generatedOffice";
 
 export const projectsRouter = Router();
-const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
+const ALLOWED_TYPES = new Set(["pdf", "docx", "doc", "xlsx"]);
+const ALLOWED_TYPE_LABEL = "pdf, docx, doc, xlsx";
+const GENERATED_OFFICE_TYPES = new Set<GeneratedOfficeKind>(["docx", "xlsx"]);
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+function contentTypeForFileType(fileType: string): string {
+  if (fileType === "pdf") return "application/pdf";
+  if (fileType === "xlsx") return XLSX_MIME;
+  return DOCX_MIME;
+}
 
 function normalizeDocumentFilename(nextName: unknown, currentName: string) {
   if (typeof nextName !== "string") return null;
@@ -519,10 +536,9 @@ projectsRouter.post(
       );
       let newPdfPath: string | null = null;
       try {
-        const contentType =
-          ((srcV.file_type as string | null) ?? doc.file_type) === "pdf"
-            ? "application/pdf"
-            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        const contentType = contentTypeForFileType(
+          ((srcV.file_type as string | null) ?? doc.file_type) || "",
+        );
         await uploadFile(newKey, srcBytes, contentType);
 
         // PDFs share one object for source + display rendition. DOCX
@@ -660,6 +676,47 @@ projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, async (re
     filename,
   });
 });
+
+// POST /projects/:projectId/documents/generated
+projectsRouter.post(
+  "/:projectId/documents/generated",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { projectId } = req.params;
+    const db = createServerSupabase();
+
+    const access = await checkProjectAccess(projectId, userId, userEmail, db);
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Project not found" });
+
+    const kind = typeof req.body?.kind === "string" ? req.body.kind : "";
+    if (!GENERATED_OFFICE_TYPES.has(kind as GeneratedOfficeKind)) {
+      return void res
+        .status(400)
+        .json({ detail: "kind must be either docx or xlsx" });
+    }
+
+    const fallback =
+      kind === "xlsx" ? "Untitled workbook" : "Untitled document";
+    const title = normalizeGeneratedOfficeTitle(req.body?.title, fallback);
+
+    try {
+      const doc = await createGeneratedOfficeDocument({
+        db,
+        userId,
+        projectId,
+        kind: kind as GeneratedOfficeKind,
+        title,
+      });
+      res.status(201).json(doc);
+    } catch (err) {
+      console.error("[projects/documents/generated] failed", err);
+      res.status(500).json({ detail: "Failed to create Office document" });
+    }
+  },
+);
 
 // POST /projects/:projectId/documents
 projectsRouter.post(
@@ -889,7 +946,7 @@ export async function handleDocumentUpload(
     return void res
       .status(400)
       .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_TYPE_LABEL}`,
       });
 
   const content = file.buffer;
@@ -911,10 +968,7 @@ export async function handleDocumentUpload(
   try {
     const docId = doc.id as string;
     const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForFileType(suffix);
     await uploadFile(
       key,
       content.buffer.slice(

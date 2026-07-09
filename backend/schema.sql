@@ -858,10 +858,12 @@ create table if not exists public.aletheia_work_products (
       'issue_map',
       'evidence_matrix',
       'draft_memo',
+      'final_memo',
       'compliance_register',
       'red_flag_memo',
       'audit_pack',
-      'feedback_export'
+      'feedback_export',
+      'registry_snapshot'
     )
   ),
   title text not null,
@@ -892,11 +894,14 @@ create table if not exists public.aletheia_evidence_items (
   matter_id uuid not null references public.aletheia_matters(id) on delete cascade,
   work_product_id uuid references public.aletheia_work_products(id) on delete set null,
   document_id uuid references public.documents(id) on delete set null,
+  source_chunk_id uuid,
   claim_id text,
   document_name text,
   page integer,
   section text,
   quote text not null,
+  quote_start integer,
+  quote_end integer,
   relevance text not null default 'direct' check (
     relevance in ('direct', 'indirect', 'weak')
   ),
@@ -915,6 +920,29 @@ create index if not exists idx_aletheia_evidence_items_claim
   on public.aletheia_evidence_items(matter_id, claim_id);
 
 alter table public.aletheia_evidence_items enable row level security;
+
+create table if not exists public.aletheia_document_chunks (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references public.aletheia_matters(id) on delete cascade,
+  matter_document_id uuid not null references public.aletheia_matter_documents(id) on delete cascade,
+  user_id text not null,
+  chunk_index integer not null,
+  page integer,
+  section text,
+  text text not null,
+  quote_start integer not null default 0,
+  quote_end integer not null default 0,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_aletheia_document_chunks_document_index
+  on public.aletheia_document_chunks(matter_document_id, chunk_index);
+
+create index if not exists idx_aletheia_document_chunks_matter
+  on public.aletheia_document_chunks(matter_id);
+
+alter table public.aletheia_document_chunks enable row level security;
 
 create table if not exists public.aletheia_review_items (
   id uuid primary key default gen_random_uuid(),
@@ -988,6 +1016,7 @@ create table if not exists public.aletheia_agent_runs (
   storage_driver text not null default 'supabase' check (
     storage_driver in ('local', 'postgres', 'supabase')
   ),
+  budget jsonb not null default '{}'::jsonb,
   metadata jsonb not null default '{}'::jsonb,
   started_at timestamptz,
   completed_at timestamptz,
@@ -1017,6 +1046,7 @@ create table if not exists public.aletheia_agent_steps (
   input jsonb not null default '{}'::jsonb,
   output jsonb not null default '{}'::jsonb,
   validation_errors jsonb not null default '[]'::jsonb,
+  metrics jsonb not null default '{}'::jsonb,
   started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz not null default now()
@@ -1043,6 +1073,7 @@ create table if not exists public.aletheia_tool_calls (
   input jsonb not null default '{}'::jsonb,
   output jsonb not null default '{}'::jsonb,
   error text,
+  metrics jsonb not null default '{}'::jsonb,
   started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz not null default now()
@@ -1064,7 +1095,10 @@ create table if not exists public.aletheia_human_checkpoints (
     status in ('open', 'approved', 'rejected', 'resolved', 'cancelled')
   ),
   prompt text not null,
-  decision text,
+  decision text check (
+    decision is null
+    or decision in ('approved', 'rejected', 'edited', 'responded')
+  ),
   requested_payload jsonb not null default '{}'::jsonb,
   decision_payload jsonb not null default '{}'::jsonb,
   decided_by text,
@@ -1076,6 +1110,52 @@ create index if not exists idx_aletheia_human_checkpoints_matter_status
   on public.aletheia_human_checkpoints(matter_id, status, created_at desc);
 
 alter table public.aletheia_human_checkpoints enable row level security;
+
+create table if not exists public.aletheia_matter_memory_items (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references public.aletheia_matters(id) on delete cascade,
+  user_id text not null,
+  category text not null check (
+    category in (
+      'confirmed_fact',
+      'output_preference',
+      'excluded_path',
+      'missing_material',
+      'reviewer_feedback'
+    )
+  ),
+  title text not null,
+  body text not null,
+  source text not null default 'human' check (source in ('human', 'review', 'system')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_aletheia_matter_memory_items_matter
+  on public.aletheia_matter_memory_items(matter_id, created_at desc);
+
+alter table public.aletheia_matter_memory_items enable row level security;
+
+create table if not exists public.aletheia_playbooks (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references public.aletheia_matters(id) on delete cascade,
+  user_id text not null,
+  name text not null,
+  description text,
+  version text not null default 'v0.1',
+  status text not null default 'draft' check (status in ('draft', 'approved', 'superseded')),
+  content jsonb not null default '{}'::jsonb,
+  approved_by text,
+  approved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_aletheia_playbooks_matter
+  on public.aletheia_playbooks(matter_id, created_at desc);
+
+alter table public.aletheia_playbooks enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Direct client grant hardening
@@ -1112,6 +1192,7 @@ revoke all on public.courtlistener_opinion_cluster_index from anon, authenticate
 revoke all on public.aletheia_matters from anon, authenticated;
 revoke all on public.aletheia_matter_documents from anon, authenticated;
 revoke all on public.aletheia_work_products from anon, authenticated;
+revoke all on public.aletheia_document_chunks from anon, authenticated;
 revoke all on public.aletheia_evidence_items from anon, authenticated;
 revoke all on public.aletheia_review_items from anon, authenticated;
 revoke all on public.aletheia_audit_events from anon, authenticated;
@@ -1119,3 +1200,5 @@ revoke all on public.aletheia_agent_runs from anon, authenticated;
 revoke all on public.aletheia_agent_steps from anon, authenticated;
 revoke all on public.aletheia_tool_calls from anon, authenticated;
 revoke all on public.aletheia_human_checkpoints from anon, authenticated;
+revoke all on public.aletheia_matter_memory_items from anon, authenticated;
+revoke all on public.aletheia_playbooks from anon, authenticated;

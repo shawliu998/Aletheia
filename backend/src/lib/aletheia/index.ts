@@ -3,7 +3,9 @@ import type { AletheiaRepository } from "./repository";
 import { SupabaseAletheiaRepository } from "./supabaseRepository";
 
 export function createAletheiaRepository(): AletheiaRepository {
-  if (process.env.ALETHEIA_STORAGE_DRIVER === "local") {
+  const storageDriver =
+    process.env.ALETHEIA_STORAGE_DRIVER ?? process.env.ALET_HEIA_STORAGE_MODE;
+  if (storageDriver === "local") {
     return new LocalAletheiaRepository();
   }
   return new SupabaseAletheiaRepository();

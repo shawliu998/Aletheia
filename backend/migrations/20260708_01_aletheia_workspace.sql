@@ -68,10 +68,12 @@ create table if not exists public.aletheia_work_products (
       'issue_map',
       'evidence_matrix',
       'draft_memo',
+      'final_memo',
       'compliance_register',
       'red_flag_memo',
       'audit_pack',
-      'feedback_export'
+      'feedback_export',
+      'registry_snapshot'
     )
   ),
   title text not null,

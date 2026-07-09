@@ -25,11 +25,22 @@ import { ensureDocAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
 
 export const documentsRouter = Router();
-const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
+const ALLOWED_TYPES = new Set(["pdf", "docx", "doc", "xlsx"]);
+const ALLOWED_TYPE_LABEL = "pdf, docx, doc, xlsx";
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
   if (isDev) console.log(...args);
 };
+
+function contentTypeForFileType(fileType: string): string {
+  if (fileType === "pdf") return "application/pdf";
+  if (fileType === "xlsx") return XLSX_MIME;
+  return DOCX_MIME;
+}
 
 async function deleteDocumentAndVersionFiles(
   db: ReturnType<typeof createServerSupabase>,
@@ -155,11 +166,9 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
     );
     res.send(Buffer.from(raw));
   } else {
-    // Fallback: serve raw DOCX (mammoth will handle it client-side)
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
+    // Fallback: serve raw Office bytes (DOCX preview handles DOCX client-side;
+    // XLSX is downloaded by supported clients rather than rendered here).
+    res.setHeader("Content-Type", contentTypeForFileType(fileType));
     res.setHeader(
       "Content-Disposition",
       buildContentDisposition("inline", displayFilename),
@@ -310,7 +319,7 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
 
   res.setHeader(
     "Content-Type",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    DOCX_MIME,
   );
   res.setHeader(
     "Content-Disposition",
@@ -455,10 +464,7 @@ documentsRouter.post(
       (filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "");
     const versionSlug = crypto.randomUUID().replace(/-/g, "");
     const key = versionStorageKey(userId, documentId, versionSlug, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForFileType(suffix);
 
     try {
       await uploadFile(key, bytes, contentType);
@@ -601,7 +607,7 @@ documentsRouter.post(
       : "";
     if (!ALLOWED_TYPES.has(suffix)) {
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_TYPE_LABEL}`,
       });
     }
 
@@ -614,10 +620,7 @@ documentsRouter.post(
       versionSlug,
       file.originalname,
     );
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForFileType(suffix);
     try {
       await uploadFile(
         key,
@@ -816,7 +819,7 @@ documentsRouter.put(
       : "";
     if (!ALLOWED_TYPES.has(suffix)) {
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_TYPE_LABEL}`,
       });
     }
     if (target.file_type && target.file_type !== suffix) {
@@ -832,10 +835,7 @@ documentsRouter.put(
       versionSlug,
       file.originalname,
     );
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForFileType(suffix);
 
     try {
       await uploadFile(
@@ -1308,7 +1308,7 @@ async function handleDocumentUpload(
     return void res
       .status(400)
       .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_TYPE_LABEL}`,
       });
 
   const content = file.buffer;
@@ -1338,10 +1338,7 @@ async function handleDocumentUpload(
   try {
     const docId = doc.id as string;
     const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForFileType(suffix);
     await uploadFile(
       key,
       content.buffer.slice(

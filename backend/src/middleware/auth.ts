@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { timingSafeEqual } from "node:crypto";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -7,10 +8,13 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 };
 
 function summarizeMfaFactors(
-  factors: Array<{
-    factor_type?: string;
-    status?: string;
-  }> | null | undefined,
+  factors:
+    | Array<{
+        factor_type?: string;
+        status?: string;
+      }>
+    | null
+    | undefined,
 ) {
   return (factors ?? []).map((factor) => ({
     type: factor.factor_type ?? "unknown",
@@ -24,6 +28,26 @@ function isLoginMfaBootstrapRoute(req: Request) {
     (req.method === "GET" || req.method === "POST") &&
     (path === "/user/profile" || path === "/users/profile")
   );
+}
+
+function bearerToken(req: Request) {
+  const auth = req.headers.authorization ?? "";
+  if (!auth.startsWith("Bearer ")) return "";
+  return auth.slice(7).trim();
+}
+
+function constantTimeTokenEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function setLocalAletheiaUser(res: Response, token: string) {
+  res.locals.userId = process.env.ALETHEIA_LOCAL_USER_ID ?? "local-user";
+  res.locals.userEmail =
+    process.env.ALETHEIA_LOCAL_USER_EMAIL ?? "local@aletheia.internal";
+  res.locals.token = token;
 }
 
 async function enforceLoginMfaIfEnabled(
@@ -91,12 +115,43 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const auth = req.headers.authorization ?? "";
-  if (!auth.startsWith("Bearer ")) {
+  const localAuthMode =
+    process.env.ALETHEIA_AUTH_MODE ?? process.env.ALET_HEIA_AUTH_MODE;
+  if (
+    localAuthMode === "single_user" &&
+    req.originalUrl.startsWith("/aletheia")
+  ) {
+    setLocalAletheiaUser(res, "local-single-user");
+    next();
+    return;
+  }
+
+  const token = bearerToken(req);
+  if (
+    localAuthMode === "private_token" &&
+    req.originalUrl.startsWith("/aletheia")
+  ) {
+    const expected = process.env.ALETHEIA_PRIVATE_AUTH_TOKEN?.trim() ?? "";
+    if (!expected) {
+      res.status(500).json({
+        detail:
+          "Aletheia private token auth is enabled but ALETHEIA_PRIVATE_AUTH_TOKEN is not configured",
+      });
+      return;
+    }
+    if (!token || !constantTimeTokenEqual(token, expected)) {
+      res.status(401).json({ detail: "Invalid Aletheia private token" });
+      return;
+    }
+    setLocalAletheiaUser(res, "local-private-token");
+    next();
+    return;
+  }
+
+  if (!token) {
     res.status(401).json({ detail: "Missing or invalid Authorization header" });
     return;
   }
-  const token = auth.slice(7).trim();
 
   const supabaseUrl = process.env.SUPABASE_URL ?? "";
   const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
@@ -174,7 +229,8 @@ export async function requireMfaIfEnrolled(
   });
 
   if (isDev) {
-    const { data: userData, error: userError } = await admin.auth.getUser(token);
+    const { data: userData, error: userError } =
+      await admin.auth.getUser(token);
     devLog("[auth/mfa] user factors", {
       method: req.method,
       path: req.originalUrl,
