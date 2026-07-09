@@ -5,20 +5,19 @@ design notes in the existing architecture and deployment documents.
 
 ## Current Stage
 
-Current stage: local-first MVP / private pilot candidate.
+Current stage: **V1 local/private-pilot candidate completed; production/SaaS
+not claimed.**
 
-It is not production-ready for the default Supabase path yet.
+Aletheia is ready for bounded local reviewer evaluation. It is not presented as
+production SaaS, legal advice software, or a replacement for qualified
+professionals.
 
 Reviewer-facing orientation starts in `README.md`, then continues through
+`docs/v1_private_pilot_status.md`, `docs/v1_acceptance_matrix.md`,
 `docs/reviewer_walkthrough.md`, `docs/demo_script.md`,
 `docs/deepseek_pitch.md`, and `docs/feature_map.md`.
 
-## Continuous Engineering Loop
-
-A local operator loop pattern is documented for continuous engineering
-validation. Before each development cycle, run the operator health check,
-inspect the worktree, choose the smallest useful improvement, and run relevant
-validations.
+## Validation Entry Points
 
 The fast operator health entrypoint is:
 

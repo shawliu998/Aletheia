@@ -21,14 +21,14 @@ Herdr-style multi-agent observability, Tutti-style shared context and handoff,
 and Hermes-style skills/memory loops, rebuilt around evidence, expert control,
 local-first operation, audit readiness, and eval-driven improvement.
 
-Current stage: **local-first MVP / private pilot candidate**. Aletheia is not
-positioned as production-ready legal advice software or as a replacement for
-qualified professionals.
+Current stage: **V1 local/private-pilot candidate completed; production/SaaS
+not claimed.** Aletheia is not positioned as production SaaS, legal advice
+software, or a replacement for qualified professionals.
 
 ## V1 Private Pilot Snapshot
 
-As of 2026-07-09, the V1 private-pilot path is usable for a bounded local
-operator demo with explicit caveats. It should be presented as an
+As of 2026-07-09, the V1 local/private-pilot candidate is completed for bounded
+reviewer evaluation with explicit caveats. It should be presented as an
 expert-support workspace, not production SaaS and not legal advice.
 
 Working local/private-pilot scope:
@@ -57,8 +57,8 @@ Unavailable or partial V1 scope:
   persisted review-to-eval workflow.
 - External model calls remain off by default for sensitive/private data and
   must be explicitly configured, logged, and auditable if enabled later.
-- Full Playwright UI smoke for the updated V1 route/export flow remains a final
-  validation item.
+- Full Playwright UI smoke for the updated V1 route/export flow passed for the
+  local/private-pilot validation path.
 
 ## What A Reviewer Should Notice
 
@@ -93,9 +93,10 @@ Unavailable or partial V1 scope:
 12. Open the Compliance Impact Review and Deal Due Diligence templates for
     adjacent workflow previews.
 
-See `docs/reviewer_walkthrough.md`, `docs/demo_script.md`,
-`docs/feature_map.md`, and `docs/deepseek_pitch.md` for reviewer-facing
-walkthrough and positioning material.
+See `docs/v1_private_pilot_status.md`, `docs/v1_acceptance_matrix.md`,
+`docs/reviewer_walkthrough.md`, `docs/demo_script.md`, `docs/feature_map.md`,
+and `docs/deepseek_pitch.md` for reviewer-facing walkthrough and positioning
+material.
 
 ## Workflow Templates
 

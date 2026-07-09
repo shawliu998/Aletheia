@@ -1,11 +1,15 @@
-# Local-First MVP Release Notes
+# V1 Private Pilot Candidate Release Notes
 
-This note summarizes the current Aletheia local-first MVP.
+Current stage: **V1 local/private-pilot candidate completed; production/SaaS
+not claimed.**
+
+This note summarizes the current Aletheia local/private-pilot candidate.
 
 ## V1 Private-Pilot Update
 
-The V1 private-pilot path is launchable for local operator review with explicit
-caveats. The local Remote Matter Command Center export path now fetches
+The V1 local/private-pilot candidate is completed for bounded reviewer
+evaluation with explicit caveats. The local Remote Matter Command Center export
+path now fetches
 `GET /aletheia/matters/:matterId/v1/source-index` and passes the returned source
 index into the export package builder. Downloaded local AgentOps export packages
 can include `audit_pack.source_index_manifest` with document, chunk, and
@@ -178,8 +182,8 @@ npm run build
 - Review-derived eval cases are not yet a persisted review-to-eval workflow.
 - Browser UI smoke is committed as a Playwright test across desktop and mobile
   with screenshot baseline assertions for the initial workspace render.
-- The updated V1 route/export Playwright spec still needs final UI smoke
-  validation before handoff.
+- The updated V1 route/export Playwright spec passed full desktop/mobile UI
+  smoke for the local/private-pilot validation path.
 - Signed installer distribution and production SSO/session policy are still
   outside the prototype package.
 
