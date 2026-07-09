@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_PORT="${ALETHEIA_DESKTOP_BACKEND_PORT:-43761}"
 FRONTEND_PORT="${ALETHEIA_DESKTOP_FRONTEND_PORT:-43760}"
 API_BASE="http://127.0.0.1:${BACKEND_PORT}"
+DESKTOP_VERSION="$(node -p "require('${ROOT_DIR}/desktop/package.json').version")"
 
 echo "==> Building backend"
 (
@@ -38,6 +39,13 @@ echo "==> Packaging Aletheia desktop app"
   ALETHEIA_DESKTOP_BACKEND_PORT="${BACKEND_PORT}" \
   ALETHEIA_DESKTOP_FRONTEND_PORT="${FRONTEND_PORT}" \
   npm run dist:mac
+)
+
+echo "==> Generating checksums"
+(
+  cd "${ROOT_DIR}/desktop/dist"
+  shasum -a 256 "Aletheia-${DESKTOP_VERSION}-"*.dmg "Aletheia-${DESKTOP_VERSION}-"*.zip \
+    > "Aletheia-${DESKTOP_VERSION}-SHA256SUMS.txt"
 )
 
 echo "==> Desktop artifacts"

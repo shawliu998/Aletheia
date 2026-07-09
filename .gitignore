@@ -3,6 +3,9 @@ node_modules
 dist
 out
 build
+!desktop/build/
+!desktop/build/icon.icns
+!desktop/build/icon.png
 .open-next
 
 .env

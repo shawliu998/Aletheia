@@ -9,7 +9,7 @@ export const metadata: Metadata = {
         "Agent workspace for verifiable, reviewable, and auditable professional work.",
     icons: {
         icon: [
-            { url: "/icon.svg", type: "image/svg+xml" },
+            { url: "/icon.png", type: "image/png", sizes: "1024x1024" },
             { url: "/favicon.ico" },
         ],
         apple: "/apple-touch-icon.png",

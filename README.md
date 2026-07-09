@@ -62,17 +62,25 @@ Set `ALETHEIA_DEMO_SEED_ENABLED=false` in `.env` before starting Docker for a
 blank workspace. See `docs/install_local.md` for data reset, private-token
 mode, and validation details.
 
-## Desktop App Packaging
+## Desktop App
 
-For a local macOS desktop build that does not require Docker:
+Aletheia also ships as an unsigned macOS local desktop app. It bundles the
+local backend and frontend, stores data on the local machine, and does not
+require Docker or Supabase.
+
+Download the latest desktop release asset from GitHub, then verify the
+published SHA256 checksum before opening it. Because the project does not yet
+have an Apple Developer ID, macOS may show an unidentified developer warning on
+first launch.
+
+To build the desktop app locally:
 
 ```bash
 ./scripts/package-desktop-mac.sh
 ```
 
-The packaged app starts the bundled backend and frontend locally, stores data in
-the app user-data directory, and opens `/aletheia`. See `docs/desktop_app.md`
-for ports, scope, and packaging notes.
+See `docs/desktop_app.md` for unsigned install steps, ports, validation, and
+the future Developer ID signing/notarization path.
 
 ## V1 Private Pilot Snapshot
 

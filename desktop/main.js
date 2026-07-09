@@ -9,6 +9,7 @@ const FRONTEND_PORT = Number(process.env.ALETHEIA_DESKTOP_FRONTEND_PORT ?? 43760
 const HOST = "127.0.0.1";
 const BACKEND_URL = `http://${HOST}:${BACKEND_PORT}`;
 const FRONTEND_URL = `http://${HOST}:${FRONTEND_PORT}`;
+const WORKSPACE_PATH = "/aletheia/matters";
 
 let mainWindow = null;
 const children = new Set();
@@ -29,9 +30,9 @@ function loadingHtml(message) {
       html, body {
         margin: 0;
         height: 100%;
-        background: #f7f8f8;
+        background: linear-gradient(180deg, #f4f7fb 0%, #eef2f7 100%);
         color: #111827;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       }
       body {
         display: grid;
@@ -39,6 +40,12 @@ function loadingHtml(message) {
       }
       main {
         width: min(420px, calc(100vw - 48px));
+        border: 1px solid rgba(255, 255, 255, 0.76);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.56);
+        padding: 28px;
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+        backdrop-filter: blur(22px);
       }
       h1 {
         margin: 0;
@@ -57,7 +64,7 @@ function loadingHtml(message) {
         height: 6px;
         overflow: hidden;
         border-radius: 999px;
-        background: #e5e7eb;
+        background: rgba(17, 24, 39, 0.08);
       }
       .bar::before {
         display: block;
@@ -65,6 +72,7 @@ function loadingHtml(message) {
         height: 100%;
         border-radius: inherit;
         background: #111827;
+        box-shadow: 0 2px 8px rgba(17, 24, 39, 0.22);
         animation: load 1.4s ease-in-out infinite;
         content: "";
       }
@@ -105,7 +113,7 @@ function createWindow() {
   });
   mainWindow.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(
-      loadingHtml("Starting the local professional workspace..."),
+      loadingHtml("Opening local workspace..."),
     )}`,
   );
 }
@@ -254,7 +262,7 @@ async function startServices() {
       },
     },
   );
-  await waitForHttp(`${FRONTEND_URL}/aletheia`, 45_000);
+  await waitForHttp(`${FRONTEND_URL}${WORKSPACE_PATH}`, 45_000);
 }
 
 function stopServices() {
@@ -267,7 +275,7 @@ async function boot() {
   createWindow();
   try {
     await startServices();
-    await mainWindow.loadURL(`${FRONTEND_URL}/aletheia`);
+    await mainWindow.loadURL(`${FRONTEND_URL}${WORKSPACE_PATH}`);
   } catch (error) {
     console.error("[desktop] startup failed", error);
     dialog.showErrorBox(
