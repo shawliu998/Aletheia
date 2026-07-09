@@ -126,6 +126,11 @@ function main() {
       "core-validation-entrypoints",
       packageScript(root, "backend/package.json", "build") &&
         packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:preflight",
+        ) &&
         packageScript(root, "backend/package.json", "check:aletheia:backup") &&
         packageScript(root, "backend/package.json", "check:aletheia:restore") &&
         packageScript(root, "backend/package.json", "check:aletheia:privacy") &&
@@ -247,6 +252,7 @@ function main() {
         warnings: warnings.length,
         recommendedNextCommands: [
           "cd backend && npm run build",
+          "cd backend && npm run check:aletheia:preflight",
           "cd backend && npm run check:aletheia:doctor",
           "cd backend && npm run check:aletheia:backup",
           "cd backend && npm run check:aletheia:restore",

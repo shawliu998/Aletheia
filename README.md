@@ -124,6 +124,18 @@ npm run test:aletheia:retrieval-eval
 This checks keyword, optional local-json semantic, hybrid retrieval,
 fail-closed policy, and matter isolation before retrieval ranking changes.
 
+Run the private preflight before a handoff or local package:
+
+```bash
+cd backend
+npm run check:aletheia:preflight
+```
+
+This runs the backend build, local-first audits, local regression, restore
+drill, retrieval eval, package preflight, completion audit, and frontend
+lint/build in deployment order. Set `ALETHEIA_PREFLIGHT_INCLUDE_UI=true` to add
+the Playwright UI smoke suite.
+
 Run the fast operator health check before a scheduled engineering loop decides
 which heavier validations to run:
 

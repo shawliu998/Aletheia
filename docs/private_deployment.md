@@ -47,6 +47,11 @@ Operational notes:
 
 - Keep `.data/aletheia` outside synced public folders.
 - Back up `.data/aletheia/aletheia.db`, `documents/`, and `exports/` together.
+- Run `npm run check:aletheia:preflight` before handoff or packaging. It runs
+  the backend build, local-first audits, local regression, restore drill,
+  retrieval eval, package preflight, completion audit, and frontend lint/build
+  in deployment order. Set `ALETHEIA_PREFLIGHT_INCLUDE_UI=true` when the
+  operator also wants the Playwright UI smoke suite.
 - Run `npm run check:aletheia:backup` to produce a machine-readable backup
   manifest before handoff or migration.
 - Run `ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore`
@@ -151,6 +156,7 @@ Before upgrading:
 - stop backend, frontend, and MCP processes;
 - back up `.data/aletheia`;
 - run `npm run build`;
+- run `npm run check:aletheia:preflight`;
 - run `npm run check:aletheia:doctor`;
 - run `npm run check:aletheia:backup`;
 - run `ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore`;

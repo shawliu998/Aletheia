@@ -57,6 +57,17 @@ ALET_HEIA_DATA_DIR=.data/aletheia
 
 ## Run
 
+Before packaging or handing off a private local pilot, run the full private
+preflight:
+
+```bash
+cd backend
+npm run check:aletheia:preflight
+```
+
+Set `ALETHEIA_PREFLIGHT_INCLUDE_UI=true` when the operator also wants the
+Playwright UI smoke suite in the same pass.
+
 Before starting a private local pilot, run the runtime doctor:
 
 ```bash

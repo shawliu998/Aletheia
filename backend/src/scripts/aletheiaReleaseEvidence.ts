@@ -18,6 +18,7 @@ type EvidenceFile = {
 };
 
 const VALIDATION_COMMANDS = [
+  "cd backend && npm run check:aletheia:preflight",
   "cd backend && npm run build",
   "cd backend && npm run check:aletheia:doctor",
   "cd backend && npm run check:aletheia:backup",
@@ -155,7 +156,8 @@ function main() {
     ),
     check(
       "validation-entrypoints-present",
-      packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
+      packageScript(root, "backend/package.json", "check:aletheia:preflight") &&
+        packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
         packageScript(root, "backend/package.json", "check:aletheia:backup") &&
         packageScript(root, "backend/package.json", "check:aletheia:restore") &&
         packageScript(root, "backend/package.json", "check:aletheia:privacy") &&

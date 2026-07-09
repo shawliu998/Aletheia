@@ -5,6 +5,10 @@ not a release process yet; it defines what must be true before packaging.
 
 ## Required Local Capabilities
 
+- `npm run check:aletheia:preflight` passes before private handoff or local
+  package generation. It runs backend build, local-first audits, local
+  regression, restore drill, retrieval eval, package preflight, completion
+  audit, and frontend lint/build in deployment order.
 - `npm run check:aletheia:doctor` passes in the target local/private
   environment.
 - `npm run check:aletheia:backup` produces the backup scope manifest.
@@ -128,6 +132,7 @@ Restore should verify:
 ```bash
 cd backend
 npm run build
+npm run check:aletheia:preflight
 npm run check:aletheia:doctor
 npm run check:aletheia:backup
 ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore

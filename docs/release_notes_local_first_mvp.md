@@ -102,6 +102,7 @@ and replayable audit records.
 
 ```bash
 cd backend
+npm run check:aletheia:preflight
 npm run test:aletheia:local
 npm run test:aletheia:restore-drill
 npm run test:aletheia:retrieval-eval

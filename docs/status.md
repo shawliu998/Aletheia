@@ -24,6 +24,12 @@ The fast operator health entrypoint is:
 cd backend && npm run check:aletheia:operator
 ```
 
+The private deployment preflight entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:preflight
+```
+
 The local deployment doctor entrypoint is:
 
 ```bash
@@ -158,6 +164,7 @@ Run before demos or packaging:
 
 ```bash
 cd backend && npm run build
+cd backend && npm run check:aletheia:preflight
 cd backend && npm run check:aletheia:doctor
 cd backend && npm run check:aletheia:backup
 cd backend && npm run check:aletheia:restore
@@ -186,6 +193,9 @@ cd frontend && npm run build
 Current known result:
 
 - backend TypeScript build passes.
+- private deployment preflight passes and runs the backend build,
+  local-first audits, local regression, restore drill, retrieval eval, package
+  preflight, completion audit, and frontend lint/build in deployment order.
 - local deployment doctor passes for local/private runtime readiness.
 - local backup manifest check passes and reports the backup scope for
   `aletheia.db`, `documents/`, `exports/`, and `index/`.

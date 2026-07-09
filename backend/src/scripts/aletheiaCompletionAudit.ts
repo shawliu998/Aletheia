@@ -334,6 +334,7 @@ function main() {
         "docs/status.md",
       ],
       checks: [
+        packageScript(root, "backend/package.json", "check:aletheia:preflight"),
         packageScript(root, "backend/package.json", "build"),
         packageScript(root, "backend/package.json", "check:aletheia:doctor"),
         packageScript(root, "backend/package.json", "check:aletheia:backup"),
@@ -421,6 +422,7 @@ function main() {
           "npm run test:aletheia:ui",
         ]),
         contains(root, "docs/status.md", [
+          "npm run check:aletheia:preflight",
           "npm run check:aletheia:doctor",
           "npm run check:aletheia:backup",
           "npm run check:aletheia:restore",
