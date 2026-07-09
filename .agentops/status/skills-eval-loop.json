@@ -1,6 +1,6 @@
 {
   "agent": "skills-eval-loop",
-  "updatedAt": "2026-07-09T20:29:52+08:00",
+  "updatedAt": "2026-07-10T02:10:00+08:00",
   "status": "done",
   "scope": [
     "backend/src/lib/aletheia/repository.ts",
@@ -10,31 +10,46 @@
     "backend/src/scripts/aletheiaApprovedSkillActivationAudit.ts",
     "backend/src/scripts/aletheiaApprovalPolicyAudit.ts",
     "backend/package.json",
+    "frontend/src/lib/agentops/eval.ts",
+    "frontend/tests/agentops/skillsEval.test.ts",
     "docs/agentops/professional-skills-loop.md",
     ".agentops/status/skills-eval-loop.json"
   ],
-  "summary": "Completed the V1 local-only approved skill activation workflow: review-derived eval cases can feed a candidate skill, explicit human approval activates it as an approved matter-scoped playbook skill, and the activation writes an auditable local event.",
+  "summary": "Completed the V1 local-only approved skill activation workflow and added Hermes Professional Phase 2 eval snapshot provenance. Review-derived eval cases can feed a candidate skill, explicit human approval activates it as an approved matter-scoped playbook skill, activation writes an auditable local event, and eval snapshots now preserve source review, gate, checkpoint, evidence, claim, audit, feedback export, candidate skill, approved playbook, and persisted gate evidence IDs.",
   "contractsChanged": [
     "POST /aletheia/matters/:matterId/skills/approve-candidate local route",
     "AletheiaRepository.approveSkillCandidate local-only contract",
     "aletheia-approved-skill-activation-local-v1 response contract",
     "aletheia-approved-skill-playbook-local-v1 playbook content contract",
-    "approved_skill_activated audit event contract"
+    "approved_skill_activated audit event contract",
+    "EvalSnapshotProvenance",
+    "EvalSnapshotProvenanceOptions.persistedGateEvidence",
+    "buildEvalSnapshotProvenance",
+    "Eval snapshot sourceReviewCommentIds/sourceGateResultIds/sourceCheckpointIds/sourceEvidenceItemIds/sourceClaimIds/sourceAuditEventIds",
+    "Eval snapshot feedbackExportIds/candidateSkillIds/approvedPlaybookIds"
   ],
   "testsRun": [
     "cd backend && npm run check:aletheia:approved-skill-activation",
     "cd backend && npm run check:aletheia:approval-policy",
     "node .agentops/scripts/check-agentops.mjs",
     "git diff --check",
-    "cd backend && npm run build"
+    "cd backend && npm run build",
+    "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js (4 tests passed, 2026-07-10)",
+    "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js (34 tests passed, 2026-07-10)",
+    "cd frontend && npm run lint (passed, 2026-07-10)",
+    "cd frontend && npx tsc --noEmit --pretty false (passed, 2026-07-10)",
+    "cd backend && npm run check:aletheia:operator (ok true, dirty-worktree warning only, 2026-07-10)"
   ],
   "risks": [
     "The activation workflow is local-only and matter-scoped; it does not implement a production/global skill registry.",
+    "EvalSnapshotProvenance is read-only provenance for review/regression analysis; it is not a persisted learning signal, quality claim, or skill approval.",
+    "Candidate skills remain inactive until backed by a human-approved playbook record.",
     "Supabase eval/skill persistence intentionally remains unavailable for V1 local-only.",
     "Real-provider eval loops and pricing/provider adapters remain outside this local workflow."
   ],
   "needs": [
     "Keep production/Supabase/global governance work separate from V1 local-only acceptance.",
-    "Future UI wiring can call the approved skill activation route from Eval Workbench without changing the backend approval invariant."
+    "Future UI wiring can call the approved skill activation route from Eval Workbench without changing the backend approval invariant.",
+    "Next Phase 2 slices can connect eval snapshot provenance into export package summaries or start a narrow AnduAI parity workflow fixture."
   ]
 }

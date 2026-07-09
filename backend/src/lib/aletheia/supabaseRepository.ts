@@ -635,6 +635,46 @@ export class SupabaseAletheiaRepository implements AletheiaRepository {
     );
   }
 
+  async approveShareholderPenetrationGraph(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _graphId: string,
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Shareholder graph approval is currently available only in local Aletheia storage mode.",
+    );
+  }
+
+  async approveLegalQaAnswer(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _answerId: string,
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Legal Q&A approval is currently available only in local Aletheia storage mode.",
+    );
+  }
+
+  async approveWordAddinHandoff(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _handoffId: string,
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Word Add-in handoff approval is currently available only in local Aletheia storage mode.",
+    );
+  }
+
+  async approvePreferenceLearningCandidate(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _memoryItemId: string,
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Preference learning approval is currently available only in local Aletheia storage mode.",
+    );
+  }
+
   async listReviewDerivedEvalCases(
     _ctx: AletheiaUserContext,
     _matterId: string,

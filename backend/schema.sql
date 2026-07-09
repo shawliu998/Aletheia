@@ -863,7 +863,11 @@ create table if not exists public.aletheia_work_products (
       'red_flag_memo',
       'audit_pack',
       'feedback_export',
-      'registry_snapshot'
+      'registry_snapshot',
+      'external_source_workpaper',
+      'shareholder_penetration_graph',
+      'legal_qa_answer',
+      'word_addin_handoff'
     )
   ),
   title text not null,

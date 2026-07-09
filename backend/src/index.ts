@@ -74,6 +74,12 @@ const uploadLimiter = makeLimiter({
   message: "Too many upload requests. Please try again later.",
 });
 
+const externalSourceLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_EXTERNAL_SOURCE_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_EXTERNAL_SOURCE_MAX", 20),
+  message: "Too many external-source retrieval requests. Please try again later.",
+});
+
 const exportLimiter = makeLimiter({
   windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
   max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
@@ -126,6 +132,7 @@ app.post("/chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/generate", chatLimiter);
+app.post("/aletheia/matters/:matterId/external-source/fetch", externalSourceLimiter);
 app.post("/chat/create", chatCreateLimiter);
 app.post("/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/single-documents", uploadLimiter);

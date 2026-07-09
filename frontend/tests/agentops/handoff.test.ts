@@ -272,6 +272,53 @@ test("buildTypedHandoffProvenance carries adapter gate source records into hando
   assert.ok(openItems.sourceRecordIds.auditEventIds.includes("audit-memo-generated"));
 });
 
+test("buildTypedHandoffProvenance carries persisted gate evidence into matching handoffs", () => {
+  const provenance = buildTypedHandoffProvenance(sampleAgentOpsWorkspace, {
+    gateProvenance: [
+      {
+        gateId: "gate-human-approval",
+        gateType: "human_approval",
+        status: "passed",
+        sourceType: "human_checkpoint",
+        sourceId: "checkpoint-final-export",
+        sourceStatus: "approved",
+        relatedWorkProductIds: [sampleAgentOpsWorkspace.draft_memos[0].id],
+        relatedReviewIds: ["review-comment-open-items"],
+        relatedAuditEventIds: ["audit-gate-snapshot-final"],
+      },
+    ],
+    persistedGateEvidence: {
+      gate_result_ids: ["gate-human-approval"],
+      approval_checkpoint_ids: ["checkpoint-final-export"],
+      gate_snapshot_audit_event_ids: ["audit-gate-snapshot-final"],
+      gate_authorization_audit_event_ids: ["audit-final-export-authorized"],
+      blocked_final_export_audit_event_ids: [],
+      related_gate_audit_event_ids: [
+        "audit-gate-snapshot-final",
+        "audit-final-export-authorized",
+      ],
+      validation: [
+        {
+          name: "persisted_gate_snapshot",
+          status: "passed",
+          detail: "Persisted gate snapshot exists.",
+        },
+      ],
+    },
+  });
+  const memo = provenance.find(
+    (item) => item.artifactId === sampleAgentOpsWorkspace.draft_memos[0].id,
+  );
+
+  assert.ok(memo);
+  assert.ok(memo.gateResultIds.includes("gate-human-approval"));
+  assert.ok(memo.sourceRecordIds.checkpointIds.includes("checkpoint-final-export"));
+  assert.ok(memo.sourceRecordIds.auditEventIds.includes("audit-gate-snapshot-final"));
+  assert.ok(
+    memo.sourceRecordIds.auditEventIds.includes("audit-final-export-authorized"),
+  );
+});
+
 test("evaluateTypedHandoffReadiness summarizes a ready preview chain with warnings", () => {
   const readiness = evaluateTypedHandoffReadiness(sampleAgentOpsWorkspace);
 

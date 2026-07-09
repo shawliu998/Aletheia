@@ -1,6 +1,6 @@
 {
   "agent": "audit-eval-export",
-  "updatedAt": "2026-07-09T20:22:00+08:00",
+  "updatedAt": "2026-07-10T02:20:00+08:00",
   "status": "done",
   "scope": [
     "frontend/src/aletheia/agentops/exportPackage.ts",
@@ -16,7 +16,7 @@
     "frontend/tests/agentops/exportPackage.test.ts",
     "frontend/tests/agentops/adapters.test.ts"
   ],
-  "summary": "Audit/Eval export is complete for local-only V1. Local review comments produce persisted review-derived eval cases, audit package and durable eval exports are exposed through approval-gated local API routes, and each export writes a local JSON file, SQLite export metadata, source-index manifest, export hash, and audit event.",
+  "summary": "Audit/Eval export is complete for local-only V1 and has started Hermes Professional Phase 2 hardening. Local review comments produce persisted review-derived eval cases, audit package and durable eval exports are exposed through approval-gated local API routes, and each export writes a local JSON file, SQLite export metadata, source-index manifest, export hash, and audit event. The AgentOps ExportPackage now carries read-only persisted gate evidence IDs and eval snapshot provenance for source runs, reviews, gates, checkpoints, evidence, claims, audit events, feedback exports, candidate skills, and approved playbooks.",
   "contractsChanged": [
     "AgentOps AuditPack export schema aletheia-audit-pack-v1",
     "AgentOps EvalCaseExport schema aletheia-eval-case-export-v1",
@@ -26,6 +26,20 @@
     "buildReviewCommentAuditEvents ReviewComment to AuditEvent export mapping",
     "buildGateResultAuditEvents GateResult to AuditEvent export mapping",
     "AuditPack.typed_handoff_provenance",
+    "AuditPack.persisted_gate_evidence schema aletheia-persisted-gate-evidence-v1",
+    "AuditPack.eval_snapshot_provenance",
+    "ExportPackage.manifest eval_snapshot_source_runs count",
+    "ExportPackage.manifest eval_snapshot_source_reviews count",
+    "ExportPackage.manifest eval_snapshot_source_gates count",
+    "ExportPackage.manifest eval_snapshot_source_audit_events count",
+    "ExportPackage.manifest eval_snapshot_feedback_exports count",
+    "ExportPackage.manifest eval_snapshot_candidate_skills count",
+    "ExportPackage.manifest eval_snapshot_approved_playbooks count",
+    "ExportPackage.manifest persisted_gate_snapshot_audit_events count",
+    "ExportPackage.manifest persisted_gate_authorization_audit_events count",
+    "ExportPackage.manifest persisted_gate_blocked_audit_events count",
+    "ExportPackage.manifest approval_checkpoint_ids count",
+    "validateExportPackageIntegrity persisted_gate_evidence validation contract",
     "ExportPackage.manifest.handoff_provenance_items",
     "validateExportPackageIntegrity export package integrity contract",
     "ExportPackage tamper-detection test coverage for package_hash and manifest_counts",
@@ -48,16 +62,30 @@
     "cd backend && npx tsx src/scripts/aletheiaReviewResolutionAudit.ts",
     "cd backend && npm run check:aletheia:local-export-routes",
     "cd frontend && npx tsc --noEmit",
-    "node .agentops/scripts/check-agentops.mjs"
+    "node .agentops/scripts/check-agentops.mjs",
+    "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js (16 tests passed, 2026-07-10 Phase 2 persisted gate evidence slice)",
+    "cd frontend && npm run lint (passed, 2026-07-10)",
+    "cd frontend && npx tsc --noEmit --pretty false (passed, 2026-07-10)",
+    "cd backend && npm run check:aletheia:operator (ok true, dirty-worktree warning only, 2026-07-10)",
+    "node .agentops/scripts/check-agentops.mjs (passed, 2026-07-10)",
+    "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js (16 tests passed, 2026-07-10 eval snapshot export slice)",
+    "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js (34 tests passed, 2026-07-10 eval snapshot export slice)",
+    "cd frontend && npm run lint (passed, 2026-07-10 eval snapshot export slice)",
+    "cd frontend && npx tsc --noEmit --pretty false (passed, 2026-07-10 eval snapshot export slice)",
+    "cd backend && npm run check:aletheia:operator (ok true, dirty-worktree warning only, 2026-07-10 eval snapshot export slice)"
   ],
   "risks": [
     "ExportPackage is a local/view-layer schema and must remain behind persisted approval gates for high-risk audit and feedback exports.",
+    "Persisted gate evidence in AgentOps ExportPackage is read-only provenance. It preserves audit event and checkpoint IDs when supplied; it does not authorize final export by itself.",
+    "Eval snapshot provenance in AgentOps ExportPackage is read-only provenance. It is not a persisted learning signal, product quality claim, or skill approval.",
+    "Final export gate pass without gate_results_persisted, final_export_gate_authorized, and approval checkpoint provenance now remains visible as failed persisted_gate_evidence validation.",
     "Remote export content is still generated from existing matter detail records; local backend routes now persist audit/eval export packages for local-only V1.",
     "ToolCall audit events are export-scoped records anchored to their AgentRun because the shared ArtifactType vocabulary does not yet include a first-class tool_call artifact.",
     "ReviewComment and GateResult audit events are export-scoped derived records; they do not replace first-class persisted backend audit rows.",
     "Supabase review-derived eval and export persistence are explicitly unsupported in local-only V1."
   ],
   "needs": [
+    "Next Phase 2 slices can start a narrow AnduAI parity workflow fixture for external-source workpapers or shareholder graph source edges.",
     "Production/SaaS export parity remains outside the local-only V1 scope.",
     "Installer and enterprise deployment packaging remain outside this lane."
   ]

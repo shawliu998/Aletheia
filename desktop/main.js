@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell, utilityProcess } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -12,6 +12,11 @@ const WORKSPACE_PATH = "/aletheia/matters";
 
 let mainWindow = null;
 const children = new Set();
+let restartingServices = null;
+
+function localDataDir() {
+  return path.join(app.getPath("userData"), "aletheia-data");
+}
 
 function resourceRoot() {
   return app.isPackaged
@@ -98,11 +103,18 @@ function createWindow() {
     minWidth: 1060,
     minHeight: 720,
     title: "Aletheia",
-    backgroundColor: "#f7f8f8",
+    backgroundColor: "#eef1f5",
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : {}),
     webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   });
 
@@ -201,7 +213,7 @@ async function startServices() {
   const root = resourceRoot();
   assertPackagedResources(root);
 
-  const dataDir = path.join(app.getPath("userData"), "aletheia-data");
+  const dataDir = localDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
   const backendDir = path.join(root, "backend");
@@ -247,6 +259,16 @@ async function startServices() {
         NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
         NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN:
           process.env.NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN ?? "",
+        NEXT_PUBLIC_ALETHEIA_LOCAL_CLIENT:
+          process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_CLIENT ?? "true",
+        NEXT_PUBLIC_ALETHEIA_LOCAL_USER_ID:
+          process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_USER_ID ??
+          process.env.ALETHEIA_LOCAL_USER_ID ??
+          "desktop-local-user",
+        NEXT_PUBLIC_ALETHEIA_LOCAL_USER_EMAIL:
+          process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_USER_EMAIL ??
+          process.env.ALETHEIA_LOCAL_USER_EMAIL ??
+          "desktop@aletheia.local",
         NEXT_PUBLIC_SUPABASE_URL:
           process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
         NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY:
@@ -264,6 +286,49 @@ function stopServices() {
   }
 }
 
+function registerIpc() {
+  ipcMain.handle("aletheia:get-info", () => ({
+    appVersion: app.getVersion(),
+    backendUrl: BACKEND_URL,
+    frontendUrl: FRONTEND_URL,
+    dataDir: localDataDir(),
+    logsDir: app.getPath("logs"),
+    localClient: true,
+  }));
+
+  ipcMain.handle("aletheia:open-data-directory", async () => {
+    const dataDir = localDataDir();
+    fs.mkdirSync(dataDir, { recursive: true });
+    const error = await shell.openPath(dataDir);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
+
+  ipcMain.handle("aletheia:open-logs-directory", async () => {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    const error = await shell.openPath(logsDir);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
+
+  ipcMain.handle("aletheia:restart-local-services", async () => {
+    if (restartingServices) return restartingServices;
+    restartingServices = (async () => {
+      stopServices();
+      await wait(750);
+      await startServices();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await mainWindow.loadURL(`${FRONTEND_URL}${WORKSPACE_PATH}`);
+      }
+      return { restarted: true };
+    })().finally(() => {
+      restartingServices = null;
+    });
+    return restartingServices;
+  });
+}
+
 async function boot() {
   createWindow();
   try {
@@ -279,7 +344,10 @@ async function boot() {
   }
 }
 
-app.whenReady().then(boot);
+app.whenReady().then(() => {
+  registerIpc();
+  return boot();
+});
 
 app.on("before-quit", stopServices);
 app.on("window-all-closed", () => {

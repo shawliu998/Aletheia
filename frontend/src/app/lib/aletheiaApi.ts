@@ -185,7 +185,11 @@ export type AletheiaWorkProductKind =
   | "red_flag_memo"
   | "audit_pack"
   | "feedback_export"
-  | "registry_snapshot";
+  | "registry_snapshot"
+  | "external_source_workpaper"
+  | "shareholder_penetration_graph"
+  | "legal_qa_answer"
+  | "word_addin_handoff";
 
 export type AletheiaWorkProductStatus =
   "draft" | "generated" | "needs_review" | "accepted" | "superseded";
@@ -679,6 +683,35 @@ export async function generateAletheiaEvidenceMatrix(
   );
 }
 
+export type AletheiaExternalSourceCapture = {
+  schemaVersion: "hermes-external-source-capture-v1";
+  matterId: string;
+  connector: "allowlisted_https_fetch";
+  networkFetchDispatched: true;
+  url: string;
+  host: string;
+  capturedAt: string;
+  urlHash: string;
+  snapshotHash: string;
+  observation: string;
+  contentType: string;
+  responseBytes: number;
+};
+
+export async function fetchAletheiaExternalSource(
+  matterId: string,
+  payload: { url: string; externalAccessOptIn: true },
+): Promise<AletheiaExternalSourceCapture> {
+  return apiRequest<AletheiaExternalSourceCapture>(
+    `/aletheia/matters/${matterId}/external-source/fetch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function generateAletheiaIssueMap(
   matterId: string,
 ): Promise<AletheiaWorkProductRecord> {
@@ -897,6 +930,46 @@ export async function resolveAletheiaReview(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function approveAletheiaShareholderPenetrationGraph(
+  matterId: string,
+  graphId: string,
+): Promise<AletheiaWorkProductRecord> {
+  return apiRequest<AletheiaWorkProductRecord>(
+    `/aletheia/matters/${matterId}/shareholder-graphs/${graphId}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+export async function approveAletheiaLegalQaAnswer(
+  matterId: string,
+  answerId: string,
+): Promise<AletheiaWorkProductRecord> {
+  return apiRequest<AletheiaWorkProductRecord>(
+    `/aletheia/matters/${matterId}/legal-qa/${answerId}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+export async function approveAletheiaWordAddinHandoff(matterId: string, handoffId: string): Promise<AletheiaWorkProductRecord> {
+  return apiRequest<AletheiaWorkProductRecord>(`/aletheia/matters/${matterId}/word-addin/${handoffId}/approve`, { method: "POST", headers: { "Content-Type": "application/json" } });
+}
+
+export async function approveAletheiaPreferenceLearningCandidate(
+  matterId: string,
+  memoryItemId: string,
+): Promise<AletheiaPlaybookRecord> {
+  return apiRequest<AletheiaPlaybookRecord>(
+    `/aletheia/matters/${matterId}/preference-learning/${memoryItemId}/approve`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
   );
 }
 

@@ -28,6 +28,10 @@ import {
 import type { V1RuntimePersistenceInput } from "../lib/aletheia/v1RuntimePersistence";
 import { requireAuth } from "../middleware/auth";
 import { multiFileUpload, singleFileUpload } from "../lib/upload";
+import {
+  ExternalSourceFetchPolicyError,
+  fetchAllowlistedExternalSource,
+} from "../lib/aletheia/externalSourceFetch";
 
 export const aletheiaRouter = Router();
 
@@ -255,6 +259,12 @@ function handleRouteError(
   res: { status: (code: number) => { json: (body: unknown) => void } },
   error: unknown,
 ) {
+  if (error instanceof ExternalSourceFetchPolicyError) {
+    return void res.status(error.statusCode).json({
+      code: "external_source_policy",
+      detail: error.message,
+    });
+  }
   if (error instanceof LocalAdapterNotReadyError) {
     return void res.status(501).json({
       detail:
@@ -582,6 +592,40 @@ aletheiaRouter.get("/matters/:matterId", requireAuth, async (req, res) => {
   }
 });
 
+// POST /aletheia/matters/:matterId/external-source/fetch
+// Retrieval is separate from work-product persistence: callers must still
+// create a reviewable workpaper and audit chain from the returned capture.
+aletheiaRouter.post(
+  "/matters/:matterId/external-source/fetch",
+  requireAuth,
+  async (req, res) => {
+    const sourceUrl = text(req.body?.url, 4000);
+    if (!sourceUrl) return void res.status(400).json({ detail: "url is required" });
+    if (req.body?.externalAccessOptIn !== true) {
+      return void res.status(403).json({
+        code: "external_source_policy",
+        detail: "Explicit per-matter external-source authorization is required.",
+      });
+    }
+    try {
+      const repo = createAletheiaRepository();
+      const matter = await repo.getMatterDetail(userContext(res), req.params.matterId);
+      if (!matter) return void res.status(404).json({ detail: "Matter not found" });
+      const capture = await fetchAllowlistedExternalSource({
+        url: sourceUrl,
+        externalAccessOptIn: true,
+      });
+      res.json({
+        schemaVersion: "hermes-external-source-capture-v1",
+        matterId: req.params.matterId,
+        ...capture,
+      });
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
 // POST /aletheia/matters/:matterId/work-products
 aletheiaRouter.post(
   "/matters/:matterId/work-products",
@@ -748,6 +792,78 @@ aletheiaRouter.post(
           .status(404)
           .json({ detail: "Matter or review comment not found" });
       }
+      res.json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// POST /aletheia/matters/:matterId/shareholder-graphs/:graphId/approve
+aletheiaRouter.post(
+  "/matters/:matterId/shareholder-graphs/:graphId/approve",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().approveShareholderPenetrationGraph(
+        userContext(res),
+        req.params.matterId,
+        req.params.graphId,
+      );
+      if (!data) {
+        return void res.status(404).json({ detail: "Matter or shareholder graph not found" });
+      }
+      res.json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// POST /aletheia/matters/:matterId/legal-qa/:answerId/approve
+aletheiaRouter.post(
+  "/matters/:matterId/legal-qa/:answerId/approve",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().approveLegalQaAnswer(
+        userContext(res),
+        req.params.matterId,
+        req.params.answerId,
+      );
+      if (!data) return void res.status(404).json({ detail: "Matter or Legal Q&A answer not found" });
+      res.json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// POST /aletheia/matters/:matterId/word-addin/:handoffId/approve
+aletheiaRouter.post(
+  "/matters/:matterId/word-addin/:handoffId/approve",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().approveWordAddinHandoff(userContext(res), req.params.matterId, req.params.handoffId);
+      if (!data) return void res.status(404).json({ detail: "Matter or Word Add-in handoff not found" });
+      res.json(data);
+    } catch (error) { handleRouteError(res, error); }
+  },
+);
+
+// POST /aletheia/matters/:matterId/preference-learning/:memoryItemId/approve
+aletheiaRouter.post(
+  "/matters/:matterId/preference-learning/:memoryItemId/approve",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().approvePreferenceLearningCandidate(
+        userContext(res),
+        req.params.matterId,
+        req.params.memoryItemId,
+      );
+      if (!data) return void res.status(404).json({ detail: "Matter or preference candidate not found" });
       res.json(data);
     } catch (error) {
       handleRouteError(res, error);

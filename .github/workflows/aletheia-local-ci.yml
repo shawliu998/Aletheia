@@ -69,6 +69,8 @@ jobs:
           npm run check:aletheia:audit-workbench
           npm run check:aletheia:tool-policy
           npm run check:aletheia:approval-policy
+          npm run check:aletheia:external-source-connector
+          npm run check:aletheia:word-addin-manifest
           npm run check:aletheia:matter-isolation
           npm run check:aletheia:run-trace
           npm run check:aletheia:evidence

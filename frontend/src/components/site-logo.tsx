@@ -40,7 +40,7 @@ export function SiteLogo({
         >
             <AletheiaIcon size={iconSizes[size]} />
             <span>Aletheia</span>
-            <span className="ml-1 text-[0.55em] font-sans font-medium text-[#6b7280]">
+            <span className="brand-cjk ml-2 translate-y-[0.02em] text-[0.45em] leading-none text-[#69707d]">
                 明证
             </span>
         </h1>

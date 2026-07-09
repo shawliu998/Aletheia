@@ -1,13 +1,5 @@
-import {
-  AlertTriangle,
-  CheckCircle2,
-  CircleDashed,
-  ShieldAlert,
-  XCircle,
-} from "lucide-react";
 import { canExportFinal } from "@/aletheia/agentops/gates";
 import type { GateResult, GateStatus } from "@/aletheia/agentops/types";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 type GateProvenanceView = {
@@ -26,13 +18,6 @@ type GateSourceRefView = {
   quote_end?: number | null;
   claim_id?: string | null;
 };
-
-const statusIcon = {
-  passed: CheckCircle2,
-  warning: AlertTriangle,
-  failed: XCircle,
-  skipped: CircleDashed,
-} satisfies Record<GateStatus, typeof CheckCircle2>;
 
 function titleize(value: string) {
   return value.replaceAll("_", " ");
@@ -54,10 +39,21 @@ function sourceMeta(ref: GateSourceRefView) {
 }
 
 function statusClass(status: GateStatus) {
-  if (status === "passed") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === "warning") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "failed") return "border-red-200 bg-red-50 text-red-700";
-  return "border-gray-200 bg-gray-50 text-gray-600";
+  if (status === "passed") return "bg-emerald-500 text-emerald-700";
+  if (status === "warning") return "bg-amber-500 text-amber-700";
+  if (status === "failed") return "bg-red-500 text-red-700";
+  return "bg-gray-300 text-gray-500";
+}
+
+function StatusText({ status }: { status: GateStatus }) {
+  const [dotClass, textClass] = statusClass(status).split(" ");
+
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs", textClass)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", dotClass)} />
+      {titleize(status)}
+    </span>
+  );
 }
 
 export function GateChecklist({
@@ -77,29 +73,32 @@ export function GateChecklist({
   return (
     <section
       data-testid="agentops-gate-checklist"
-      className={cn("rounded-lg border border-[#e5e7eb] bg-white p-4", className)}
+      className={cn(
+        "overflow-hidden rounded-lg border border-[#e5e7eb] bg-white",
+        className,
+      )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-[#111827]" />
-          <h2 className="font-semibold">Trust Gates</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-[#111827]">Trust gates</h2>
+          <p className="mt-0.5 text-xs text-[#6b7280]">
+            Export controls and source requirements.
+          </p>
         </div>
-        <Badge
-          variant="outline"
+        <span
           className={cn(
-            "rounded-md",
+            "text-xs font-medium",
             finalAllowed
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-red-200 bg-red-50 text-red-700",
+              ? "text-emerald-700"
+              : "text-red-700",
           )}
         >
           {finalAllowed ? "Final export ready" : "Final export blocked"}
-        </Badge>
+        </span>
       </div>
 
-      <div className="mt-3 space-y-2">
+      <div className="divide-y divide-gray-100">
         {gateResults.map((gate) => {
-          const Icon = statusIcon[gate.status];
           const provenance = provenanceByGateId.get(gate.id);
           const sourceCount = provenance?.source_record_refs.length ?? 0;
           const unresolvedCount =
@@ -108,26 +107,18 @@ export function GateChecklist({
           return (
             <div
               key={gate.id}
-              className="rounded-md border border-[#edf0f2] bg-[#fbfcfc] p-3"
+              className="px-4 py-3"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="flex min-w-0 items-start gap-2">
-                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[#374151]" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[#111827]">
-                      {titleize(gate.gate_type)}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-[#6b7280]">
-                      {gate.reason}
-                    </p>
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[#111827]">
+                    {titleize(gate.gate_type)}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[#6b7280]">
+                    {gate.reason}
+                  </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={cn("rounded-md", statusClass(gate.status))}
-                >
-                  {titleize(gate.status)}
-                </Badge>
+                <StatusText status={gate.status} />
               </div>
               {gate.required_action && (
                 <p className="mt-2 text-xs leading-5 text-[#374151]">
@@ -136,12 +127,12 @@ export function GateChecklist({
               )}
               {provenance && (
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-md border border-[#e5e7eb] bg-white px-2 py-1 text-[#374151]">
+                  <span className="text-[#374151]">
                     {sourceCount} persisted source
                     {sourceCount === 1 ? "" : "s"}
                   </span>
                   {unresolvedCount > 0 && (
-                    <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                    <span className="text-amber-800">
                       {unresolvedCount} source gap
                       {unresolvedCount === 1 ? "" : "s"}
                     </span>

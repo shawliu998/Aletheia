@@ -149,7 +149,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             >
                                 Aletheia
                             </span>
-                            <span className="text-xs font-medium text-[#5e756d]">
+                            <span className="brand-cjk text-[11px] leading-none text-[#6b7280]">
                                 明证
                             </span>
                         </Link>

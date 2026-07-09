@@ -1,40 +1,37 @@
 import Link from "next/link";
-import {
-  AlertCircle,
-  CheckCircle2,
-  CircleDashed,
-  Clock3,
-  FileWarning,
-  Loader2,
-  XCircle,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { AgentCommandCenterCard } from "@/aletheia/agentops/agentStatus";
 import type { ArtifactRef, ProfessionalAgentStatus } from "@/aletheia/agentops";
 
 const statusClasses: Record<ProfessionalAgentStatus, string> = {
-  idle: "border-gray-200 bg-gray-50 text-gray-600",
-  working: "border-blue-100 bg-blue-50 text-blue-700",
-  blocked: "border-red-100 bg-red-50 text-red-700",
-  review_needed: "border-amber-100 bg-amber-50 text-amber-700",
-  waiting_for_approval: "border-purple-100 bg-purple-50 text-purple-700",
-  done: "border-emerald-100 bg-emerald-50 text-emerald-700",
-  failed: "border-red-200 bg-red-50 text-red-800",
+  idle: "bg-gray-300 text-gray-500",
+  working: "bg-blue-500 text-blue-700",
+  blocked: "bg-red-500 text-red-700",
+  review_needed: "bg-amber-500 text-amber-700",
+  waiting_for_approval: "bg-amber-500 text-amber-700",
+  done: "bg-emerald-500 text-emerald-700",
+  failed: "bg-red-500 text-red-700",
 };
-
-const statusIcons = {
-  idle: CircleDashed,
-  working: Loader2,
-  blocked: AlertCircle,
-  review_needed: FileWarning,
-  waiting_for_approval: Clock3,
-  done: CheckCircle2,
-  failed: XCircle,
-} satisfies Record<ProfessionalAgentStatus, typeof CircleDashed>;
 
 function artifactLabel(type: string) {
   return type.replaceAll("_", " ");
+}
+
+function StatusText({
+  status,
+  label,
+}: {
+  status: ProfessionalAgentStatus;
+  label: string;
+}) {
+  const [dotClass, textClass] = statusClasses[status].split(" ");
+
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs", textClass)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", dotClass)} />
+      {label}
+    </span>
+  );
 }
 
 export function AgentStatusCard({
@@ -44,7 +41,6 @@ export function AgentStatusCard({
   card: AgentCommandCenterCard;
   artifactHref: (artifact: ArtifactRef) => string;
 }) {
-  const StatusIcon = statusIcons[card.agent.status];
   const blocker =
     card.agent.blocked_reason ||
     (card.agent.status === "waiting_for_approval"
@@ -54,29 +50,23 @@ export function AgentStatusCard({
   return (
     <article
       data-testid="agent-status-card"
-      className="flex min-h-[320px] flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+      className="flex min-h-[292px] flex-col rounded-lg border border-gray-200 bg-white p-4"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase text-gray-400">
+          <p className="text-xs font-medium text-gray-500">
             {card.roleLabel}
           </p>
           <h3 className="mt-1 text-base font-semibold leading-6 text-gray-950">
             {card.agent.name}
           </h3>
         </div>
-        <Badge
-          variant="outline"
-          className={cn("rounded-md px-2 py-1 text-[11px]", statusClasses[card.agent.status])}
-        >
-          <StatusIcon className="h-3 w-3" />
-          {card.statusLabel}
-        </Badge>
+        <StatusText status={card.agent.status} label={card.statusLabel} />
       </div>
 
       <dl className="mt-4 space-y-3 text-sm">
         <div>
-          <dt className="text-xs font-semibold uppercase text-gray-400">
+          <dt className="text-xs font-medium text-gray-500">
             Current task
           </dt>
           <dd className="mt-1 leading-5 text-gray-700">
@@ -85,8 +75,8 @@ export function AgentStatusCard({
         </div>
 
         {blocker && (
-          <div className="rounded-md border border-red-100 bg-red-50 p-3">
-            <dt className="text-xs font-semibold uppercase text-red-700">
+          <div className="border-l border-red-300 pl-3">
+            <dt className="text-xs font-medium text-red-700">
               Missing input
             </dt>
             <dd className="mt-1 leading-5 text-red-800">{blocker}</dd>
@@ -94,7 +84,7 @@ export function AgentStatusCard({
         )}
 
         <div>
-          <dt className="text-xs font-semibold uppercase text-gray-400">
+          <dt className="text-xs font-medium text-gray-500">
             Last run
           </dt>
           <dd className="mt-1 font-medium leading-5 text-gray-800">
@@ -103,7 +93,7 @@ export function AgentStatusCard({
         </div>
 
         <div>
-          <dt className="text-xs font-semibold uppercase text-gray-400">
+          <dt className="text-xs font-medium text-gray-500">
             Next action
           </dt>
           <dd className="mt-1 leading-5 text-gray-700">
@@ -114,16 +104,13 @@ export function AgentStatusCard({
 
       <div className="mt-4 border-t border-gray-100 pt-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase text-gray-400">
+          <p className="text-xs font-medium text-gray-500">
             Related artifacts
           </p>
           {card.reviewNeeded && (
-            <Badge
-              variant="outline"
-              className="rounded-md border-amber-100 bg-amber-50 px-2 py-1 text-[11px] text-amber-700"
-            >
+            <span className="text-xs text-amber-700">
               Expert attention
-            </Badge>
+            </span>
           )}
         </div>
 

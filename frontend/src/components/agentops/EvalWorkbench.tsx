@@ -1,10 +1,8 @@
-import { BarChart3, FileWarning, MessageSquareWarning, ShieldX } from "lucide-react";
 import type { AgentOpsMatterWorkspace } from "@/aletheia/agentops";
 import {
   computeWorkspaceEvalMetrics,
   suggestProfessionalSkillCandidates,
 } from "@/lib/agentops";
-import { Badge } from "@/components/ui/badge";
 import { SkillCandidateList } from "./SkillCandidateList";
 
 function formatPercent(value: number) {
@@ -34,25 +32,21 @@ export function EvalWorkbench({
       label: "Citation Coverage",
       value: formatPercent(metrics.citation_coverage),
       detail: "memo sections with evidence",
-      icon: BarChart3,
     },
     {
       label: "Unsupported Claims",
       value: metrics.unsupported_claim_count,
       detail: "requires evidence or open-item labeling",
-      icon: FileWarning,
     },
     {
       label: "Open Review Comments",
       value: metrics.unresolved_review_comments,
       detail: "expert feedback still unresolved",
-      icon: MessageSquareWarning,
     },
     {
       label: "Gate Failures",
       value: metrics.gate_failure_count,
       detail: "workflow stops before export",
-      icon: ShieldX,
     },
   ];
 
@@ -68,25 +62,21 @@ export function EvalWorkbench({
             candidate skills until a human approves a playbook update.
           </p>
         </div>
-        <Badge
-          variant="outline"
-          className="rounded-md border-gray-200 bg-white px-2 py-1 text-xs text-gray-600"
-        >
+        <span className="text-xs font-medium text-gray-500">
           {workspace.eval_cases.length} eval cases
-        </Badge>
+        </span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid overflow-hidden rounded-lg border border-gray-200 bg-white sm:grid-cols-2 lg:grid-cols-4">
         {metricCards.map((item) => (
           <div
             key={item.label}
-            className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+            className="border-b border-r border-gray-100 p-4 last:border-r-0 sm:[&:nth-child(2n)]:border-r-0 lg:border-b-0 lg:[&:nth-child(2n)]:border-r lg:[&:nth-child(4n)]:border-r-0"
           >
-            <item.icon className="h-4 w-4 text-gray-500" />
-            <p className="mt-3 text-2xl font-semibold text-gray-950">
+            <p className="text-2xl font-semibold text-gray-950">
               {item.value}
             </p>
-            <p className="mt-1 text-xs font-semibold uppercase text-gray-400">
+            <p className="mt-1 text-xs font-medium text-gray-500">
               {item.label}
             </p>
             <p className="mt-2 text-xs leading-5 text-gray-600">
@@ -97,7 +87,7 @@ export function EvalWorkbench({
       </div>
 
       {metrics.issue_coverage && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm font-semibold text-gray-950">
               Issue coverage
@@ -107,9 +97,9 @@ export function EvalWorkbench({
               {metrics.issue_coverage.total_issue_count} covered
             </span>
           </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
+          <div className="mt-3 h-1 overflow-hidden rounded-full bg-gray-100">
             <div
-              className="h-full rounded-full bg-gray-950"
+              className="h-full rounded-full bg-gray-800"
               style={{ width: formatPercent(metrics.issue_coverage.score) }}
             />
           </div>

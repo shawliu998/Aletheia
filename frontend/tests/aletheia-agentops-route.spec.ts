@@ -66,6 +66,32 @@ test("matter-scoped AgentOps route renders adapter-backed artifacts", async ({
   await expect(commandCenter).toContainText("Draft Memo");
   await expect(commandCenter).toContainText("audit_pack_exported");
   await expect(commandCenter).toContainText("memo_generated");
+  await expect(page.getByTestId("external-source-workpaper-panel")).toContainText(
+    "Automated network retrieval remains disabled",
+  );
+  await page
+    .getByTestId("external-source-query")
+    .fill("issuer public-source verification");
+  await page
+    .getByTestId("external-source-url")
+    .fill("https://example.test/issuer");
+  await page
+    .getByTestId("external-source-observation")
+    .fill("Captured public issuer profile for counsel review.");
+  await page.getByTestId("external-source-opt-in").check();
+  await page.getByTestId("record-external-source-workpaper").click();
+  await expect(
+    page.getByTestId("external-source-workpaper-status"),
+  ).toContainText("External-source workpaper recorded");
+  await expect(page.getByTestId("external-source-workpaper-record")).toContainText(
+    "https://example.test/issuer",
+  );
+  await expect(page.getByTestId("external-source-workpaper-record")).toContainText(
+    "needs review",
+  );
+  await expect(page.getByTestId("external-source-workpaper-record")).toContainText(
+    "Provenance validated",
+  );
   await expect(
     commandCenter
       .getByRole("link", { name: /Synthetic source record for Aletheia UI smoke/ })

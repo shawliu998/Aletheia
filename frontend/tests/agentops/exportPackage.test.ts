@@ -6,6 +6,7 @@ import {
   buildEvalCaseExport,
   buildExportPackage,
   buildExportAuthorization,
+  buildPersistedGateEvidence,
   buildV1SourceIndexManifest,
   buildGateResultAuditEvents,
   buildHumanApprovalLog,
@@ -110,6 +111,49 @@ function localSourceIndex(): V1SourceIndexSnapshot {
     limitations: [
       "Local source index lists parsed document records, chunks, and evidence source links; full document/page preview remains a separate UI concern.",
       "Supabase V1 document retrieval/listing is not implemented for the private pilot.",
+    ],
+  };
+}
+
+function workspaceWithPersistedGateEvidence(): AgentOpsMatterWorkspace {
+  return {
+    ...sampleAgentOpsWorkspace,
+    gate_results: sampleAgentOpsWorkspace.gate_results.map((gate) => ({
+      ...gate,
+      status: "passed" as const,
+    })).concat([
+      {
+        id: "gate-export-final-ready",
+        matter_id: sampleAgentOpsWorkspace.matter.id,
+        gate_type: "export" as const,
+        status: "passed" as const,
+        reason: "Persisted gate snapshot and approval evidence are present.",
+        affected_artifact_ids: [sampleAgentOpsWorkspace.draft_memos[0]!.id],
+        created_at: exportedAt,
+      },
+    ]),
+    audit_events: [
+      ...sampleAgentOpsWorkspace.audit_events,
+      {
+        id: "audit-gate-snapshot-final",
+        matter_id: sampleAgentOpsWorkspace.matter.id,
+        actor_type: "system",
+        actor_id: "gate-engine",
+        action: "gate_results_persisted",
+        artifact_id: sampleAgentOpsWorkspace.draft_memos[0]!.id,
+        artifact_type: "draft_memo",
+        timestamp: exportedAt,
+      },
+      {
+        id: "audit-final-export-authorized",
+        matter_id: sampleAgentOpsWorkspace.matter.id,
+        actor_type: "system",
+        actor_id: "gate-engine",
+        action: "final_export_gate_authorized",
+        artifact_id: sampleAgentOpsWorkspace.draft_memos[0]!.id,
+        artifact_type: "draft_memo",
+        timestamp: exportedAt,
+      },
     ],
   };
 }
@@ -339,8 +383,44 @@ test("buildExportPackage wraps audit and eval exports with manifest counts", () 
     exportPackage.eval_case_export.cases.length,
   );
   assert.equal(
+    exportPackage.manifest.eval_snapshot_source_runs,
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceRunIds.length,
+  );
+  assert.equal(
+    exportPackage.manifest.eval_snapshot_source_reviews,
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceReviewCommentIds
+      .length,
+  );
+  assert.equal(
+    exportPackage.manifest.eval_snapshot_source_gates,
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceGateResultIds.length,
+  );
+  assert.equal(
+    exportPackage.manifest.eval_snapshot_source_audit_events,
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceAuditEventIds.length,
+  );
+  assert.equal(
+    exportPackage.manifest.eval_snapshot_candidate_skills,
+    exportPackage.audit_pack.eval_snapshot_provenance.candidateSkillIds.length,
+  );
+  assert.equal(
     exportPackage.manifest.handoff_provenance_items,
     exportPackage.audit_pack.typed_handoff_provenance.length,
+  );
+  assert.equal(
+    exportPackage.manifest.persisted_gate_snapshot_audit_events,
+    exportPackage.audit_pack.persisted_gate_evidence
+      .gate_snapshot_audit_event_ids.length,
+  );
+  assert.equal(
+    exportPackage.manifest.persisted_gate_authorization_audit_events,
+    exportPackage.audit_pack.persisted_gate_evidence
+      .gate_authorization_audit_event_ids.length,
+  );
+  assert.equal(
+    exportPackage.manifest.approval_checkpoint_ids,
+    exportPackage.audit_pack.persisted_gate_evidence.approval_checkpoint_ids
+      .length,
   );
   assert.equal(
     exportPackage.audit_pack.export_hash,
@@ -552,10 +632,130 @@ test("buildExportAuthorization allows draft warnings and fails closed for final 
     authorizedFinalPackage.audit_pack.export_authorization.status,
     "authorized",
   );
+  assert.equal(
+    authorizedFinalPackage.audit_pack.persisted_gate_evidence.validation.find(
+      (item) => item.name === "persisted_gate_snapshot",
+    )?.status,
+    "failed",
+  );
   assert.equal(authorizedFinalPackage.manifest.final_export_allowed, true);
   assert.equal(
     validateExportPackageIntegrity(authorizedFinalPackage).find(
       (item) => item.name === "manifest_counts",
+    )?.status,
+    "passed",
+  );
+  assert.equal(
+    validateExportPackageIntegrity(authorizedFinalPackage).find(
+      (item) => item.name === "persisted_gate_evidence",
+    )?.status,
+    "failed",
+  );
+});
+
+test("buildExportPackage preserves persisted final gate evidence IDs", () => {
+  const workspace = workspaceWithPersistedGateEvidence();
+  const gateProvenance: GateProvenance[] = [
+    {
+      gateId: "gate-human-approval",
+      gateType: "human_approval",
+      status: "passed",
+      sourceType: "human_checkpoint",
+      sourceId: "checkpoint-final-memo-export",
+      sourceStatus: "approved",
+      relatedWorkProductIds: [sampleAgentOpsWorkspace.draft_memos[0]!.id],
+      relatedReviewIds: ["review-comment-open-items"],
+      relatedAuditEventIds: [
+        "audit-gate-snapshot-final",
+        "audit-final-export-authorized",
+      ],
+    },
+  ];
+  const exportAuthorization = buildExportAuthorization(
+    workspace.gate_results,
+    "final",
+  );
+  const evidence = buildPersistedGateEvidence(workspace, exportAuthorization, {
+    gateProvenance,
+    exportIntent: "final",
+  });
+  const exportPackage = buildExportPackage(workspace, exportedAt, {
+    exportIntent: "final",
+    gateProvenance,
+    feedbackExportIds: ["feedback-export-final"],
+    approvedPlaybookIds: ["playbook-final-export"],
+  });
+
+  assert.equal(evidence.final_export_allowed, true);
+  assert.deepEqual(evidence.gate_snapshot_audit_event_ids, [
+    "audit-gate-snapshot-final",
+  ]);
+  assert.deepEqual(evidence.gate_authorization_audit_event_ids, [
+    "audit-final-export-authorized",
+  ]);
+  assert.deepEqual(evidence.approval_checkpoint_ids, [
+    "checkpoint-final-memo-export",
+  ]);
+  assert.equal(
+    exportPackage.audit_pack.persisted_gate_evidence.schema_version,
+    "aletheia-persisted-gate-evidence-v1",
+  );
+  assert.equal(
+    exportPackage.manifest.persisted_gate_snapshot_audit_events,
+    1,
+  );
+  assert.equal(
+    exportPackage.manifest.persisted_gate_authorization_audit_events,
+    1,
+  );
+  assert.equal(exportPackage.manifest.approval_checkpoint_ids, 1);
+  assert.equal(exportPackage.manifest.eval_snapshot_feedback_exports, 1);
+  assert.equal(exportPackage.manifest.eval_snapshot_approved_playbooks, 1);
+  assert.ok(
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceAuditEventIds.includes(
+      "audit-gate-snapshot-final",
+    ),
+  );
+  assert.ok(
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceAuditEventIds.includes(
+      "audit-final-export-authorized",
+    ),
+  );
+  assert.ok(
+    exportPackage.audit_pack.eval_snapshot_provenance.sourceCheckpointIds.includes(
+      "checkpoint-final-memo-export",
+    ),
+  );
+  assert.deepEqual(
+    exportPackage.audit_pack.eval_snapshot_provenance.feedbackExportIds,
+    ["feedback-export-final"],
+  );
+  assert.deepEqual(
+    exportPackage.audit_pack.eval_snapshot_provenance.approvedPlaybookIds,
+    ["playbook-final-export"],
+  );
+  const memoHandoff = exportPackage.audit_pack.typed_handoff_provenance.find(
+    (item) => item.artifactId === sampleAgentOpsWorkspace.draft_memos[0]!.id,
+  );
+  assert.ok(memoHandoff);
+  assert.ok(
+    memoHandoff.sourceRecordIds.auditEventIds.includes(
+      "audit-gate-snapshot-final",
+    ),
+  );
+  assert.ok(
+    memoHandoff.sourceRecordIds.auditEventIds.includes(
+      "audit-final-export-authorized",
+    ),
+  );
+  assert.ok(
+    memoHandoff.sourceRecordIds.checkpointIds.includes(
+      "checkpoint-final-memo-export",
+    ),
+  );
+  assert.equal(
+    validateExportPackageIntegrity(exportPackage).find(
+      (item) => item.name === "persisted_gate_evidence",
     )?.status,
     "passed",
   );
@@ -612,6 +812,7 @@ test("buildExportPackage includes adapter gate provenance in typed handoff expor
       ["package_hash", "passed"],
       ["audit_pack_hash", "passed"],
       ["manifest_counts", "passed"],
+      ["persisted_gate_evidence", "warning"],
       ["evidence_audit_eval_loop", "passed"],
       ["human_review_gate_loop", "passed"],
     ],
@@ -628,6 +829,7 @@ test("validateExportPackageIntegrity verifies hash, manifest, and loop linkage",
       ["package_hash", "passed"],
       ["audit_pack_hash", "passed"],
       ["manifest_counts", "passed"],
+      ["persisted_gate_evidence", "warning"],
       ["evidence_audit_eval_loop", "passed"],
       ["human_review_gate_loop", "passed"],
     ],

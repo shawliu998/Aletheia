@@ -24,6 +24,8 @@ import type {
   TypedHandoffProvenance,
   TypedHandoffProvenanceOptions,
 } from "./handoff";
+import { buildEvalSnapshotProvenance } from "../../lib/agentops/eval";
+import type { EvalSnapshotProvenance } from "../../lib/agentops/eval";
 
 export const EVAL_FAILURE_TYPES = [
   "unsupported_claim",
@@ -143,6 +145,21 @@ export type ExportAuthorization = {
   validation: ExportValidationItem[];
 };
 
+export type PersistedGateEvidence = {
+  schema_version: "aletheia-persisted-gate-evidence-v1";
+  matter_id: string;
+  source: "audit_events_and_gate_provenance";
+  gate_result_ids: string[];
+  approval_checkpoint_ids: string[];
+  gate_snapshot_audit_event_ids: string[];
+  gate_authorization_audit_event_ids: string[];
+  blocked_final_export_audit_event_ids: string[];
+  related_gate_audit_event_ids: string[];
+  final_export_allowed: boolean;
+  validation: ExportValidationItem[];
+  warnings: string[];
+};
+
 export type AuditPack = {
   schema_version: "aletheia-audit-pack-v1";
   exported_at: string;
@@ -161,8 +178,10 @@ export type AuditPack = {
   typed_handoff_provenance: TypedHandoffProvenance[];
   audit_events: AgentOpsMatterWorkspace["audit_events"];
   eval_cases: EvalCase[];
+  eval_snapshot_provenance: EvalSnapshotProvenance;
   source_index_manifest?: V1SourceIndexManifest;
   export_authorization: ExportAuthorization;
+  persisted_gate_evidence: PersistedGateEvidence;
   validation: ExportValidationItem[];
   export_hash: string;
 };
@@ -200,9 +219,20 @@ export type ExportPackage = {
     tool_calls: number;
     handoff_provenance_items: number;
     eval_cases: number;
+    eval_snapshot_source_runs: number;
+    eval_snapshot_source_reviews: number;
+    eval_snapshot_source_gates: number;
+    eval_snapshot_source_audit_events: number;
+    eval_snapshot_feedback_exports: number;
+    eval_snapshot_candidate_skills: number;
+    eval_snapshot_approved_playbooks: number;
     source_index_documents: number;
     source_index_chunks: number;
     source_index_source_links: number;
+    persisted_gate_snapshot_audit_events: number;
+    persisted_gate_authorization_audit_events: number;
+    persisted_gate_blocked_audit_events: number;
+    approval_checkpoint_ids: number;
     final_export_allowed: boolean;
   };
   export_hash: string;
@@ -211,6 +241,9 @@ export type ExportPackage = {
 export type ExportPackageBuildOptions = TypedHandoffProvenanceOptions & {
   sourceIndex?: V1SourceIndexSnapshot;
   exportIntent?: ExportIntent;
+  feedbackExportIds?: string[];
+  candidateSkillIds?: string[];
+  approvedPlaybookIds?: string[];
 };
 
 const LOCAL_ONLY_SOURCE_INDEX_LIMITATION =
@@ -481,6 +514,106 @@ export function buildExportAuthorization(
         detail,
       },
     ],
+  };
+}
+
+function auditEventIdsByAction(events: AuditEvent[], action: string) {
+  return events
+    .filter((event) => event.action === action)
+    .map((event) => event.id);
+}
+
+export function buildPersistedGateEvidence(
+  workspace: AgentOpsMatterWorkspace,
+  exportAuthorization: ExportAuthorization,
+  options: ExportPackageBuildOptions = {},
+): PersistedGateEvidence {
+  const gateProvenance = options.gateProvenance ?? [];
+  const approvalCheckpointIds = uniqueStrings(
+    gateProvenance.flatMap((item) =>
+      item.sourceType === "human_checkpoint" && item.sourceId
+        ? [item.sourceId]
+        : [],
+    ),
+  );
+  const gateSnapshotAuditEventIds = uniqueStrings(
+    auditEventIdsByAction(workspace.audit_events, "gate_results_persisted"),
+  );
+  const gateAuthorizationAuditEventIds = uniqueStrings(
+    auditEventIdsByAction(
+      workspace.audit_events,
+      "final_export_gate_authorized",
+    ),
+  );
+  const blockedFinalExportAuditEventIds = uniqueStrings(
+    auditEventIdsByAction(workspace.audit_events, "final_export_gate_blocked"),
+  );
+  const relatedGateAuditEventIds = uniqueStrings([
+    ...gateSnapshotAuditEventIds,
+    ...gateAuthorizationAuditEventIds,
+    ...blockedFinalExportAuditEventIds,
+    ...gateProvenance.flatMap((item) => item.relatedAuditEventIds),
+  ]);
+  const finalIntent = exportAuthorization.intent === "final";
+  const finalAllowed = exportAuthorization.final_export_allowed;
+  const missingFinalEvidence = finalIntent && finalAllowed;
+  const validation: ExportValidationItem[] = [
+    {
+      name: "persisted_gate_snapshot",
+      status: gateSnapshotAuditEventIds.length
+        ? "passed"
+        : missingFinalEvidence
+          ? "failed"
+          : "warning",
+      detail: gateSnapshotAuditEventIds.length
+        ? `${gateSnapshotAuditEventIds.length} persisted gate snapshot audit event(s) included.`
+        : missingFinalEvidence
+          ? "Final export gates pass, but no persisted gate_results_persisted audit event ID is included."
+          : "No persisted gate snapshot audit event is included in this preview package.",
+    },
+    {
+      name: "persisted_gate_authorization",
+      status: gateAuthorizationAuditEventIds.length
+        ? "passed"
+        : missingFinalEvidence
+          ? "failed"
+          : "warning",
+      detail: gateAuthorizationAuditEventIds.length
+        ? `${gateAuthorizationAuditEventIds.length} final export authorization audit event(s) included.`
+        : missingFinalEvidence
+          ? "Final export gates pass, but no final_export_gate_authorized audit event ID is included."
+          : "No final export authorization audit event is included in this preview package.",
+    },
+    {
+      name: "approval_checkpoint_provenance",
+      status: approvalCheckpointIds.length
+        ? "passed"
+        : missingFinalEvidence
+          ? "failed"
+          : "warning",
+      detail: approvalCheckpointIds.length
+        ? `${approvalCheckpointIds.length} approval checkpoint ID(s) included through gate provenance.`
+        : missingFinalEvidence
+          ? "Final export gates pass, but no approval checkpoint ID is included through gate provenance."
+          : "No approval checkpoint ID is included through gate provenance.",
+    },
+  ];
+
+  return {
+    schema_version: "aletheia-persisted-gate-evidence-v1",
+    matter_id: workspace.matter.id,
+    source: "audit_events_and_gate_provenance",
+    gate_result_ids: workspace.gate_results.map((gate) => gate.id),
+    approval_checkpoint_ids: approvalCheckpointIds,
+    gate_snapshot_audit_event_ids: gateSnapshotAuditEventIds,
+    gate_authorization_audit_event_ids: gateAuthorizationAuditEventIds,
+    blocked_final_export_audit_event_ids: blockedFinalExportAuditEventIds,
+    related_gate_audit_event_ids: relatedGateAuditEventIds,
+    final_export_allowed: finalAllowed,
+    validation,
+    warnings: validation
+      .filter((item) => item.status !== "passed")
+      .map((item) => item.detail),
   };
 }
 
@@ -958,10 +1091,6 @@ export function buildAuditPack(
   options: ExportPackageBuildOptions = {},
 ): AuditPack {
   const evalCaseExport = buildEvalCaseExport(workspace, exportedAt);
-  const typedHandoffProvenance = buildTypedHandoffProvenance(
-    workspace,
-    options,
-  );
   const sourceIndexManifest = options.sourceIndex
     ? buildV1SourceIndexManifest(options.sourceIndex, workspace.matter.id)
     : undefined;
@@ -969,6 +1098,22 @@ export function buildAuditPack(
     workspace.gate_results,
     options.exportIntent ?? "draft",
   );
+  const persistedGateEvidence = buildPersistedGateEvidence(
+    workspace,
+    exportAuthorization,
+    options,
+  );
+  const typedHandoffProvenance = buildTypedHandoffProvenance(workspace, {
+    ...options,
+    persistedGateEvidence,
+  });
+  const evalSnapshotProvenance = buildEvalSnapshotProvenance(workspace, {
+    snapshotId: `eval-snapshot-${workspace.matter.id}-${exportedAt}`,
+    feedbackExportIds: options.feedbackExportIds,
+    candidateSkillIds: options.candidateSkillIds,
+    approvedPlaybookIds: options.approvedPlaybookIds,
+    persistedGateEvidence,
+  });
   const auditEvents = uniqueById([
     ...workspace.audit_events,
     ...buildAgentRunAuditEvents(workspace, exportedAt),
@@ -997,14 +1142,17 @@ export function buildAuditPack(
     typed_handoff_provenance: typedHandoffProvenance,
     audit_events: auditEvents,
     eval_cases: evalCaseExport.cases,
+    eval_snapshot_provenance: evalSnapshotProvenance,
     ...(sourceIndexManifest
       ? { source_index_manifest: sourceIndexManifest }
       : {}),
     export_authorization: exportAuthorization,
+    persisted_gate_evidence: persistedGateEvidence,
     validation: [
       ...validateExportPackage(workspace),
       ...(sourceIndexManifest ? sourceIndexManifest.validation : []),
       ...exportAuthorization.validation,
+      ...persistedGateEvidence.validation,
     ],
   };
 
@@ -1053,9 +1201,33 @@ export function buildExportPackage(
       tool_calls: buildToolCallLog(workspace).length,
       handoff_provenance_items: auditPack.typed_handoff_provenance.length,
       eval_cases: evalCaseExport.cases.length,
+      eval_snapshot_source_runs:
+        auditPack.eval_snapshot_provenance.sourceRunIds.length,
+      eval_snapshot_source_reviews:
+        auditPack.eval_snapshot_provenance.sourceReviewCommentIds.length,
+      eval_snapshot_source_gates:
+        auditPack.eval_snapshot_provenance.sourceGateResultIds.length,
+      eval_snapshot_source_audit_events:
+        auditPack.eval_snapshot_provenance.sourceAuditEventIds.length,
+      eval_snapshot_feedback_exports:
+        auditPack.eval_snapshot_provenance.feedbackExportIds.length,
+      eval_snapshot_candidate_skills:
+        auditPack.eval_snapshot_provenance.candidateSkillIds.length,
+      eval_snapshot_approved_playbooks:
+        auditPack.eval_snapshot_provenance.approvedPlaybookIds.length,
       source_index_documents: sourceIndexManifest?.document_count ?? 0,
       source_index_chunks: sourceIndexManifest?.chunk_count ?? 0,
       source_index_source_links: sourceIndexManifest?.source_link_count ?? 0,
+      persisted_gate_snapshot_audit_events:
+        auditPack.persisted_gate_evidence.gate_snapshot_audit_event_ids.length,
+      persisted_gate_authorization_audit_events:
+        auditPack.persisted_gate_evidence.gate_authorization_audit_event_ids
+          .length,
+      persisted_gate_blocked_audit_events:
+        auditPack.persisted_gate_evidence.blocked_final_export_audit_event_ids
+          .length,
+      approval_checkpoint_ids:
+        auditPack.persisted_gate_evidence.approval_checkpoint_ids.length,
       final_export_allowed: auditPack.export_authorization.final_export_allowed,
     },
   };
@@ -1095,12 +1267,15 @@ export function validateExportPackageIntegrity(
     typed_handoff_provenance: exportPackage.audit_pack.typed_handoff_provenance,
     audit_events: exportPackage.audit_pack.audit_events,
     eval_cases: exportPackage.audit_pack.eval_cases,
+    eval_snapshot_provenance:
+      exportPackage.audit_pack.eval_snapshot_provenance,
     ...(exportPackage.audit_pack.source_index_manifest
       ? {
           source_index_manifest: exportPackage.audit_pack.source_index_manifest,
         }
       : {}),
     export_authorization: exportPackage.audit_pack.export_authorization,
+    persisted_gate_evidence: exportPackage.audit_pack.persisted_gate_evidence,
     validation: exportPackage.audit_pack.validation,
   });
   const evalSourceIds = new Set([
@@ -1138,6 +1313,14 @@ export function validateExportPackageIntegrity(
   const warningSourceIndexManifestItems = sourceIndexManifestValidation.filter(
     (item) => item.status === "warning",
   );
+  const failedPersistedGateEvidenceItems =
+    exportPackage.audit_pack.persisted_gate_evidence.validation.filter(
+      (item) => item.status === "failed",
+    );
+  const warningPersistedGateEvidenceItems =
+    exportPackage.audit_pack.persisted_gate_evidence.validation.filter(
+      (item) => item.status === "warning",
+    );
 
   return [
     {
@@ -1187,6 +1370,26 @@ export function validateExportPackageIntegrity(
           exportPackage.audit_pack.typed_handoff_provenance.length &&
         exportPackage.manifest.eval_cases ===
           exportPackage.eval_case_export.cases.length &&
+        exportPackage.manifest.eval_snapshot_source_runs ===
+          exportPackage.audit_pack.eval_snapshot_provenance.sourceRunIds.length &&
+        exportPackage.manifest.eval_snapshot_source_reviews ===
+          exportPackage.audit_pack.eval_snapshot_provenance
+            .sourceReviewCommentIds.length &&
+        exportPackage.manifest.eval_snapshot_source_gates ===
+          exportPackage.audit_pack.eval_snapshot_provenance.sourceGateResultIds
+            .length &&
+        exportPackage.manifest.eval_snapshot_source_audit_events ===
+          exportPackage.audit_pack.eval_snapshot_provenance.sourceAuditEventIds
+            .length &&
+        exportPackage.manifest.eval_snapshot_feedback_exports ===
+          exportPackage.audit_pack.eval_snapshot_provenance.feedbackExportIds
+            .length &&
+        exportPackage.manifest.eval_snapshot_candidate_skills ===
+          exportPackage.audit_pack.eval_snapshot_provenance.candidateSkillIds
+            .length &&
+        exportPackage.manifest.eval_snapshot_approved_playbooks ===
+          exportPackage.audit_pack.eval_snapshot_provenance.approvedPlaybookIds
+            .length &&
         exportPackage.manifest.source_index_documents ===
           (exportPackage.audit_pack.source_index_manifest?.document_count ??
             0) &&
@@ -1195,6 +1398,18 @@ export function validateExportPackageIntegrity(
         exportPackage.manifest.source_index_source_links ===
           (exportPackage.audit_pack.source_index_manifest?.source_link_count ??
             0) &&
+        exportPackage.manifest.persisted_gate_snapshot_audit_events ===
+          exportPackage.audit_pack.persisted_gate_evidence
+            .gate_snapshot_audit_event_ids.length &&
+        exportPackage.manifest.persisted_gate_authorization_audit_events ===
+          exportPackage.audit_pack.persisted_gate_evidence
+            .gate_authorization_audit_event_ids.length &&
+        exportPackage.manifest.persisted_gate_blocked_audit_events ===
+          exportPackage.audit_pack.persisted_gate_evidence
+            .blocked_final_export_audit_event_ids.length &&
+        exportPackage.manifest.approval_checkpoint_ids ===
+          exportPackage.audit_pack.persisted_gate_evidence.approval_checkpoint_ids
+            .length &&
         exportPackage.manifest.final_export_allowed ===
           exportPackage.audit_pack.export_authorization.final_export_allowed
           ? "passed"
@@ -1218,6 +1433,19 @@ export function validateExportPackageIntegrity(
           },
         ]
       : []),
+    {
+      name: "persisted_gate_evidence",
+      status: failedPersistedGateEvidenceItems.length
+        ? "failed"
+        : warningPersistedGateEvidenceItems.length
+          ? "warning"
+          : "passed",
+      detail: failedPersistedGateEvidenceItems.length
+        ? `${failedPersistedGateEvidenceItems.length} persisted gate evidence validation item(s) failed.`
+        : warningPersistedGateEvidenceItems.length
+          ? `${warningPersistedGateEvidenceItems.length} persisted gate evidence warning(s) remain visible.`
+          : "Persisted gate snapshot, authorization, and approval checkpoint evidence is included.",
+    },
     {
       name: "evidence_audit_eval_loop",
       status:

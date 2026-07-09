@@ -199,6 +199,26 @@ export interface AletheiaRepository {
     reviewId: string,
     input: ResolveReviewInput,
   ): Promise<unknown | null>;
+  approveShareholderPenetrationGraph(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    graphId: string,
+  ): Promise<unknown | null>;
+  approveLegalQaAnswer(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    answerId: string,
+  ): Promise<unknown | null>;
+  approveWordAddinHandoff(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    handoffId: string,
+  ): Promise<unknown | null>;
+  approvePreferenceLearningCandidate(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    memoryItemId: string,
+  ): Promise<unknown | null>;
   listReviewDerivedEvalCases(
     ctx: AletheiaUserContext,
     matterId: string,

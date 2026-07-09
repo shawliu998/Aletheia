@@ -55,6 +55,10 @@ const EXPORT_ACTIONS: Record<string, string> = {
   feedback_export: "feedback_dataset_exported",
   final_memo: "final_memo_exported",
   registry_snapshot: "registry_snapshot_saved",
+  external_source_workpaper: "external_source_workpaper_saved",
+  shareholder_penetration_graph: "shareholder_penetration_graph_saved",
+  legal_qa_answer: "legal_qa_answer_saved",
+  word_addin_handoff: "word_addin_handoff_saved",
 };
 const REQUIRED_TABLES = [
   "aletheia_matters",
@@ -227,7 +231,7 @@ function main() {
           `
             select id, matter_id, kind, title, created_at
             from aletheia_work_products
-            where kind in ('audit_pack', 'feedback_export', 'final_memo', 'registry_snapshot')
+            where kind in ('audit_pack', 'feedback_export', 'final_memo', 'registry_snapshot', 'external_source_workpaper', 'shareholder_penetration_graph', 'legal_qa_answer', 'word_addin_handoff')
             order by created_at asc
           `,
         )
@@ -246,7 +250,11 @@ function main() {
               'audit_pack_exported',
               'feedback_dataset_exported',
               'final_memo_exported',
-              'registry_snapshot_saved'
+              'registry_snapshot_saved',
+              'external_source_workpaper_saved',
+              'shareholder_penetration_graph_saved',
+              'legal_qa_answer_saved',
+              'word_addin_handoff_saved'
             )
           `,
         )

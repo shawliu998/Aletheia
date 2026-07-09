@@ -89,6 +89,8 @@ The high-risk approval policy audit entrypoint is:
 
 ```bash
 cd backend && npm run check:aletheia:approval-policy
+cd backend && npm run check:aletheia:external-source-connector
+cd backend && npm run check:aletheia:word-addin-manifest
 ```
 
 The matter isolation audit entrypoint is:
@@ -177,6 +179,8 @@ cd backend && npm run check:aletheia:knowledge-governance
 cd backend && npm run check:aletheia:audit-workbench
 cd backend && npm run check:aletheia:tool-policy
 cd backend && npm run check:aletheia:approval-policy
+cd backend && npm run check:aletheia:external-source-connector
+cd backend && npm run check:aletheia:word-addin-manifest
 cd backend && npm run check:aletheia:matter-isolation
 cd backend && npm run check:aletheia:run-trace
 cd backend && npm run check:aletheia:evidence

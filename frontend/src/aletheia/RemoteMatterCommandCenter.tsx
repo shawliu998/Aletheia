@@ -27,8 +27,13 @@ import {
   type AletheiaV1SourceIndex,
 } from "@/app/lib/aletheiaApi";
 import { GateChecklist } from "@/components/agentops/GateChecklist";
+import { ExternalSourceWorkpaperPanel } from "@/components/agentops/ExternalSourceWorkpaperPanel";
+import { LegalQaPanel } from "@/components/agentops/LegalQaPanel";
+import { PreferenceLearningPanel } from "@/components/agentops/PreferenceLearningPanel";
 import { MatterCommandCenter } from "@/components/agentops/MatterCommandCenter";
 import { ReferencePreviewCard } from "@/components/agentops/ReferencePreview";
+import { ShareholderPenetrationGraphPanel } from "@/components/agentops/ShareholderPenetrationGraphPanel";
+import { WordAddinHandoffPanel } from "@/components/agentops/WordAddinHandoffPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -61,8 +66,12 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
   const [sourceIndexStatus, setSourceIndexStatus] = useState("");
 
   const loadRemoteMatter = useCallback(
-    async (isCancelled: () => boolean = () => false) => {
-      setLoading(true);
+    async (
+      isCancelled: () => boolean = () => false,
+      options: { showLoading?: boolean } = {},
+    ) => {
+      const showLoading = options.showLoading ?? true;
+      if (showLoading) setLoading(true);
       setError("");
       setSourceIndex(null);
       setSourceIndexStatus("Loading local V1 source index...");
@@ -104,7 +113,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
         );
       }
 
-      setLoading(false);
+      if (showLoading) setLoading(false);
     },
     [matterId],
   );
@@ -334,6 +343,47 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
           artifactBasePath={`/aletheia/matters/${matterId}/agentops`}
         />
       </div>
+      <section className="mx-auto w-full max-w-7xl px-4 pb-4 sm:px-6 lg:px-8">
+        {detail ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <LegalQaPanel
+              matterId={matterId}
+              detail={detail}
+              onPersisted={async () => {
+                await loadRemoteMatter(() => false, { showLoading: false });
+              }}
+            />
+            <ExternalSourceWorkpaperPanel
+              matterId={matterId}
+              detail={detail}
+              onPersisted={async () => {
+                await loadRemoteMatter(() => false, { showLoading: false });
+              }}
+            />
+            <ShareholderPenetrationGraphPanel
+              matterId={matterId}
+              detail={detail}
+              onPersisted={async () => {
+                await loadRemoteMatter(() => false, { showLoading: false });
+              }}
+            />
+            <WordAddinHandoffPanel
+              matterId={matterId}
+              detail={detail}
+              onPersisted={async () => {
+                await loadRemoteMatter(() => false, { showLoading: false });
+              }}
+            />
+            <PreferenceLearningPanel
+              matterId={matterId}
+              detail={detail}
+              onPersisted={async () => {
+                await loadRemoteMatter(() => false, { showLoading: false });
+              }}
+            />
+          </div>
+        ) : null}
+      </section>
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-6 sm:px-6 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
         {workspace.gate_results.length > 0 ? (
           <div className="grid gap-4">
@@ -341,7 +391,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
             {gateProvenance.length > 0 ? (
               <section
                 data-testid="agentops-gate-provenance"
-                className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+                className="rounded-lg border border-gray-200 bg-white p-5"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -364,7 +414,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   {gateProvenance.map((item) => (
                     <div
                       key={item.gateId}
-                      className="rounded-md border border-gray-100 bg-gray-50 p-3 text-sm"
+                      className="rounded-md border border-gray-100 bg-white p-3 text-sm"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -395,7 +445,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
             ) : null}
           </div>
         ) : (
-          <div className="rounded-lg border border-gray-200 bg-white p-5 text-sm text-gray-600 shadow-sm">
+          <div className="rounded-lg border border-gray-200 bg-white p-5 text-sm text-gray-600">
             No adapter-derived gates are available for this matter yet.
           </div>
         )}
@@ -404,7 +454,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
           {evalMetrics ? (
             <section
               data-testid="adapter-backed-eval-signals"
-              className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+              className="rounded-lg border border-gray-200 bg-white p-5"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -439,9 +489,9 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                 ].map((item) => (
                   <div
                     key={item.label}
-                    className="rounded-md border border-gray-100 bg-gray-50 p-3"
+                    className="rounded-md border border-gray-100 bg-white p-3"
                   >
-                    <dt className="text-xs font-semibold uppercase text-gray-400">
+                    <dt className="text-xs font-medium text-gray-500">
                       {item.label}
                     </dt>
                     <dd className="mt-2 text-xl font-semibold text-gray-950">
@@ -462,7 +512,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
           {exportPackage ? (
             <section
               data-testid="adapter-backed-export-package"
-              className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+              className="rounded-lg border border-gray-200 bg-white p-5"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -482,7 +532,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                  <dt className="text-xs font-medium text-gray-500">
                     Handoff provenance
                   </dt>
                   <dd className="mt-2 text-xl font-semibold text-gray-950">
@@ -490,7 +540,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   </dd>
                 </div>
                 <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                  <dt className="text-xs font-medium text-gray-500">
                     Export hash
                   </dt>
                   <dd className="mt-2 break-all text-sm font-semibold text-gray-950">
@@ -498,7 +548,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   </dd>
                 </div>
                 <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                  <dt className="text-xs font-medium text-gray-500">
                     Source documents
                   </dt>
                   <dd className="mt-2 text-xl font-semibold text-gray-950">
@@ -506,7 +556,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   </dd>
                 </div>
                 <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                  <dt className="text-xs font-medium text-gray-500">
                     Source chunks
                   </dt>
                   <dd className="mt-2 text-xl font-semibold text-gray-950">
@@ -514,7 +564,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   </dd>
                 </div>
                 <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                  <dt className="text-xs font-medium text-gray-500">
                     Final export
                   </dt>
                   <dd className="mt-2 text-sm font-semibold text-gray-950">
@@ -589,10 +639,10 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
           data-testid="adapter-backed-references"
           className="mx-auto w-full max-w-7xl px-4 pb-6 sm:px-6 lg:px-8"
         >
-          <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="rounded-lg border border-gray-200 bg-white p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold uppercase text-gray-500">
+                <h2 className="text-sm font-semibold text-gray-950">
                   Matter References
                 </h2>
                 <p className="mt-1 text-sm text-gray-600">
@@ -613,21 +663,21 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                   value: referenceAuditCandidates.filter(
                     (candidate) => candidate.status === "resolved",
                   ).length,
-                  className: "border-emerald-100 bg-emerald-50 text-emerald-700",
+                  className: "border-gray-100 bg-white text-emerald-700",
                 },
                 {
                   label: "ambiguous",
                   value: referenceAuditCandidates.filter(
                     (candidate) => candidate.status === "ambiguous",
                   ).length,
-                  className: "border-amber-100 bg-amber-50 text-amber-700",
+                  className: "border-gray-100 bg-white text-amber-700",
                 },
                 {
                   label: "missing",
                   value: referenceAuditCandidates.filter(
                     (candidate) => candidate.status === "missing",
                   ).length,
-                  className: "border-red-100 bg-red-50 text-red-700",
+                  className: "border-gray-100 bg-white text-red-700",
                 },
               ].map((item) => (
                 <div
@@ -646,7 +696,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
             {referenceAutocompleteCandidates.length > 0 ? (
               <div className="mt-4 rounded-md border border-gray-100 bg-gray-50 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xs font-semibold uppercase text-gray-500">
+                  <h3 className="text-xs font-medium text-gray-500">
                     Autocomplete Candidates
                   </h3>
                   <Badge

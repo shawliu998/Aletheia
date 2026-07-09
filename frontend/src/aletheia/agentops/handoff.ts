@@ -56,8 +56,23 @@ export type TypedHandoffProvenance = {
   warnings: string[];
 };
 
+export type TypedHandoffPersistedGateEvidence = {
+  gate_result_ids: string[];
+  approval_checkpoint_ids: string[];
+  gate_snapshot_audit_event_ids: string[];
+  gate_authorization_audit_event_ids: string[];
+  blocked_final_export_audit_event_ids: string[];
+  related_gate_audit_event_ids: string[];
+  validation?: {
+    name: string;
+    status: "passed" | "warning" | "failed";
+    detail: string;
+  }[];
+};
+
 export type TypedHandoffProvenanceOptions = {
   gateProvenance?: GateProvenance[];
+  persistedGateEvidence?: TypedHandoffPersistedGateEvidence;
 };
 
 export type TypedHandoffReadiness = {
@@ -694,6 +709,56 @@ function applyGateProvenance(
   });
 }
 
+function itemMatchesPersistedGateEvidence(
+  item: TypedHandoffProvenance,
+  evidence: TypedHandoffPersistedGateEvidence,
+) {
+  return (
+    includesAny(item.gateResultIds, evidence.gate_result_ids) ||
+    includesAny(item.sourceRecordIds.auditEventIds, evidence.related_gate_audit_event_ids) ||
+    includesAny(item.sourceRecordIds.auditEventIds, evidence.gate_snapshot_audit_event_ids) ||
+    includesAny(
+      item.sourceRecordIds.auditEventIds,
+      evidence.gate_authorization_audit_event_ids,
+    ) ||
+    includesAny(
+      item.sourceRecordIds.auditEventIds,
+      evidence.blocked_final_export_audit_event_ids,
+    ) ||
+    includesAny(item.sourceRecordIds.checkpointIds, evidence.approval_checkpoint_ids)
+  );
+}
+
+function applyPersistedGateEvidence(
+  provenanceItems: TypedHandoffProvenance[],
+  evidence: TypedHandoffPersistedGateEvidence | undefined,
+) {
+  if (!evidence) return;
+
+  const auditEventIds = unique([
+    ...evidence.gate_snapshot_audit_event_ids,
+    ...evidence.gate_authorization_audit_event_ids,
+    ...evidence.blocked_final_export_audit_event_ids,
+    ...evidence.related_gate_audit_event_ids,
+  ]);
+  const failedValidation = evidence.validation?.filter(
+    (item) => item.status === "failed",
+  ) ?? [];
+
+  provenanceItems
+    .filter((item) => itemMatchesPersistedGateEvidence(item, evidence))
+    .forEach((item) => {
+      appendUnique(item.gateResultIds, evidence.gate_result_ids);
+      appendUnique(item.sourceRecordIds.checkpointIds, evidence.approval_checkpoint_ids);
+      appendUnique(item.sourceRecordIds.auditEventIds, auditEventIds);
+      failedValidation.forEach((validationItem) => {
+        appendUnique(item.warnings, [
+          `${validationItem.name}: ${validationItem.detail}`,
+        ]);
+      });
+    });
+}
+
 export function buildTypedHandoffProvenance(
   workspace: AgentOpsMatterWorkspace,
   options: TypedHandoffProvenanceOptions = {},
@@ -861,6 +926,7 @@ export function buildTypedHandoffProvenance(
   }
 
   applyGateProvenance(provenanceItems, options.gateProvenance);
+  applyPersistedGateEvidence(provenanceItems, options.persistedGateEvidence);
 
   return provenanceItems;
 }

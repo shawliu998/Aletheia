@@ -32,6 +32,12 @@ function hasDemoSeed(matters: unknown[]): boolean {
   return matters.some((matter: any) => matter?.metadata?.demoSeedId === DEMO_SEED_ID);
 }
 
+function existingDemoMatter(matters: unknown[]) {
+  return matters.find(
+    (matter: any) => matter?.metadata?.demoSeedId === DEMO_SEED_ID,
+  ) as { id?: string } | undefined;
+}
+
 async function seedDecision(
   repo: AletheiaRepository,
   ctx: AletheiaUserContext,
@@ -370,7 +376,13 @@ export async function seedAletheiaDemoIfNeeded() {
   const repo = createAletheiaRepository();
   const decision = await seedDecision(repo, ctx);
   if (!decision.shouldSeed) {
-    return { seeded: false, reason: decision.reason };
+    const matters = await repo.listMatters(ctx);
+    const existing = existingDemoMatter(matters);
+    return {
+      seeded: false,
+      reason: decision.reason,
+      ...(existing?.id ? { matterId: existing.id } : {}),
+    };
   }
   const result = await seedAletheiaDemoMatter(repo, ctx);
   return { seeded: true, reason: decision.reason, ...result };

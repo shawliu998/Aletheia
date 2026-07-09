@@ -53,9 +53,9 @@ const reviewTags: ReviewTag[] = [
 ];
 
 function riskClass(risk?: RiskLevel) {
-    if (risk === "high") return "border-red-100 bg-red-50 text-red-600";
-    if (risk === "medium") return "border-amber-100 bg-amber-50 text-amber-700";
-    return "border-gray-200 bg-gray-50 text-gray-600";
+    if (risk === "high") return "text-red-600";
+    if (risk === "medium") return "text-amber-700";
+    return "text-gray-500";
 }
 
 function supportClass(status: EvidenceItem["supportStatus"]) {
@@ -235,7 +235,7 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                         <Button
                             variant="outline"
                             onClick={exportAuditPack}
-                            className="rounded-lg border-gray-200 text-gray-600 hover:bg-gray-50"
+                            className="rounded-md border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                             <Download className="mr-2 h-4 w-4" />
                             Export Audit Pack
@@ -243,30 +243,29 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                         <Button
                             asChild
                             variant="outline"
-                            className="rounded-lg border-gray-200 text-gray-600 hover:bg-gray-50"
+                            className="rounded-md border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                             <Link href="/aletheia/agentops">
                                 <Workflow className="mr-2 h-4 w-4" />
                                 Command Center
                             </Link>
                         </Button>
-                        <Badge variant="outline" className="rounded-full border-gray-200 bg-white px-2 py-0 text-[11px] text-gray-600">
+                        <span className="text-[11px] font-medium text-gray-500">
                             Deterministic fallback
-                        </Badge>
-                        <Badge variant="outline" className={cn("rounded-full px-2 py-0 text-[11px]", riskClass(workspace.matter.riskLevel))}>
+                        </span>
+                        <span className={cn("text-[11px] font-medium", riskClass(workspace.matter.riskLevel))}>
                             {workspace.matter.riskLevel} risk
-                        </Badge>
-                        <Badge
-                            variant="outline"
+                        </span>
+                        <span
                             className={cn(
-                                "rounded-full px-2 py-0 text-[11px]",
+                                "text-[11px] font-medium",
                                 reviewStudio.gate.status === "ready"
-                                    ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                                    : "border-red-100 bg-red-50 text-red-700",
+                                    ? "text-emerald-700"
+                                    : "text-red-700",
                             )}
                         >
                             final export {reviewStudio.gate.status}
-                        </Badge>
+                        </span>
                     </div>
                 </div>
             </header>
@@ -274,7 +273,7 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
             <main className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-8 py-5 xl:grid-cols-[240px_minmax(0,1fr)_300px]">
                 <aside className="space-y-4">
                     <section className="rounded-lg border border-[#e5e7eb] bg-white p-4">
-                        <p className="text-xs font-semibold uppercase text-[#9ca3af]">Matter Profile</p>
+                        <p className="text-xs font-medium text-[#9ca3af]">Matter Profile</p>
                         <h2 className="mt-2 text-xl font-semibold leading-tight">{workspace.matter.title}</h2>
                         <p className="mt-2 text-sm text-[#6b7280]">{workspace.matter.objective}</p>
                         <div className="mt-4 grid gap-2 text-sm">
@@ -303,7 +302,7 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                                 <div key={doc.id} className="rounded-md border border-[#e5e7eb] p-3">
                                     <div className="flex items-center justify-between gap-2">
                                         <p className="text-sm font-medium leading-tight">{doc.name}</p>
-                                        <Badge variant="outline" className="rounded-md border-emerald-200 bg-emerald-50 text-emerald-700">
+                                        <Badge variant="outline" className="rounded-md border-gray-200 bg-white text-emerald-700">
                                             parsed
                                         </Badge>
                                     </div>
@@ -343,10 +342,10 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                     <section className="rounded-lg border border-[#e5e7eb] bg-white p-4">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <p className="text-xs font-semibold uppercase text-[#9ca3af]">Current Agent Step</p>
+                                <p className="text-xs font-medium text-[#9ca3af]">Current Agent Step</p>
                                 <h2 className="mt-1 text-lg font-semibold">Agent Plan before Answer</h2>
                             </div>
-                            <Badge variant="outline" className="rounded-md border-[#e5e7eb] text-[#374151]">
+                            <Badge variant="outline" className="rounded-md border-[#e5e7eb] bg-white text-[#374151]">
                                 workflow v0
                             </Badge>
                         </div>
@@ -367,9 +366,9 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                                     ))}
                                 </ul>
                             </div>
-                            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-                                <p className="text-xs font-semibold text-amber-700">Missing Materials</p>
-                                <ul className="mt-2 space-y-1 text-sm text-amber-900">
+                            <div className="rounded-md border border-[#e5e7eb] border-l-amber-300 bg-white p-3">
+                                <p className="text-xs font-medium text-amber-700">Missing Materials</p>
+                                <ul className="mt-2 space-y-1 text-sm text-[#374151]">
                                     {workspace.plan.missingMaterials.map((item) => (
                                         <li key={item}>- {item}</li>
                                     ))}
@@ -398,9 +397,9 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                                     >
                                         <div className="flex items-start justify-between gap-2">
                                             <p className="text-sm font-semibold leading-5">{issue.title}</p>
-                                            <Badge variant="outline" className={cn("rounded-md", riskClass(issue.riskLevel))}>
+                                            <span className={cn("text-xs font-medium", riskClass(issue.riskLevel))}>
                                                 {issue.riskLevel}
-                                            </Badge>
+                                            </span>
                                         </div>
                                         <p className="mt-2 text-xs leading-5 text-[#6b7280]">
                                             {workspace.issues.find((item) => item.id === issue.id)?.summary}
@@ -420,7 +419,7 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                             </p>
                             <div className="mt-4 overflow-hidden rounded-md border border-[#e5e7eb]">
                                 <table className="w-full text-left text-sm">
-                                    <thead className="bg-[#f9fafb] text-xs uppercase text-[#9ca3af]">
+                                    <thead className="bg-[#f9fafb] text-xs text-[#9ca3af]">
                                         <tr>
                                             <th className="px-3 py-2">Source</th>
                                             <th className="px-3 py-2">Quote</th>
@@ -451,10 +450,10 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                     </section>
 
                     <section className="grid gap-4 xl:grid-cols-3">
-                        <div className="rounded-lg border border-red-100 bg-red-50 p-4">
+                        <div className="rounded-lg border border-red-100 bg-white p-4">
                             <div className="flex items-center gap-2">
                                 <Flag className="h-4 w-4 text-red-700" />
-                                <h2 className="font-semibold text-red-950">Red Flag Dashboard</h2>
+                                <h2 className="font-semibold text-gray-950">Red Flag Dashboard</h2>
                             </div>
                             <div className="mt-3 space-y-3">
                                 {reviewStudio.redFlags.map((flag) => (

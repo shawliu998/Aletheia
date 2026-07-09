@@ -1,17 +1,8 @@
 "use client";
 
-import {
-  AlertTriangle,
-  ClipboardCheck,
-  FileText,
-  GitBranch,
-  ShieldCheck,
-  Workflow,
-} from "lucide-react";
 import { useState } from "react";
 import { AgentStatusCard } from "./AgentStatusCard";
 import { EvalWorkbench } from "./EvalWorkbench";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { sampleAgentOpsWorkspace } from "@/aletheia/agentops";
 import type { AgentOpsMatterWorkspace, ArtifactRef } from "@/aletheia/agentops";
@@ -56,9 +47,9 @@ function titleize(value: string) {
 }
 
 function riskClass(risk: string) {
-  if (risk === "high") return "border-red-100 bg-red-50 text-red-700";
-  if (risk === "medium") return "border-amber-100 bg-amber-50 text-amber-700";
-  return "border-gray-200 bg-gray-50 text-gray-600";
+  if (risk === "high") return "text-red-700";
+  if (risk === "medium") return "text-amber-700";
+  return "text-gray-600";
 }
 
 function artifactTypeLabel(value: string) {
@@ -175,28 +166,17 @@ export function MatterCommandCenter({
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-gray-200 bg-white p-5">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge
-                variant="outline"
-                className={cn("rounded-md px-2 py-1 text-xs", riskClass(model.riskLevel))}
-              >
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span className={cn("font-medium", riskClass(model.riskLevel))}>
                 {model.riskLevel} risk
-              </Badge>
-              <Badge
-                variant="outline"
-                className="rounded-md border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600"
-              >
-                {titleize(model.matterStatus)}
-              </Badge>
-              <Badge
-                variant="outline"
-                className="rounded-md border-emerald-100 bg-emerald-50 px-2 py-1 text-xs text-emerald-700"
-              >
-                {sourceLabel}
-              </Badge>
+              </span>
+              <span className="text-gray-300">/</span>
+              <span className="text-gray-600">{titleize(model.matterStatus)}</span>
+              <span className="text-gray-300">/</span>
+              <span className="text-gray-500">{sourceLabel}</span>
             </div>
             <h1 className="mt-3 text-2xl font-semibold tracking-normal text-gray-950">
               Matter Command Center
@@ -208,32 +188,30 @@ export function MatterCommandCenter({
             </p>
           </div>
 
-          <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4 lg:w-[520px]">
+          <div className="grid w-full grid-cols-2 overflow-hidden rounded-lg border border-gray-200 sm:grid-cols-4 lg:w-[520px]">
             {[
               {
                 label: "Agents",
                 value: model.agentCards.length,
-                icon: Workflow,
               },
               {
                 label: "Documents",
                 value: model.documentCount,
-                icon: FileText,
               },
               {
                 label: "Review Points",
                 value: model.reviewNeededCount,
-                icon: ClipboardCheck,
               },
               {
                 label: "Gate Stops",
                 value: model.gateStopCount,
-                icon: AlertTriangle,
               },
             ].map((item) => (
-              <div key={item.label} className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                <item.icon className="h-4 w-4 text-gray-500" />
-                <p className="mt-3 text-2xl font-semibold text-gray-950">
+              <div
+                key={item.label}
+                className="border-b border-r border-gray-100 bg-white p-3 last:border-r-0 sm:border-b-0"
+              >
+                <p className="text-xl font-semibold text-gray-950">
                   {item.value}
                 </p>
                 <p className="mt-1 text-xs font-medium text-gray-500">{item.label}</p>
@@ -243,23 +221,25 @@ export function MatterCommandCenter({
         </div>
       </section>
 
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-2">
-          <GitBranch className="h-4 w-4 text-gray-500" />
-          <h2 className="text-sm font-semibold uppercase text-gray-500">
-            Professional Workflow
+      <section className="rounded-lg border border-gray-200 bg-white p-5">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-950">
+            Professional workflow
           </h2>
+          <p className="mt-1 text-sm text-gray-600">
+            The matter moves through controlled review and export stages.
+          </p>
         </div>
-        <div className="mt-4 grid gap-2 md:grid-cols-8">
+        <div className="mt-4 grid overflow-hidden rounded-lg border border-gray-200 md:grid-cols-8">
           {productWorkflowStages.map((stage, index) => (
             <div
               key={stage}
-              className="relative rounded-md border border-gray-200 bg-gray-50 px-3 py-3"
+              className="relative border-b border-gray-100 bg-white px-3 py-3 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0"
             >
-              <p className="text-xs font-semibold text-gray-400">
+              <p className="text-xs font-medium text-gray-400">
                 {String(index + 1).padStart(2, "0")}
               </p>
-              <p className="mt-1 text-sm font-semibold text-gray-900">{stage}</p>
+              <p className="mt-1 text-sm font-medium text-gray-900">{stage}</p>
             </div>
           ))}
         </div>
@@ -276,12 +256,9 @@ export function MatterCommandCenter({
               to artifacts requiring expert attention.
             </p>
           </div>
-          <Badge
-            variant="outline"
-            className="hidden rounded-md border-amber-100 bg-amber-50 px-2 py-1 text-xs text-amber-700 sm:inline-flex"
-          >
+          <span className="hidden text-xs font-medium text-amber-700 sm:inline-flex">
             {model.openBlockers} open intervention points
-          </Badge>
+          </span>
         </div>
         <div className="mb-4 flex flex-wrap gap-2">
           {agentStatusFilters.map((filter) => (
@@ -327,14 +304,16 @@ export function MatterCommandCenter({
         </div>
       </section>
 
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-gray-500" />
-          <h2 className="text-sm font-semibold uppercase text-gray-500">
-            Artifact Attention Queue
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-5 py-4">
+          <h2 className="text-sm font-semibold text-gray-950">
+            Artifact attention queue
           </h2>
+          <p className="mt-1 text-sm text-gray-600">
+            Evidence, issues, risks, memos, and review items that need traceability.
+          </p>
         </div>
-        <div className="mt-4 grid gap-2 md:grid-cols-2">
+        <div className="divide-y divide-gray-100">
           {visibleArtifacts.map((artifact, index) => (
             <div
               key={`${artifact.type}-${artifact.id}-${index}`}
@@ -342,23 +321,20 @@ export function MatterCommandCenter({
                 id: artifact.id,
                 type: artifact.artifactType,
               })}
-              className="rounded-md border border-gray-100 bg-gray-50 px-3 py-3"
+              className="px-5 py-3"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase text-gray-400">
+                  <p className="text-xs font-medium text-gray-500">
                     {artifact.type}
                   </p>
                   <p className="mt-1 text-sm font-medium leading-5 text-gray-900">
                     {artifact.title}
                   </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className="rounded-md border-gray-200 bg-white px-2 py-1 text-[11px] capitalize text-gray-600"
-                >
+                <span className="shrink-0 text-xs capitalize text-gray-500">
                   {artifactTypeLabel(artifact.detail)}
-                </Badge>
+                </span>
               </div>
             </div>
           ))}

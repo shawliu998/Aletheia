@@ -17,6 +17,7 @@
     "adapters.test.ts",
     "exportPackage.test.ts",
     "handoff.test.ts",
+    "anduParity.test.ts",
     "skillsEval.test.ts"
   ]
 }

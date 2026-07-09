@@ -59,18 +59,18 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
         <>
             <Button
                 onClick={() => setOpen(true)}
-                className="h-9 rounded-full bg-gray-950 px-4 text-sm font-semibold text-white shadow-[0_2px_8px_rgba(17,24,39,0.16)] hover:bg-gray-800"
+                className="h-9 rounded-md bg-gray-950 px-4 text-sm font-medium text-white shadow-none hover:bg-gray-800"
             >
                 <Plus className="h-3.5 w-3.5" />
                 New Matter
             </Button>
 
             {open && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/20 px-4 backdrop-blur-sm">
-                    <div className="flex max-h-[86dvh] w-full max-w-2xl flex-col overflow-hidden rounded-[22px] border border-white/75 bg-white/88 shadow-[0_28px_80px_rgba(15,23,42,0.22),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-2xl">
-                        <div className="flex items-center justify-between gap-3 border-b border-gray-200/65 bg-white/54">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/20 px-4">
+                    <div className="flex max-h-[86dvh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.18)]">
+                        <div className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white">
                             <div className="px-6 pt-5">
-                                <div className="text-xs font-semibold text-gray-400">
+                                <div className="text-xs font-medium text-gray-500">
                                     Matters
                                 </div>
                                 <h2 className="mt-1 text-[22px] font-semibold leading-7 text-gray-950">
@@ -83,7 +83,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                             <button
                                 type="button"
                                 onClick={() => setOpen(false)}
-                                className="mr-4 mt-4 rounded-full p-1.5 text-gray-400 transition-colors hover:bg-gray-100/80 hover:text-gray-600"
+                                className="mr-4 mt-4 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
                                 aria-label="Close"
                             >
                                 <X className="h-4 w-4" />
@@ -96,7 +96,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                 <input
                                     value={title}
                                     onChange={(event) => setTitle(event.target.value)}
-                                    className="h-10 rounded-xl border border-gray-200/80 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
+                                    className="h-10 rounded-md border border-gray-200 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
                                 />
                             </label>
 
@@ -107,7 +107,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                     onChange={(event) =>
                                         setTemplate(event.target.value as AletheiaMatterTemplate)
                                     }
-                                    className="h-10 rounded-xl border border-gray-200/80 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
+                                    className="h-10 rounded-md border border-gray-200 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
                                 >
                                     {templates.map((item) => (
                                         <option key={item.value} value={item.value}>
@@ -122,7 +122,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                 <textarea
                                     value={objective}
                                     onChange={(event) => setObjective(event.target.value)}
-                                    className="min-h-24 rounded-xl border border-gray-200/80 bg-[#f7f8fa] px-3 py-2 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
+                                    className="min-h-24 rounded-md border border-gray-200 bg-[#f7f8fa] px-3 py-2 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
                                 />
                             </label>
 
@@ -134,7 +134,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                         onChange={(event) =>
                                             setClientOrProject(event.target.value)
                                         }
-                                        className="h-10 rounded-xl border border-gray-200/80 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
+                                        className="h-10 rounded-md border border-gray-200 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
                                     />
                                 </label>
                                 <label className="grid gap-1 text-sm font-semibold text-gray-800">
@@ -144,7 +144,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                         onChange={(event) =>
                                             setRiskLevel(event.target.value as AletheiaRiskLevel)
                                         }
-                                        className="h-10 rounded-xl border border-gray-200/80 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
+                                        className="h-10 rounded-md border border-gray-200 bg-[#f7f8fa] px-3 text-sm font-normal outline-none transition-colors focus:border-gray-400 focus:bg-white"
                                     >
                                         {riskLevels.map((item) => (
                                             <option key={item.value} value={item.value}>
@@ -162,12 +162,12 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                             </p>
                         )}
 
-                        <div className="mt-5 flex justify-end gap-2 border-t border-gray-100/80 bg-white/54 px-6 py-4">
+                        <div className="mt-5 flex justify-end gap-2 border-t border-gray-100 bg-white px-6 py-4">
                             <Button
                                 type="button"
                                 variant="outline"
                                 onClick={() => setOpen(false)}
-                                className="rounded-full border-gray-200 bg-white/64 px-4 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100"
+                                className="rounded-md border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
                             >
                                 Cancel
                             </Button>
@@ -175,7 +175,7 @@ export function NewMatterButton({ initialOpen = false }: { initialOpen?: boolean
                                 type="button"
                                 onClick={submit}
                                 disabled={saving || !title.trim() || !objective.trim()}
-                                className="rounded-full bg-gray-950 px-5 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-40"
+                                className="rounded-md bg-gray-950 px-5 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-40"
                             >
                                 {saving ? "Creating..." : "Create Matter"}
                             </Button>

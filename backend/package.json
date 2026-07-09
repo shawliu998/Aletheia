@@ -22,6 +22,8 @@
     "check:aletheia:knowledge-governance": "tsx src/scripts/aletheiaKnowledgeGovernanceAudit.ts",
     "check:aletheia:audit-workbench": "tsx src/scripts/aletheiaAuditWorkbenchAudit.ts",
     "check:aletheia:tool-policy": "tsx src/scripts/aletheiaToolPolicyAudit.ts",
+    "check:aletheia:external-source-connector": "tsx src/scripts/aletheiaExternalSourceConnectorAudit.ts",
+    "check:aletheia:word-addin-manifest": "tsx src/scripts/aletheiaWordAddinManifestAudit.ts",
     "check:aletheia:approval-policy": "tsx src/scripts/aletheiaApprovalPolicyAudit.ts",
     "check:aletheia:matter-isolation": "tsx src/scripts/aletheiaMatterIsolationAudit.ts",
     "check:aletheia:run-trace": "tsx src/scripts/aletheiaRunTraceAudit.ts",

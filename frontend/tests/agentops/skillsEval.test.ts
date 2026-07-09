@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computeProfessionalEvalMetrics } from "../../src/lib/agentops/eval";
+import {
+  buildEvalSnapshotProvenance,
+  computeProfessionalEvalMetrics,
+} from "../../src/lib/agentops/eval";
 import {
   mapSkillsToPlaybookApprovalState,
   suggestProfessionalSkillCandidates,
 } from "../../src/lib/agentops/skills";
 import type {
+  AgentOpsMatterWorkspace,
   DraftMemo,
   EvalCase,
   GateResult,
@@ -136,6 +140,134 @@ test("computeProfessionalEvalMetrics returns deterministic professional review m
     total_issue_count: 2,
     score: 1,
   });
+});
+
+test("buildEvalSnapshotProvenance preserves persisted gate and feedback provenance", () => {
+  const workspace: AgentOpsMatterWorkspace = {
+    matter: {
+      id: memo.matter_id,
+      title: "Eval Snapshot Matter",
+      type: "legal_review",
+      risk_level: "high",
+      status: "review_needed",
+      documents: [],
+      created_at: now,
+      updated_at: now,
+    },
+    agents: [],
+    runs: [
+      {
+        id: "run-eval",
+        matter_id: memo.matter_id,
+        agent_id: "agent-eval",
+        started_at: now,
+        status: "done",
+        input_artifacts: [],
+        output_artifacts: [],
+        tool_calls: [],
+        trace_events: [],
+        errors: [],
+      },
+      {
+        id: "run-review",
+        matter_id: memo.matter_id,
+        agent_id: "agent-review",
+        started_at: now,
+        status: "done",
+        input_artifacts: [],
+        output_artifacts: [],
+        tool_calls: [],
+        trace_events: [],
+        errors: [],
+      },
+    ],
+    evidence: [
+      {
+        id: "ev-1",
+        matter_id: memo.matter_id,
+        source_document_id: "doc-1",
+        quote: "Source quote",
+        normalized_fact: "Source fact",
+        supports_claim_ids: ["claim-1"],
+        confidence: 0.9,
+        review_status: "approved",
+      },
+    ],
+    issues,
+    risks: [],
+    draft_memos: [memo],
+    review_comments: reviewComments,
+    gate_results: gateResults,
+    audit_events: [
+      {
+        id: "audit-review",
+        matter_id: memo.matter_id,
+        actor_type: "human",
+        actor_id: "reviewer",
+        action: "review_comment_recorded",
+        artifact_id: "review-citation",
+        artifact_type: "review_comment",
+        timestamp: now,
+      },
+    ],
+    eval_cases: evalCases,
+    skills: [
+      {
+        id: "skill-candidate",
+        name: "Candidate Citation Skill",
+        description: "Candidate only.",
+        trigger_conditions: ["failure_type == missing_citation"],
+        required_inputs: ["draft_memo"],
+        expected_outputs: ["review_comment"],
+        evidence_requirements: ["Preserve source evidence IDs."],
+        approval_status: "candidate",
+        created_from_eval_case_ids: ["eval-missing-citation-a"],
+        version: "0.1.0",
+      },
+    ],
+  };
+
+  const snapshot = buildEvalSnapshotProvenance(workspace, {
+    snapshotId: "eval-snapshot-gate-evidence",
+    feedbackExportIds: ["feedback-export-1"],
+    approvedPlaybookIds: ["playbook-approved"],
+    persistedGateEvidence: {
+      gate_result_ids: ["gate-citation"],
+      approval_checkpoint_ids: ["checkpoint-final-export"],
+      gate_snapshot_audit_event_ids: ["audit-gate-snapshot"],
+      gate_authorization_audit_event_ids: ["audit-final-authorized"],
+      blocked_final_export_audit_event_ids: [],
+      related_gate_audit_event_ids: ["audit-gate-snapshot", "audit-final-authorized"],
+      validation: [
+        {
+          name: "persisted_gate_snapshot",
+          status: "passed",
+          detail: "Persisted gate snapshot exists.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(snapshot.snapshotId, "eval-snapshot-gate-evidence");
+  assert.ok(snapshot.sourceRunIds.includes("run-eval"));
+  assert.ok(snapshot.sourceRunIds.includes("run-review"));
+  assert.deepEqual(snapshot.sourceReviewCommentIds, ["review-citation"]);
+  assert.ok(snapshot.sourceGateResultIds.includes("gate-citation"));
+  assert.ok(snapshot.sourceCheckpointIds.includes("checkpoint-final-export"));
+  assert.ok(snapshot.sourceEvidenceItemIds.includes("ev-1"));
+  assert.ok(snapshot.sourceClaimIds.includes("claim-1"));
+  assert.ok(snapshot.sourceAuditEventIds.includes("audit-review"));
+  assert.ok(snapshot.sourceAuditEventIds.includes("audit-gate-snapshot"));
+  assert.ok(snapshot.sourceAuditEventIds.includes("audit-final-authorized"));
+  assert.deepEqual(snapshot.feedbackExportIds, ["feedback-export-1"]);
+  assert.deepEqual(snapshot.candidateSkillIds, ["skill-candidate"]);
+  assert.deepEqual(snapshot.approvedPlaybookIds, ["playbook-approved"]);
+  assert.equal(snapshot.metrics.gate_failure_count, 1);
+  assert.ok(
+    snapshot.warnings.some((warning) =>
+      warning.includes("skill-candidate is a candidate skill"),
+    ),
+  );
 });
 
 test("suggestProfessionalSkillCandidates never auto-approves repeated feedback", () => {

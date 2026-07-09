@@ -1,6 +1,850 @@
 # Aletheia Supervisor Status
 
-Last updated: 2026-07-09
+Last updated: 2026-07-10
+
+## Hermes Professional Multi-Owner Graph Cycle
+
+Cycle time: 2026-07-10T04:54:00+08:00.
+
+Implementation slice:
+
+- The shareholder penetration panel accepts semicolon-separated beneficial
+  owners and persists one source-backed `beneficially_owns` branch per owner
+  over the selected direct shareholder and issuer.
+- The rendered graph shows all retained owner branches, while preserving the
+  existing single review item, provenance validation, and final approval gate.
+- The focused browser regression now creates and verifies `Controller A` and
+  `Controller B` in the same graph before review and approval.
+
+Current risk:
+
+- Multi-branch structure does not imply registry verification. Structured share
+  percentages, multiple independent source records, and conflict resolution
+  remain necessary before a definitive ownership conclusion.
+
+## Hermes Professional Preference Approval Cycle
+
+Cycle time: 2026-07-10T04:42:00+08:00.
+
+Implementation slice:
+
+- Added a Local V1 preference approval route. It accepts only an opted-in,
+  revocable, matter-scoped candidate whose original proposal audit exists and
+  whose linked review is explicitly `accepted`.
+- Approval creates a new approved matter playbook with the preference, linked
+  audit/review IDs, `autoApply: false`, and a `preference_learning_candidate_approved`
+  human audit event. It never mutates an existing playbook or another matter.
+- The Preference Learning panel now supports accepting the linked review and
+  approving the mapping, while preserving the visible no-auto-application state.
+
+Validation result:
+
+```bash
+cd backend && npm run build
+cd frontend && npx tsc --noEmit --pretty false && npm run lint
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=mobile-chromium
+```
+
+Result:
+
+- compilation and focused desktop/mobile workpaper flows passed the candidate,
+  review acceptance, approved playbook mapping, reload persistence, and audit;
+- automatic or cross-matter habit application remains intentionally unavailable.
+
+## Hermes Professional Native Word Add-in Cycle
+
+Cycle time: 2026-07-10T04:28:00+08:00.
+
+Implementation slice:
+
+- Added `office-addin/word-manifest.xml`, a Word `TaskPaneApp` manifest with
+  `WordApi` 1.3 and `ReadDocument` permission only.
+- Added the `/office/word` Office.js task pane. It reads the current Word text
+  selection, requires a matter and matter document, and creates a review-only
+  `word_addin_handoff`, linked review, and audit chain.
+- The task pane intentionally has no Word content-write or tracked-change API
+  call. A human still resolves and approves the Hermes handoff before applying
+  any edit in Word.
+- Added `docs/word_addin.md` and a CI-enforced manifest audit.
+
+Validation result:
+
+```bash
+cd backend && npm run check:aletheia:word-addin-manifest
+cd backend && npm run test:aletheia:completion
+cd frontend && npx tsc --noEmit --pretty false && npm run lint && npm run build
+```
+
+Result:
+
+- XML/Word-host/HTTPS/read-only/selection/no-write/audit checks passed;
+- Next.js production build includes static `/office/word` task-pane route;
+- a live Word desktop or Word web smoke test remains a deployment prerequisite,
+  since browser compilation cannot prove Office host behavior.
+
+## Hermes Professional Allowlisted External-Source Connector Cycle
+
+Cycle time: 2026-07-10T04:12:00+08:00.
+
+Implementation slice:
+
+- Added `POST /aletheia/matters/:matterId/external-source/fetch` behind matter
+  authorization and a dedicated rate limiter. It returns a capture only; the
+  browser must still write a reviewable workpaper, review item, and audit chain.
+- Automatic capture requires an explicit current-matter opt-in and a configured
+  `ALETHEIA_EXTERNAL_SOURCE_ALLOWED_DOMAINS` allowlist. The connector accepts
+  HTTPS only, rejects credentials/custom ports/redirects, pins a DNS-resolved
+  public address for the request, limits responses to 1 MB, and accepts only
+  text/HTML/JSON/XML content.
+- The Command Center now makes manual and allowlisted automatic capture visibly
+  distinct. Neither path can create a final legal conclusion.
+
+Validation result:
+
+```bash
+cd backend && npm run build
+cd backend && npm run check:aletheia:external-source-connector
+cd frontend && npx tsc --noEmit --pretty false && npm run lint
+```
+
+Result:
+
+- connector policy suite passed allowlist, HTTPS-only, private-address, pinned
+  request, opt-in, capture hash, and content-type checks;
+- a temporary local API instance reached the real route and safely rejected the
+  sandbox DNS mapping of `example.com` to the reserved `198.18.0.0/15` range;
+- live external-source acceptance remains deployment work because this sandbox
+  intentionally maps public DNS names to reserved addresses.
+
+## Hermes Professional Completion Evidence Cycle
+
+Cycle time: 2026-07-10T03:45:00+08:00.
+
+Implementation and validation state:
+
+- Legal Q&A now follows the graph-style Local V1 acceptance path: a persisted
+  `legal_qa_answer` needs resolved linked review(s), its persisted audit event,
+  and an explicit human approval before it becomes `accepted`.
+- Word Add-in handoff now has the same review and accepted transition. It saves
+  document context, selected-text hash, and suggested edit; it does not invoke
+  Office.js, mutate a DOCX, or apply tracked changes.
+- Preference learning records only an opt-in, revocable, matter-scoped
+  `output_preference` candidate. It has review/audit provenance and no
+  automatic or cross-matter playbook application.
+- Added `HERMES_PRO_COMPLETION_AUDIT.md` as the authoritative boundary between
+  Local V1 evidence and production claims.
+
+Validation result:
+
+```bash
+cd frontend && npm run lint && npx tsc --noEmit --pretty false
+cd backend && npm run build
+cd frontend && npm run build
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+npm run test:aletheia:completion
+npm run check:aletheia:privacy
+npm run check:aletheia:source-provenance
+npm run check:aletheia:approval-policy
+npm run test:aletheia:restore-drill
+```
+
+Result:
+
+- frontend production build, compilation, focused desktop approval flow, completion, privacy, provenance,
+  approval-policy, and real SQLite backup/restore checks passed;
+- no production external-source connector or native Office.js runtime exists;
+- focused desktop and mobile Chromium both passed the complete local flow,
+  including legal-Q&A approval, Word-handoff approval, preference candidate,
+  persistence reload, and the prior external-source and shareholder steps.
+
+Current release boundary:
+
+- Local/private-pilot expert-support workflow only; never autonomous legal
+  advice, whole-web verification, native Word Add-in installation, or silent
+  habit learning.
+
+## Hermes Professional Legal Q&A Draft Cycle
+
+Cycle time: 2026-07-10T03:02:00+08:00.
+
+Implementation slice:
+
+- Added `legal_qa_answer` as a durable, reviewable work-product kind with a
+  schema migration and local export/audit-integrity support.
+- Added `LegalQaPanel` to the matter-level Command Center. It drafts an answer
+  from retained matter chunks, attaches source hashes and chunk IDs, creates a
+  review item, and persists a validated legal-Q&A audit contract.
+- Natural-language FTS punctuation is sanitized before retrieval. If lexical
+  retrieval yields no result, the panel falls back to source-linked evidence
+  already persisted for the matter. It never produces an uncited answer.
+- Every saved answer remains `needs_review` and carries an explicit preliminary
+  answer and professional-caveat boundary.
+
+Validation result:
+
+```bash
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=mobile-chromium
+cd frontend && npm run lint && npx tsc --noEmit --pretty false
+```
+
+Result:
+
+- desktop and mobile Chromium passed the Legal Q&A draft and persistence flow,
+  together with the existing external-source and shareholder graph chain;
+- lint and frontend type checking passed;
+- no answer is shown or saved without retained source provenance.
+
+Current risks:
+
+- Legal Q&A approval and a final accepted-answer transition have not yet been
+  implemented; all saved answers remain review-only.
+- Drafting is deterministic local source synthesis, not an external legal
+  research connector or a substitute for jurisdiction-specific legal advice.
+
+Next recommended action:
+
+- Reuse the graph approval pattern for Legal Q&A: require resolved reviews and
+  a persisted answer audit before allowing an accepted, exportable answer.
+
+## Hermes Professional Shareholder Graph Approval Cycle
+
+Cycle time: 2026-07-10T02:40:00+08:00.
+
+Implementation slice:
+
+- Added a Local V1 graph approval route at
+  `POST /aletheia/matters/:matterId/shareholder-graphs/:graphId/approve`.
+- Approval requires a `needs_review` graph, matching persisted graph audit
+  event, at least one linked review, and no linked review in `open` status.
+- Approval sets the graph work product to `accepted` and records a
+  `shareholder_penetration_graph_approved` human audit event with the graph
+  persistence audit ID and all linked review decision IDs/statuses.
+- The graph panel can accept linked reviews and then approve the graph; the
+  approval action remains disabled while a review is unresolved.
+- The Supabase adapter fails closed because durable review resolution and graph
+  approval are not yet implemented there.
+
+Validation result:
+
+```bash
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run build
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=mobile-chromium
+```
+
+Result:
+
+- frontend and backend compilation passed;
+- desktop and mobile Chromium each passed source workpaper, graph, review
+  acceptance, graph approval, reload persistence, and both graph audit events;
+- graph approval is now auditable and fail-closed in Local V1.
+
+Current risks:
+
+- Supabase lacks durable review resolution and graph approval; this workflow is
+  Local V1 only by design.
+- Approval checks workflow completeness, not independent truth of captured
+  sources. A production connector and conflict-resolution model are required
+  for registry-verified claims.
+
+Next recommended action:
+
+- Build the legal Q&A surface using the same sourced draft, review resolution,
+  approved transition, and exportable audit-trail pattern.
+
+## Hermes Professional Shareholder Penetration Workflow Cycle
+
+Cycle time: 2026-07-10T02:28:00+08:00.
+
+Implementation slice:
+
+- Added `shareholder_penetration_graph` as a durable work-product kind in the
+  frontend contract, backend domain, local export persistence, audit-integrity
+  scan, Supabase schema, and migration.
+- Added `ShareholderPenetrationGraphPanel` beside the external-source panel in
+  the matter-level AgentOps Command Center.
+- A graph can only be created from a previously retained external-source
+  workpaper. The panel saves issuer, direct shareholder, and beneficial owner
+  nodes, two source-backed edges, a human review item, and a validated audit
+  event.
+- The visible graph renders the path `beneficial owner -> direct shareholder
+  -> issuer`; its edges remain `inferred` with 0.70 confidence and the work
+  product remains `needs_review`.
+- Strengthened parity validation: every non-missing entity relationship must
+  now include source, confidence, review, and audit provenance to pass.
+
+Validation result:
+
+```bash
+cd frontend && npx tsc --noEmit --pretty false && npm run lint
+cd backend && npm run build && npm run check:aletheia:audit-integrity
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=mobile-chromium
+```
+
+Result:
+
+- frontend TypeScript and lint passed;
+- backend build passed;
+- AgentOps compiled tests passed 40/40;
+- external-source workpaper and shareholder graph flow passed in desktop and
+  mobile Chromium, including reload persistence;
+- audit-integrity passed with the existing warning that its default data
+  directory has no matter data.
+
+Current risks:
+
+- The graph is based on user-captured sources and has no production registry
+  connector, branching-resolution engine, or conflict resolver.
+- The visible edges are deliberately inferred; no final ownership conclusion
+  can be made until a human review and approval transition is implemented.
+
+Next recommended action:
+
+- Add a review resolution/approval transition that converts a fully supported
+  graph from `needs_review` to an approved, exportable graph only after the
+  reviewer confirms source recency, identity, relationship basis, and
+  conflicting-source treatment.
+
+## Hermes Professional External Source Workpaper Workflow Cycle
+
+Cycle time: 2026-07-10T02:16:00+08:00.
+
+Implementation slice:
+
+- Added `external_source_workpaper` as a durable work-product kind in the
+  frontend contract, backend domain, local export persistence, audit-integrity
+  scan, Supabase schema, and migration.
+- Added `ExternalSourceWorkpaperPanel` to the matter-level AgentOps Command
+  Center. It requires an explicit per-matter opt-in, query, URL, and captured
+  observation.
+- The panel records a consent audit event, hashes the URL and captured snapshot
+  in the browser, saves a review-only workpaper, creates a human review item,
+  and persists a validated external-check contract in a final audit event.
+- Automated network retrieval is explicitly not dispatched. The interface and
+  audit record make that boundary visible instead of claiming whole-web access.
+- Strengthened external-check validation so active `needs_review` checks fail
+  when source retention, workpaper, or audit provenance is incomplete.
+- Fixed UI-smoke seeding idempotency so a previously seeded demo returns its
+  existing matter ID on repeat invocation.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npx tsc --noEmit --pretty false && npm run lint
+cd backend && npm run check:aletheia:operator && npm run check:aletheia:audit-integrity
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=desktop-chromium
+cd frontend && npx playwright test tests/aletheia-external-source-workpaper.spec.ts --config=playwright.config.ts --project=mobile-chromium
+jq -e . .agentops/status/*.json >/dev/null && node .agentops/scripts/check-agentops.mjs
+git diff --check
+```
+
+Result:
+
+- AgentOps compiled tests passed 39/39.
+- Frontend type check and lint passed.
+- Backend operator and audit-integrity checks passed; the latter only warns
+  that the default local data directory has no matter data.
+- The new external-source workflow passed in desktop and mobile Chromium,
+  including a reload that proved persisted workpaper and audit retrieval.
+- The legacy all-in-one UI smoke suite still has unrelated stale expectations
+  for a former UI-smoke fixture title and source names; it is not used as
+  evidence for this new workflow.
+
+Current risks:
+
+- This workflow captures user-provided external material; it does not yet
+  retrieve or verify live web pages.
+- External-source approval is recorded as opt-in and workpapers remain in
+  `needs_review`; there is no final approval state transition for them yet.
+- The unrelated full UI smoke suite needs its legacy fixture assertions aligned
+  with the current demo seed before it can be green as a complete suite.
+
+Next recommended action:
+
+- Implement a production external-source connector only behind allowlisted
+  domains, per-matter approval, isolated capture, retained snapshots, a human
+  review gate, and replayable evaluation cases.
+
+## Hermes Professional External Source Workpaper Fixture Cycle
+
+Cycle time: 2026-07-10T01:52:00+08:00.
+
+Inspected:
+
+- `frontend/src/aletheia/agentops/anduParity.ts`
+- `frontend/tests/agentops/anduParity.test.ts`
+- `.agentops/status/anduai-parity.json`
+- previous shareholder penetration fixture cycle
+
+Implementation slice:
+
+- Added `ExternalSourceWorkpaperFixture` for opt-in external-source checks.
+- Added `buildExternalSourceWorkpaperFixture`, which creates a retained URL
+  source and retained snapshot source with hashes, capture timestamp, review,
+  audit, and workpaper provenance.
+- Added `validateExternalSourceWorkpaperFixture`, which fails approved external
+  checks unless they are opt-in and preserve retained source, workpaper, review,
+  and audit provenance.
+- Strengthened `validateAnduParityContracts` with
+  `external_check_source_retention`, so approved external checks fail when
+  external snapshots lack a hash, URL, or capture timestamp.
+- Extended `anduParity.test.ts` with passing retained-source workpaper coverage
+  and a weak retained-source failure case.
+- Updated `.agentops/status/anduai-parity.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+jq -e . .agentops/status/*.json >/dev/null && node .agentops/scripts/check-agentops.mjs
+git diff --check
+```
+
+Result:
+
+- focused AnduAI parity compiled tests passed 6/6;
+- broader AgentOps compiled tests passed 38/38;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 40 changed files;
+- AgentOps checker passed;
+- whitespace check passed.
+
+Current risks:
+
+- External-source support is still a contract and fixture layer; no production
+  web connector or retrieval runtime has been enabled.
+- Shareholder graph and external-source workpapers do not yet have a Phase 3 UI
+  or backend persistence workflow.
+- Preference learning remains contract-only and cannot silently change
+  playbooks or global behavior.
+
+Next recommended actions:
+
+- Move one parity surface into a Phase 3 UI/backend workflow using the same
+  opt-in, source retention, review, audit, eval, and privacy controls.
+
+## Hermes Professional Shareholder Penetration Fixture Cycle
+
+Cycle time: 2026-07-10T01:49:00+08:00.
+
+Inspected:
+
+- `git status --short --branch`
+- `frontend/src/aletheia/agentops/anduParity.ts`
+- `frontend/tests/agentops/anduParity.test.ts`
+- `.agentops/status/anduai-parity.json`
+
+Implementation slice:
+
+- Added `ShareholderPenetrationFixture` as a typed local-workpaper fixture for
+  issuer, direct shareholder, and beneficial owner graph paths.
+- Added `buildShareholderPenetrationFixture`, which creates a deterministic
+  source-backed path without enabling external web access.
+- Added `validateShareholderPenetrationFixture`, which requires path nodes and
+  path edges to exist and requires path edges to be confirmed, source-backed,
+  reviewed, and audited.
+- Extended `anduParity.test.ts` with passing fixture coverage and a failing
+  weak-evidence path case.
+- Updated `.agentops/status/anduai-parity.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Result:
+
+- focused AnduAI parity compiled tests passed 4/4;
+- broader AgentOps compiled tests passed 36/36;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 40 changed files;
+- AgentOps checker passed.
+
+Current risks:
+
+- The shareholder penetration graph is a local deterministic fixture; it does
+  not yet ingest external registry sources or render a graph UI.
+- External-source checks remain blocked unless explicit opt-in, retained
+  sources, workpapers, review comments, and audit events exist.
+- Preference learning remains contract-only and cannot silently change
+  playbooks or global behavior.
+
+Next recommended actions:
+
+- Add an external-source workpaper fixture that preserves snapshots, hashes,
+  review comments, and audit events without enabling unscoped browsing.
+- Then move the safest parity surface into a Phase 3 UI/backend workflow.
+
+## Hermes Professional Export Eval Provenance Cycle
+
+Cycle time: 2026-07-10T02:20:00+08:00.
+
+Inspected:
+
+- `git status --short --branch`
+- `frontend/src/aletheia/agentops/exportPackage.ts`
+- `frontend/src/lib/agentops/eval.ts`
+- `frontend/tests/agentops/exportPackage.test.ts`
+- `.agentops/status/audit-eval-export.json`
+
+Implementation slice:
+
+- `AuditPack` now includes `eval_snapshot_provenance`.
+- `buildAuditPack` builds eval snapshot provenance using the same
+  `persisted_gate_evidence` that feeds export and typed handoff provenance.
+- `ExportPackage.manifest` now counts eval snapshot source runs, reviews,
+  gates, audit events, feedback exports, candidate skills, and approved
+  playbooks.
+- `validateExportPackageIntegrity` now includes eval snapshot provenance in the
+  nested audit-pack hash and checks manifest counts against that provenance.
+- `exportPackage.test.ts` now verifies that persisted gate evidence IDs,
+  feedback export IDs, and approved playbook IDs are preserved in the exported
+  eval snapshot provenance.
+- Updated `.agentops/status/audit-eval-export.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Result:
+
+- focused export package compiled tests passed 16/16;
+- broader AgentOps compiled tests passed 34/34;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 40 changed files;
+- AgentOps checker passed.
+
+Current risks:
+
+- Eval snapshot provenance in export packages is read-only and does not approve
+  skills, learning, final exports, or product quality claims.
+- Export package previews remain distinct from approved professional exports
+  unless backend approval/gate/audit records back them.
+
+Next recommended actions:
+
+- Start the first concrete AnduAI parity workflow fixture, preferably
+  shareholder graph source-edge fixtures or external-source workpaper fixtures.
+
+## Hermes Professional Eval Snapshot Cycle
+
+Cycle time: 2026-07-10T02:10:00+08:00.
+
+Inspected:
+
+- `git status --short --branch`
+- `frontend/src/lib/agentops/eval.ts`
+- `frontend/src/lib/agentops/skills.ts`
+- `frontend/tests/agentops/skillsEval.test.ts`
+- `.agentops/EVAL_SNAPSHOT_PERSISTENCE_HANDOFF.md`
+- `.agentops/status/skills-eval-loop.json`
+
+Implementation slice:
+
+- Added `EvalSnapshotProvenance` and `EvalSnapshotProvenanceOptions`.
+- Added `buildEvalSnapshotProvenance`.
+- Eval snapshots now preserve source run IDs, review comment IDs, review tags,
+  gate result IDs, checkpoint IDs, evidence item IDs, claim IDs, audit event
+  IDs, feedback export IDs, candidate skill IDs, approved playbook IDs, metrics,
+  and warnings.
+- `persistedGateEvidence` can now feed gate snapshot, gate authorization,
+  blocked export, related gate audit event, gate result, and approval checkpoint
+  IDs into eval snapshot provenance.
+- Candidate skills remain warning-only and inactive until human-approved
+  playbook provenance exists.
+- Updated `.agentops/status/skills-eval-loop.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Result:
+
+- focused skills/eval compiled tests passed 4/4;
+- broader AgentOps compiled tests passed 34/34;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 39 changed files;
+- AgentOps checker passed.
+
+Current risks:
+
+- Eval snapshot provenance is read-only; it is not a persisted learning signal,
+  product quality claim, or skill approval.
+- Candidate skills remain inactive unless mapped to a human-approved playbook.
+
+Next recommended actions:
+
+- Connect eval snapshot provenance into export package summaries, or
+- start the first concrete AnduAI parity workflow fixture, preferably
+  shareholder graph source-edge fixtures or external-source workpaper fixtures.
+
+## Hermes Professional Phase 2 Continuation
+
+Cycle time: 2026-07-10T02:00:00+08:00.
+
+Inspected:
+
+- `git status --short --branch`
+- `.agentops/HERMES_PRO_PHASE_PLAN.md`
+- `.agentops/ANDUAI_PARITY_HERMES_REQUIREMENTS.md`
+- `frontend/src/aletheia/agentops/handoff.ts`
+- `frontend/src/aletheia/agentops/exportPackage.ts`
+- `frontend/tests/agentops/handoff.test.ts`
+- `frontend/tests/agentops/exportPackage.test.ts`
+- existing AgentOps status schema and checker
+
+Implementation slice:
+
+- Added `TypedHandoffPersistedGateEvidence` and
+  `TypedHandoffProvenanceOptions.persistedGateEvidence`.
+- `buildTypedHandoffProvenance` now folds persisted gate snapshot,
+  final-export authorization, blocked-export, related gate audit event IDs, and
+  approval checkpoint IDs into matching handoff provenance.
+- `buildExportPackage` now passes its `persisted_gate_evidence` into typed
+  handoff provenance, so the export package preserves the same persisted gate
+  IDs in both audit-pack evidence and handoff records.
+- Added `frontend/src/aletheia/agentops/anduParity.ts`, a typed fail-closed
+  contract layer for general legal Q&A, external-source checks, shareholder /
+  entity graph records, Word Add-in handoffs, and scoped preference-learning
+  proposals.
+- Exported AnduAI parity contracts from `frontend/src/aletheia/agentops/index.ts`.
+- Added `frontend/tests/agentops/anduParity.test.ts`.
+- Updated `.agentops/status/typed-artifact-handoff.json`.
+- Added `.agentops/status/anduai-parity.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/anduParity.test.js /tmp/aletheia-adapter-tests/tests/agentops/handoff.test.js /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js /tmp/aletheia-adapter-tests/tests/agentops/adapters.test.js /tmp/aletheia-adapter-tests/tests/agentops/skillsEval.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Result:
+
+- focused handoff/export package compiled tests passed 26/26;
+- broader AgentOps compiled tests passed 33/33;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 35 changed files;
+- AgentOps checker passed.
+
+Current risks:
+
+- AnduAI parity remains contract-only; no claim should be made that legal Q&A,
+  external web checks, shareholder graph UI, Word Add-in, or preference-learning
+  runtime is production-ready.
+- External-source checks must stay opt-in with retained sources/workpapers.
+- Preference learning must stay opt-in, scoped, revocable, inspectable, and
+  human-approved before changing playbooks.
+
+Next recommended actions:
+
+- Carry persisted gate evidence IDs into eval snapshot provenance.
+- Start the first concrete AnduAI parity workflow only after selecting one
+  narrow surface, likely external-source workpaper contracts or shareholder
+  graph source-edge fixtures.
+
+## Hermes Professional Phase 2 Cycle
+
+Cycle time: 2026-07-10T01:50:00+08:00.
+
+User expansion: add AnduAI-style capabilities to the professional Hermes target:
+general legal Q&A, whole-web / external-source automated checks, shareholder
+penetration graphing, Word Add-in, and user habit / preference learning.
+
+Source check:
+
+- `https://www.anduai.com/` and `https://autodocs.cn/` search results describe
+  network checks, shareholder penetration checks, related-party checks,
+  customer/supplier checks, automatic data collection, workpaper retention, and
+  analysis management.
+- 36Kr reporting describes AutoDocs as RPA + AI for information collection,
+  evidence retention, document production, and due diligence / compliance
+  workflows.
+- AIbase / ai-bot.cn summaries describe contract review, due diligence,
+  penetration checks, custom rules/templates, and user habit learning.
+
+Small coordination improvement:
+
+- Created `.agentops/ANDUAI_PARITY_HERMES_REQUIREMENTS.md`.
+- Updated `.agentops/HERMES_PRO_PHASE_PLAN.md` to include AnduAI parity in
+  Phase 2/3/4.
+- Updated execution heartbeat `hermes` and supervisor heartbeat `hermes-2` so
+  future 10-minute cycles keep the expanded scope in view.
+
+Implementation slice:
+
+- Updated `frontend/src/aletheia/agentops/exportPackage.ts` with
+  `PersistedGateEvidence` and `buildPersistedGateEvidence`.
+- `AuditPack` now carries `persisted_gate_evidence` with
+  `gate_results_persisted`, `final_export_gate_authorized`,
+  `final_export_gate_blocked`, related gate audit event IDs, and approval
+  checkpoint IDs when available.
+- `ExportPackage.manifest` now counts persisted gate snapshot, authorization,
+  blocked export, and approval checkpoint evidence.
+- `validateExportPackageIntegrity` now validates the persisted gate evidence
+  section. Final export gate pass without persisted audit/checkpoint IDs is
+  visible as failed persisted gate evidence validation.
+- Updated `frontend/tests/agentops/exportPackage.test.ts` with coverage for
+  missing persisted evidence and for preserved persisted final gate evidence
+  IDs.
+- Updated `.agentops/status/audit-eval-export.json`.
+
+Validation result:
+
+```bash
+cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js
+cd frontend && npm run lint
+cd frontend && npx tsc --noEmit --pretty false
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Result:
+
+- compiled `exportPackage.test.js` passed 16/16 tests;
+- frontend lint passed;
+- frontend TypeScript passed;
+- backend operator health passed with `ok: true`;
+- operator health warning is dirty worktree only, now 28 changed files;
+- AgentOps checker passed.
+
+Current risks:
+
+- AnduAI parity features must not weaken Aletheia's sensitive-work boundary:
+  external web checks must be opt-in, Q&A must remain cited expert support, the
+  shareholder graph must preserve source-backed edge status, Word Add-in edits
+  must sync back through review/gate/audit, and habit learning must be scoped,
+  revocable, inspectable, and human-approved before affecting playbooks.
+- The current persisted gate evidence slice is read-only export provenance. It
+  does not itself authorize final professional export.
+
+Next recommended actions:
+
+- Carry `persisted_gate_evidence` into typed handoff and eval snapshot
+  provenance.
+- Add typed contracts for AnduAI parity: legal Q&A citations, external-source
+  check workpapers, shareholder graph entities/edges, Word Add-in handoff
+  records, and opt-in preference-learning proposals.
+
+## Hermes Professional Resume Cycle
+
+Cycle time: 2026-07-10T01:30:46+08:00.
+
+User goal: resume toward a professional Hermes-style Aletheia target across
+four phases, with 10-minute execution and supervision.
+
+Inspected:
+
+- `git status --short --branch`
+- `README.md`
+- `docs/status.md`
+- `docs/agent_runtime_roadmap.md`
+- `.agentops/v1/SUPERVISOR_STATUS.md`
+- `.agentops/PRODUCT_SHAPE.md`
+- `.agentops/PERSISTENCE_SEMANTICS_PLAN.md`
+- `.agentops/STATUS_ROLLUP.md`
+- `.agentops/HANDOFF_QUEUE.md`
+- `.agentops/SUPERVISOR_CYCLE_CHECKLIST.md`
+- backend and frontend package scripts
+
+Small coordination improvement: created
+`.agentops/HERMES_PRO_PHASE_PLAN.md` as the resumed long-running plan for the
+new 10-minute execution heartbeat and read-only supervisor heartbeat.
+
+Current phase read:
+
+- Phase 1 is active: execution/supervision baseline and fast health evidence.
+- V1/P0 remains complete for the local/private-pilot loop.
+- The current dirty worktree is existing work and must not be reverted by
+  follow-up cycles.
+- Phase 2 should start with persisted downstream consumption of gate evidence
+  IDs across export, typed handoff, and eval surfaces, using the existing
+  persistence-semantics handoff docs.
+
+Automation state:
+
+- Execution heartbeat `hermes` is active on this thread at a 10-minute cadence.
+- Supervisor thread `019f47ee-4bb3-7602-a1e8-3375c50e0a77` exists.
+- Supervisor heartbeat `hermes-2` is active on that thread at a 10-minute
+  cadence.
+
+Validation planned this cycle:
+
+```bash
+cd backend && npm run check:aletheia:operator
+node .agentops/scripts/check-agentops.mjs
+```
+
+Validation result:
+
+- `cd backend && npm run check:aletheia:operator` passed with `ok: true`.
+- Operator health reported one expected warning: 25 changed files are present
+  and should be split intentionally before handoff.
+- `node .agentops/scripts/check-agentops.mjs` passed.
+
+Done:
+
+- Phase 1 baseline is established for continued 10-minute execution.
+- The supervisor window and heartbeat are active.
+- The next implementation phase is Phase 2 professional core hardening.
+
+Current risks:
+
+- The worktree is dirty with pre-existing user/parallel-thread changes.
+- Follow-up cycles must keep preview/helper surfaces separate from approved
+  professional exports unless persisted approval, gate, and audit evidence
+  backs them.
+
+Next recommended actions:
+
+- Start Phase 2 with a narrow slice that preserves persisted gate snapshot and
+  authorization audit IDs in export, typed handoff, or eval snapshot surfaces.
+- Run the smallest relevant backend/frontend checks after that slice instead
+  of broad refactors.
 
 ## Final P0 Completion Report
 

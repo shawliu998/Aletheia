@@ -26,6 +26,18 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const LOCAL_CLIENT_USER: User | null =
+    process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_CLIENT === "true"
+        ? {
+              id:
+                  process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_USER_ID ??
+                  "desktop-local-user",
+              email:
+                  process.env.NEXT_PUBLIC_ALETHEIA_LOCAL_USER_EMAIL ??
+                  "desktop@aletheia.local",
+          }
+        : null;
+
 function toUser(user: SupabaseUser): User {
     return {
         id: user.id,
@@ -35,10 +47,12 @@ function toUser(user: SupabaseUser): User {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    const [user, setUser] = useState<User | null>(null);
-    const [authLoading, setAuthLoading] = useState(true);
+    const [user, setUser] = useState<User | null>(LOCAL_CLIENT_USER);
+    const [authLoading, setAuthLoading] = useState(!LOCAL_CLIENT_USER);
 
     useEffect(() => {
+        if (LOCAL_CLIENT_USER) return;
+
         const checkUser = async () => {
             const {
                 data: { session },
@@ -69,11 +83,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const signOut = async () => {
+        if (LOCAL_CLIENT_USER) {
+            setUser(LOCAL_CLIENT_USER);
+            return;
+        }
         await supabase.auth.signOut({ scope: "local" });
         setUser(null);
     };
 
     const updateEmail = async (email: string) => {
+        if (LOCAL_CLIENT_USER) {
+            const nextUser = { ...LOCAL_CLIENT_USER, email };
+            setUser(nextUser);
+            return nextUser;
+        }
+
         const redirectTo =
             typeof window === "undefined"
                 ? undefined

@@ -1,29 +1,127 @@
 import type { Workflow } from "../shared/types";
 
+const ASSISTANT_WORKFLOW_PROMPTS = {
+    "Commercial Lease Review": "Review the uploaded commercial lease and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High — reinstatement obligation is uncapped\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause references where available. Do not include issues that are adverse only to the other party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nBreak Rights\tHigh — Clause [x] imposes vacant possession as a break condition with no cure period. The lessee-specific checklist point indicates the break is fragile and may be lost on a technicality.\tFor the lessee, remove vacant possession as a break condition or add a cure period and express the condition narrowly.\nDrafting Consistency\tMedium — Clauses [x] and [y] use inconsistent defined terms for the premises. The general drafting point indicates ambiguity that may affect the represented party's rights.\tFor the represented party, align defined terms, premises description, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Lessor or Lessee).\n\nIssue\tGeneral\tLessor\tLessee\nParties and Premises\tIdentify landlord, tenant, guarantor, property, premises, title references, and included or excluded areas. Flag incorrect entities, missing plans, or premises description inconsistent with title.\t\t\nTerm\tState commencement, expiry, rent commencement, and any conditions precedent.\tFlag renewal rights or holding-over provisions that limit the landlord's ability to recover the premises.\tFlag uncertain commencement mechanics, no renewal clarity, or landlord-only discretion over start conditions.\nRent and Payments\tConfirm rent quantum, payment dates, and deposit mechanics.\tFlag unclear payment mechanics, weak late-payment provisions, or rent-free periods exceeding what was agreed.\tFlag unclear payment obligations, high default interest, or missing rent-free mechanics.\nRent Review\tIdentify review dates, mechanism, assumptions, disregards, and dispute process.\tFlag review mechanics too favorable to the tenant, downward review provisions, or no upward adjustment.\tFlag upward-only review, no cap, aggressive assumptions, or tenant-unfriendly dispute process.\nService Charge and Operating Costs\tIdentify tenant contribution scope, cap mechanics, audit rights, and reconciliation process.\tFlag cost exclusions too broad, caps too low, or audit rights creating undue operational burden.\tFlag broad pass-throughs, no cap, capital expenditure exposure, or weak audit rights.\nUse\tState permitted use, prohibited uses, trading obligations, and change-of-use restrictions.\tFlag permitted use too broad or absence of continuous trading obligation.\tFlag narrow use restriction, continuous trading obligations, or restrictions inconsistent with operations.\nRepairs and Maintenance\tIdentify landlord and tenant repair obligations, condition standard, and schedule of condition.\tFlag limited tenant repairing obligations, repair gaps, or yielding-up conditions below acceptable standard.\tFlag full repairing obligation extending to pre-existing defects or structural issues outside tenant control.\nAlterations and Fit-Out\tIdentify consent requirements and reinstatement obligations.\tFlag broad alteration rights without landlord consent or no reinstatement obligation.\tFlag absolute consent rights, broad reinstatement obligations, or unclear fit-out approval timing.\nAssignment, Underletting, and Sharing Occupation\tIdentify transfer restrictions, consent tests, and group sharing rights.\tFlag broad permitted transfer rights allowing assignment to unsuitable tenants without approval.\tFlag absolute assignment bans, excessive consent conditions, or no group sharing rights.\nInsurance and Damage\tIdentify who insures, insured risks, rent suspension, and termination rights on damage.\tFlag tenant insurance obligations too narrow or absence of rent suspension protection.\tFlag no rent suspension on damage, uninsured risk exposure, or no termination right after prolonged damage.\nBreak Rights\tIdentify break dates, notice periods, and conditions.\tFlag broadly exercisable break conditions allowing tenant exit without adequate penalty.\tFlag fragile break conditions, strict vacant possession tests, or excessive preconditions.\nDefault and Remedies\tIdentify default events, cure periods, and enforcement rights.\tFlag long cure periods, high default thresholds, or limited remedies that delay enforcement.\tFlag short cure periods, broad default triggers, or landlord self-help without adequate notice.\nCompliance Obligations\tIdentify which party bears responsibility for regulatory compliance.\tFlag compliance gaps exposing the landlord to regulatory liability.\tFlag tenant responsibility for landlord works, historic contamination, or compliance beyond the demised premises.\nSecurity Package\tIdentify security type, quantum, and release conditions.\tFlag security inadequate for the tenant's covenant strength or release mechanics too easy to trigger.\tFlag excessive security requirements, no step-down on release, or unclear deposit return mechanics.\nRights Reserved and Easements\tIdentify reserved landlord rights, access arrangements, and tenant rights over common parts.\tFlag insufficient reserved rights limiting the landlord's ability to manage the building.\tFlag broad landlord entry or disruption rights, or missing rights needed for the tenant's permitted use.\nEnd of Term\tIdentify yielding-up condition, reinstatement obligations, and dilapidations process.\tFlag inadequate reinstatement obligations, unclear yielding-up conditions, or weak dilapidations recovery.\tFlag overly broad reinstatement obligations or handback conditions requiring a better standard than at commencement.\nGoverning Law and Dispute Resolution\tState governing law, court forum, expert determination process, and mandatory dispute procedures. Flag ambiguous forum, missing expert determination terms, or inadequate dispute mechanics.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one.",
+    "Corporate Approvals Review": "Review the uploaded transaction document, resolution, authority package, or corporate action to determine whether the relevant company approvals appear complete, internally consistent, and supported by the company's corporate records.\n\nBefore producing the review, ask the user to upload or identify the available corporate records to check against. Request the relevant records, including as applicable:\n\ncertificate of incorporation, certificate of formation, or equivalent constitutional filing\nmemorandum and articles, articles of association, bylaws, operating agreement, constitution, or equivalent governing document\nregister of directors, board register, officer register, or equivalent management records\nregister of shareholders, register of members, stock ledger, cap table, or equivalent ownership records\nboard minutes, written resolutions, consents, committee resolutions, shareholder resolutions, or member approvals\nshareholder agreement, investors' rights agreement, voting agreement, operating agreement, or other approval-rights document\nincumbency certificate, secretary's certificate, specimen signatures, powers of attorney, delegated authority matrix, or signing authority evidence\nrelevant filings, good standing certificates, prior approvals, or transaction-specific authority documents\n\nIf records are missing, do not assume they exist. Identify what is missing and explain how that limits the review.\n\nProduce a concise Markdown table with exactly these columns:\n\nIssue\nRecords Checked\nFinding\nRisk\nRecommended Action\n\nUse these risk ratings in the Risk column:\n\nLow: approval position appears standard or no material issue was identified from the records provided.\nMedium: a gap, ambiguity, or missing supporting record should be clarified before completion.\nHigh: a material approval, authority, capacity, or consistency issue may affect execution, validity, enforceability, or closing.\nCritical: an apparent absence of required approval or authority may block signing or completion unless resolved.\n\nReview the uploaded materials for these categories:\n\nCategory\tWhat to Check\nCompany Identity and Capacity\tCheck that the company's legal name, registration number, jurisdiction, entity type, capacity, and status match the corporate records and transaction documents.\nConstitutional Authority\tCheck whether the governing documents permit the transaction, execution of documents, borrowing, guarantees, security, share actions, asset disposals, or other relevant corporate action.\nBoard Composition and Authority\tCheck current directors or managers against the board register, appointment records, quorum requirements, conflicts rules, voting thresholds, and authority to approve the transaction.\nShareholder or Member Approvals\tCheck whether shareholder, member, class, investor, reserved matter, or special approval is required by law, governing documents, shareholder agreements, or other approval-rights documents.\nSigning Authority\tCheck signatories against incumbency records, delegated authority, resolutions, powers of attorney, secretary's certificates, and execution blocks.\nApproval Documents\tCheck board minutes, written resolutions, consents, certificates, and approval packs for correct parties, dates, quorum, votes, conflicts, recitals, authorized documents, and authorized signatories.\nRegisters and Ownership Records\tCheck shareholder/member registers, cap tables, stock ledgers, and transfer records for consistency with approvals, voting thresholds, class rights, and parties entitled to approve.\nTransaction Document Consistency\tCheck that the documents approved match the documents being signed, including names, dates, document titles, parties, transaction description, limits, conditions, and schedules.\nReserved Matters and Consent Rights\tCheck shareholder agreements, investor rights documents, financing documents, or other contracts for veto rights, consent rights, notice requirements, or approval thresholds.\nFilings and Ancillary Steps\tCheck whether filings, good standing certificates, registers, notices, public records updates, share certificates, or post-completion corporate records are required.\nDrafting and Record Inconsistencies\tFlag inconsistent entity names, officer or director names, dates, document titles, approval thresholds, defined terms, numbering, cross-references, and conflicts between records.\n\nFor each issue, cite the relevant corporate record or transaction document in the Records Checked column. In the Finding column, state what the records show and whether they support the proposed action. In the Recommended Action column, provide a specific cure, confirmation, document request, approval step, or drafting correction.\n\nIf no material approval issues are found, include a row stating that no material approval issue was identified based on the records provided, and separately identify any records that were not provided or assumptions that remain open.\n\nKeep the response focused on approval, authority, capacity, signing authority, and record consistency. Do not provide a broad commercial contract review unless the user asks for one.",
+    "Draft CP Checklist": "Review the uploaded credit agreement or financing document and generate a comprehensive Conditions Precedent (CP) checklist.\n\nYou MUST use the generate_docx tool to produce the checklist as a downloadable Word document. You MUST pass landscape: true to the generate_docx tool — the document must be in landscape orientation. Do not display the checklist inline — generate the .docx file and provide the download link.\n\nStructure the document as follows:\n\nFor each category of conditions (e.g. Corporate, Financial, Legal, Security), add a section with a heading\nUnder each category heading, include a table with exactly these four columns in this order:\nIndex — sequential number within the category (1, 2, 3…)\nClause Number — the clause or schedule reference from the agreement\nClause — a concise description of the condition precedent\nStatus — leave blank (empty string) for the user to fill in\n\nUse the table field in the section object (not content) for each category's rows.\n\nResult Table Format\n\nThe document contains one section per category, each with a table in this format:\n\nCorporate\nIndex\tClause Number\tClause\tStatus\n1\tCl. 4.1(a)(i)\tCertificate of incorporation and constitutional documents of the borrower\t \n2\tCl. 4.1(a)(ii)\tBoard resolution authorising execution of the finance documents and approving the terms of the transaction\t \n3\tCl. 4.1(a)(iii)\tSpecimen signatures of all authorised signatories\t \nLegal\nIndex\tClause Number\tClause\tStatus\n1\tCl. 4.1(c)(i)\tLegal opinion from counsel to the borrower in form and substance satisfactory to the agent\t \n2\tCl. 4.1(c)(ii)\tLegal opinion from counsel to the arrangers as to the laws of the relevant jurisdiction\t \n\nBefore finalizing, double-check that every table is formatted correctly: each table must have exactly the four columns above in the same order, headers must match exactly (Index, Clause Number, Clause, Status), every row must have the same number of cells as the headers, the Index column must be sequential starting from 1 within each category, and no cells should contain stray markdown, newlines, or placeholder text (use an empty string for Status).",
+    "Credit Agreement Review": "Review the uploaded credit agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High — covenant headroom is tight\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause or schedule references where available. Do not include issues that are adverse only to the other party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nFinancial Covenants\tHigh — Clause [x] sets the leverage covenant at [x]x with quarterly testing and no equity cure right. The borrower-specific checklist point indicates limited headroom and no remedy for a technical breach.\tFor the borrower, widen the covenant threshold, add an equity cure right, and reduce testing frequency to semi-annual.\nDrafting Consistency\tMedium — Clauses [x] and [y] use inconsistent defined terms for the facility amount. The general drafting point indicates ambiguity that may affect the represented party's rights.\tFor the represented party, align defined terms, amounts, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Borrower or Lender).\n\nIssue\tGeneral\tBorrower\tLender\nParties\tIdentify all lenders, borrowers, guarantors, agents, and other finance parties with full legal names, roles, and jurisdictions. Flag missing or incorrect entities, unclear agent roles, missing authority confirmations, or transfer mechanics that could result in unknown lenders.\t\t\nGuarantors\tIdentify guarantors, guarantee scope, limits, and coverage requirements.\tFlag uncapped guarantees, missing limits, or upstream guarantee concerns exposing the borrower group.\tFlag weak guarantor coverage, missing entities, or guarantees not covering the full facility.\nOther Parties\tIdentify facility agent, security agent, arrangers, issuing banks, and other material parties.\tFlag unclear agent roles or mechanics creating additional obligations on the borrower.\tFlag inconsistent secured party mechanics or missing parties affecting security validity.\nDate of Agreement\tState signing date, effective date, and conditions to effectiveness. Flag inconsistent or unclear dates or effectiveness conditions.\t\t\nFacilities\tList each facility, type, tranche, availability, and key structural features.\tFlag excessive lender discretion, unclear facility purpose, or mismatched terms restricting drawdown.\tFlag unclear facility structure or purpose creating enforcement ambiguity.\nAmount\tState total commitments, currencies, tranche amounts, and accordion or incremental facilities.\tFlag unclear currency exposure, uncapped accordion provisions without borrower consent, or inconsistent commitment figures.\tFlag uncapped increase mechanics or dilutive accordion provisions not agreed at signing.\nPurpose\tSummarize permitted use of proceeds and restrictions.\tFlag vague purpose wording restricting flexibility or creating sanctions risk.\tFlag broad purpose language permitting restricted payment leakage or unapproved use of proceeds.\nInterest\tIdentify reference rate, margin, floors, fallback rates, interest periods, and default interest.\tFlag high margins, aggressive floors, benchmark fallback gaps, or high default interest.\tFlag unclear fallback rate mechanics or interest calculation ambiguities.\nCommitment Fee\tState commitment, utilisation, ticking, arrangement, agency, and other fees.\tFlag hidden fees, fees payable after cancellation, or unclear calculation basis.\tFlag missing fee provisions or fee timing delaying recovery.\nRepayment Schedule\tSummarize amortisation, scheduled repayments, bullet payments, and cash sweep.\tFlag aggressive amortisation, unclear prepayment application, or cash sweep uncertainty.\tFlag bullet repayments without adequate covenant or security protection.\nMaturity\tState final maturity date and any extension options.\tFlag short maturity, lender-only extension discretion, or mismatch with the business plan.\tFlag unclear extension conditions or borrower-controlled extension mechanics.\nSecurity\tIdentify security package, assets, entities, perfection steps, and post-closing obligations.\tFlag all-asset security beyond deal scope, onerous post-closing steps, or missing release mechanics on disposal.\tFlag gaps in the security package, missing perfection steps, or inadequate post-closing obligations.\nGuarantees\tSummarize guarantee obligations, guarantors, limitations, and release triggers.\tFlag broad all-monies language, unlimited guarantees, or no release mechanics after repayment or disposal.\tFlag guarantee gaps, weak limitations, or no coverage test requirements.\nFinancial Covenants\tIdentify covenant metrics, thresholds, testing frequency, cure rights, and reporting.\tFlag tight headroom, frequent testing, no equity cure, or ambiguous EBITDA adjustments.\tFlag loose covenant thresholds or wide EBITDA adjustments obscuring true financial performance.\nEvents of Default\tSummarize default triggers, grace periods, materiality thresholds, cross-default, and MAE.\tFlag low materiality thresholds, no cure periods, broad cross-default, or subjective MAE defaults.\tFlag weak default triggers, long cure periods, or materiality thresholds delaying enforcement.\nAssignment\tSummarize lender transfer rights, borrower consent mechanics, and disqualified institutions.\tFlag free transfers to competitors, distressed investors, or lenders on a borrower blacklist.\tFlag consent mechanics giving the borrower excessive veto over lender transfers.\nChange of Control\tIdentify triggers and resulting prepayment, cancellation, or default consequences.\tFlag broad triggers, no cure period, or definitions catching ordinary-course ownership changes.\tFlag narrow change of control definitions missing material ownership shifts.\nPrepayment Fee\tIdentify make-whole, soft-call, premium periods, and exceptions.\tFlag excessive fees, long premium periods, or unclear exceptions for mandatory prepayments.\tFlag exceptions allowing free prepayment during premium periods.\nGoverning Law and Dispute Resolution\tState governing law, jurisdiction, forum, and service of process. Flag unclear or ambiguous governing law, jurisdiction, or service mechanics.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one.",
+    "Draft Issues List": "Review the uploaded agreement and draft a comprehensive issues list from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before drafting the issues list.\n\nAn issues list identifies open, unresolved, or contentious points in the current draft that require negotiation or resolution before signing. Focus on points that are material to the represented party's commercial and legal position.\n\nOnce the represented party is clear, use the generate_docx tool to produce the issues list as a downloadable Word document. Do not display the issues list inline — generate the .docx file and provide the download link.\n\nThe Word document must contain exactly one result table. List each open issue in order from highest to lowest priority and add a final row called Overall Negotiation Position. The result table must have exactly these columns:\n\nIssue\nCurrent Position\nProposed Change\n\nUse these priority ratings at the start of the Current Position column: Critical means a blocking issue that must be resolved before signing; High means a material point requiring negotiation; Medium means a negotiation concern but manageable; Low means a minor point for consideration only. Include relevant clause references in the Current Position column. The Proposed Change column must state the specific amendment or position the represented party should seek, drafted from that party's perspective. Keep the response concise and focused on actionable negotiation points.\n\nResult Table Format\n\nThe Word document must use this result table structure. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tCurrent Position\tProposed Change\nLiability Cap\tHigh — Clause [x] contains no monetary cap on the represented party's total liability under the agreement.\tAdd a liability cap equal to [amount] or a multiple of fees paid, with carve-outs limited to fraud and wilful misconduct.\nGoverning Law\tMedium — Clause [x] specifies [jurisdiction] law, which is inconvenient for the represented party's operations and legal advisers.\tChange governing law to [preferred jurisdiction] and amend the dispute resolution clause accordingly.\n\nUse the table field in the document section object, not prose content, for the issues list rows.\n\nBefore finalizing, double-check that the table is formatted correctly: it must have exactly the three columns above in the same order, headers must match exactly (Issue, Current Position, Proposed Change), every row must have the same number of cells as the headers, issues must be ordered from highest to lowest priority, and no cells should contain stray markdown, newlines, or placeholder text unless the source document requires a placeholder.",
+    "Employment Agreement Review": "Review the uploaded employment agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High - restrictive covenant scope is excessive\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause references where available. Do not include issues that are adverse only to another party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nRestrictive Covenants\tHigh - Clause [x] imposes a long non-compete with broad geographic scope. The general covenant position and the employee-specific checklist point indicate enforceability and mobility risk for the employee.\tFor the employee, reduce the duration, territory, and restricted activities to what is necessary for legitimate business protection.\nDrafting Consistency\tMedium - Clauses [x] and [y] use inconsistent defined terms or party names. The general drafting point indicates ambiguity that may affect the represented party's rights or obligations.\tFor the represented party, align the defined terms, party names, numbering, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Employer or Employee).\n\nIssue\tGeneral\tEmployer\tEmployee\nParties and Role\tIdentify employer and employee with correct legal names. Confirm job title, reporting line, work location, and employment type. Flag incorrect entities, unclear role scope, or terms creating unintended employment relationships.\t\t\nStart Date and Term\tState commencement date, probation period, fixed term, renewal mechanics, and conditions precedent.\tFlag unclear commencement mechanics or terms that limit employer flexibility during the probation period.\tFlag long probation periods, unclear renewal mechanics, or employer-only extension rights.\nDuties\tSummarize duties, working hours, exclusivity, travel requirements, and flexibility clauses.\tFlag overly narrow duties that restrict operational flexibility or the employer's ability to change the role.\tFlag open-ended duties, excessive hours, broad travel requirements, or unilateral employer change rights.\nCompensation\tIdentify salary, payment frequency, reviews, bonus, commission, allowances, and discretion.\tFlag discretionary compensation arrangements that may create enforceable entitlement expectations.\tFlag fully discretionary compensation, unclear bonus criteria, or missing payment timing.\nBenefits\tSummarize pension, insurance, leave, expenses, equity incentives, and employer discretion.\tFlag benefit commitments that may be difficult to modify or withdraw without breach.\tFlag benefits that can be withdrawn without notice or that conflict with the offer letter.\nHoliday and Leave\tState annual leave, sickness absence, statutory leave, notice requirements, and carry-over rules.\tFlag carry-over obligations or leave accrual that creates significant financial liability.\tFlag entitlements below statutory minimums, unclear carry-over rules, or inadequate sick pay.\nPolicies and Handbook\tIdentify incorporated policies, contractual status, and amendment rights.\tFlag policies incorporated as contractual that cannot be changed unilaterally without employee consent.\tFlag policies incorporated as contractual while the employer retains unilateral amendment rights.\nConfidentiality\tSummarize confidentiality obligations during and after employment.\tFlag confidentiality obligations too narrow to protect business-critical information.\tFlag overbroad confidential information definitions or indefinite restrictions beyond legitimate business interests.\nIntellectual Property\tIdentify ownership, assignment, inventions, works, moral rights waivers, and assistance obligations.\tFlag gaps in IP assignment covering inventions or works made during employment or using company resources.\tFlag assignment of unrelated personal inventions, works outside employment scope, or unpaid post-employment assistance obligations.\nData Protection and Monitoring\tSummarize monitoring, privacy, processing, and consent provisions.\tFlag monitoring arrangements that may expose the employer to data protection liability.\tFlag intrusive monitoring, blanket consent provisions, or missing privacy notice references.\nConflicts and Outside Activities\tIdentify restrictions on outside work, directorships, investments, conflicts, and disclosure duties.\tFlag insufficient restrictions on outside activities or conflicts that could harm business interests.\tFlag broad bans on passive investments, restrictions on unrelated outside work, or disclosure obligations for non-conflicting activities.\nTermination\tState notice periods, payment in lieu, garden leave, summary dismissal, severance, and survival terms.\tFlag notice periods or severance obligations that unduly limit employer termination flexibility.\tFlag one-sided notice rights, broad summary dismissal triggers, or unclear payment in lieu treatment.\nRestrictive Covenants\tSummarize non-compete, non-solicit, non-dealing, non-poach, and confidentiality covenants.\tFlag covenants too narrow in scope, too short in duration, or likely to be unenforceable.\tFlag excessive duration, broad geographic scope, wide covered customers, or covenants that may be unenforceable restraints.\nReturn of Property\tIdentify obligations to return devices, documents, data, confidential information, and property.\tFlag unclear scope of return obligations or no mechanism to enforce retrieval of business property.\tFlag no carve-out for personal materials or obligations that require returning statutory record retention copies.\nGoverning Law and Dispute Resolution\tState governing law, courts, tribunal forum, arbitration, and mandatory procedures. Flag unfamiliar law, unclear mandatory procedures, or arbitration clauses that may limit statutory rights.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one.",
+    "Guarantee Agreement Review": "Review the uploaded guarantee, guaranty, or guarantee-and-indemnity agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High - guarantee is uncapped\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause references where available. Do not include issues that are adverse only to another party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nCap and Limits\tHigh - Clause [x] does not include a monetary cap or time limit. The general exposure point and the guarantor-specific checklist point indicate uncapped liability risk for the guarantor.\tFor the guarantor, add a monetary cap, currency limit, time limit, and exclusions for obligations outside the agreed transaction.\nDrafting Consistency\tMedium - Clauses [x] and [y] use inconsistent defined terms or party names. The general drafting point indicates ambiguity that may affect the represented party's rights or obligations.\tFor the represented party, align the defined terms, party names, numbering, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Guarantor or Guarantee Holder).\n\nIssue\tGeneral\tGuarantor\tGuarantee Holder\nParties\tIdentify all parties with full legal names and roles, including guarantor, principal obligor, agent, and security trustee. Flag incorrect entities, missing capacity details, or unclear party or agent structure.\t\t\nGuaranteed Obligations\tSummarize payment, performance, indemnity, costs, interest, fees, future advances, and all-monies coverage.\tFlag broad all-monies coverage, obligations beyond the intended transaction, or future advances not agreed at outset.\tFlag gaps in guaranteed obligations or exclusions of fees, interest, or enforcement costs.\nNature of Liability\tState whether liability is primary, secondary, joint and several, continuing, independent, on-demand, or principal debtor liability.\tFlag primary, on-demand, or principal debtor liability where only secondary guarantee risk was intended.\tFlag secondary-only liability or absence of principal debtor language that weakens enforcement.\nGuarantee vs Indemnity\tIdentify any separate indemnity or principal debtor language and explain practical effect.\tFlag separate indemnity language that expands exposure beyond the underlying obligation or bypasses guarantor defences.\tFlag absence of indemnity or principal debtor language that could allow defences to defeat enforcement.\nCap and Limits\tState monetary cap, currency, interest cap, time limit, excluded obligations, and other limits.\tFlag uncapped exposure, unclear currency, or no temporal limit on guaranteed obligations.\tFlag caps too low to cover the full facility, or caps that exclude interest, fees, and enforcement costs.\nContinuing Security\tSummarize future, contingent, amended, refinanced, reinstated, or continuing obligations.\tFlag coverage of unknown future obligations or amendments to the underlying facility without guarantor consent.\tFlag gaps in continuing security coverage or restrictions on amendments that limit lender flexibility.\nDemand Mechanics\tExplain demand triggers, notice, payment timing, evidence, and conclusiveness.\tFlag immediate payment without adequate evidence, conclusive certificates, or no notice period before demand.\tFlag demand mechanics too cumbersome or conditions that allow the guarantor to delay payment.\nDefences and Waivers\tIdentify waivers of suretyship defences, diligence, presentment, set-off, marshalling, subrogation, contribution, and notice.\tFlag broad waivers of fundamental defences, excessive restriction of set-off, or waiver of subrogation rights.\tFlag incomplete waiver of suretyship defences that could allow the guarantor to avoid payment.\nVariations and Releases\tSummarize effect of amendments, waivers, releases, insolvency events, or underlying document changes.\tFlag guarantee surviving material changes to the underlying facility without guarantor consent.\tFlag restrictions on amendments or waivers requiring guarantor consent that limit lender flexibility.\nReinstatement\tIdentify clawback, preference, invalid payment, or reinstatement provisions.\tFlag indefinite reinstatement obligations or reinstatement beyond reasonable insolvency clawback risk.\tFlag absence of reinstatement provisions that could leave the guarantee holder exposed after a clawback.\nSubordination\tSummarize restrictions on guarantor claims, subrogation, contribution, or proof in insolvency.\tFlag indefinite blockage of guarantor recovery or subrogation rights after the guarantee holder is paid in full.\tFlag absence of subordination provisions that could allow the guarantor to compete with the guarantee holder in insolvency.\nRepresentations and Covenants\tIdentify capacity, authority, solvency, consents, sanctions, and compliance covenants.\tFlag repeating representations, broad compliance obligations, or solvency statements that may be difficult to give.\tFlag weak representations or covenants that do not adequately confirm guarantor capacity and authority.\nTermination and Release\tState how the guarantee may be terminated, released, discharged, or reduced.\tFlag no release mechanism after repayment or facility termination, or unclear discharge conditions.\tFlag release mechanics too easy to trigger or that do not require full repayment and discharge.\nCosts, Expenses, and Taxes\tSummarize reimbursement, gross-up, tax indemnities, and enforcement costs.\tFlag unlimited costs, gross-up for avoidable taxes, or broad indemnities beyond reasonable enforcement costs.\tFlag cost recovery gaps that leave enforcement costs unrecoverable from the guarantor.\nAssignment and Transfer\tIdentify whether the guarantee holder may assign or transfer benefit and whether guarantor consent is required.\tFlag free transfer of benefit to unknown creditors, distressed debt purchasers, or competitors without consent.\tFlag consent mechanics that give the guarantor excessive control over assignment of the guarantee benefit.\nGoverning Law and Dispute Resolution\tState governing law, jurisdiction, arbitration, service of process, and immunity waiver provisions. Flag unfamiliar law, inconvenient forum, broad immunity waiver, unclear service mechanics, or inadequate interim relief provisions.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one.",
+    "NDA Review": "Review the uploaded non-disclosure agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High - confidential information definition is too narrow\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause references where available. Do not include issues that are adverse only to another party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nDefinition of Confidential Information\tMedium - Clause [x] covers broad categories of information but does not clearly address oral disclosures. The general definition point and the disclosing-party checklist point indicate a protection gap.\tFor the disclosing party, add oral and visual disclosures and require written confirmation within a defined period.\nDrafting Consistency\tMedium - Clauses [x] and [y] use inconsistent defined terms or party names. The general drafting point indicates ambiguity that may affect the represented party's rights or obligations.\tFor the represented party, align the defined terms, party names, numbering, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Disclosing Party or Receiving Party).\n\nIssue\tGeneral\tDisclosing Party\tReceiving Party\nParties\tIdentify each party and their role. Confirm whether the NDA is mutual or one-way and that obligations are correctly allocated. Flag missing affiliates, mismatched roles, or obligations inconsistent with the agreed structure.\t\t\nPurpose\tSummarize the permitted purpose for which confidential information may be used.\tFlag overly broad purpose language that permits use beyond the intended transaction.\tFlag unclear or narrow purpose that prevents legitimate use of information in connection with the transaction.\nDefinition of Confidential Information\tExplain what information is protected, including oral, visual, derived, or pre-existing information.\tFlag definitions too narrow to protect all disclosed information, or no protection for oral or unmarked information.\tFlag definitions overbroad, capturing publicly available information or information not actually sensitive.\nExclusions\tIdentify standard exclusions such as public domain, independently developed, already known, or third-party received information.\tFlag missing standard exclusions that would allow the receiving party to escape obligations too easily.\tFlag missing standard exclusions (public domain, independently developed, already known) or exclusions that are too difficult to prove.\nDisclosure Obligations\tSummarize confidentiality obligations, standard of care, and use or disclosure restrictions.\tFlag standards of care too weak to adequately protect the information.\tFlag strict liability, vague standards, or obligations higher than own-information standards that expose the receiving party disproportionately.\nPermitted Recipients\tIdentify who may receive confidential information, including affiliates, representatives, advisers, financing sources, or investors.\tFlag recipient categories too broad, or no requirement for recipients to be bound by equivalent obligations.\tFlag missing adviser, affiliate, or financing source access rights needed to evaluate the transaction.\nRecipient Liability\tState whether the receiving party is responsible for breaches by permitted recipients.\tFlag absence of receiving party responsibility for breaches by permitted recipients.\tFlag uncapped liability for actions of recipients outside the party's direct control.\nCompelled Disclosure\tSummarize disclosure required by law, regulation, court order, stock exchange, or governmental authority.\tFlag no notice right, no cooperation obligation, or overly broad compelled disclosure permissions.\tFlag overly burdensome notice requirements or obligations to resist disclosure beyond what is practicable.\nTerm\tState the agreement term and the duration of confidentiality obligations.\tFlag obligations that expire too soon or unclear continuation of obligations after agreement end.\tFlag indefinite obligations or unusually long terms for non-trade-secret information.\nReturn or Destruction\tSummarize return, destruction, retention, and archival copy obligations.\tFlag no return obligation or inadequate destruction mechanics.\tFlag no carve-out for archival, compliance, backup, or legal retention copies.\nResidual Knowledge\tIdentify whether unaided memory or residual knowledge may be used.\tFlag broad residual knowledge rights that could undermine confidentiality protections.\tFlag absence of a residual knowledge carve-out that prevents legitimate use of unaided memory.\nNon-Solicit / Standstill\tIdentify non-solicitation, non-circumvention, standstill, exclusivity, or similar restrictions.\tFlag absence of non-solicitation or standstill protections where commercially expected.\tFlag hidden restrictive covenants, long durations, broad covered persons, or restrictions unrelated to confidentiality.\nNo Warranty / No Obligation\tSummarize disclaimers about accuracy, completeness, warranties, or obligation to proceed.\tFlag missing disclaimers that could create liability for the accuracy or completeness of disclosed information.\tFlag disclaimers that conflict with fraud or intentional misrepresentation, or that expressly exclude reliance.\nRemedies\tIdentify injunctive relief, equitable remedies, indemnities, liquidated damages, or enforcement provisions.\tFlag absence of injunctive relief or inadequate remedies for breach.\tFlag automatic injunction language, broad indemnities, or liquidated damages without adequate safeguards.\nAssignment\tSummarize restrictions on assignment or transfer.\tFlag free assignment rights that could transfer obligations to unknown parties.\tFlag restrictions that block legitimate affiliate transfers needed for the deal process.\nGoverning Law and Dispute Resolution\tState governing law, forum, arbitration provisions, and submission to jurisdiction. Flag unfamiliar law, asymmetric process, inconvenient forum, or missing service provisions.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one.",
+    "Proofread": "Review the uploaded document for drafting quality, internal consistency, and mechanical errors. Focus on issues that a lawyer or reviewer should correct before the document is circulated, signed, or filed.\n\nProduce a concise Markdown table with exactly these columns:\n\nSeverity\nCategory\nLocation\nIssue\nRecommended Fix\n\nUse these severity ratings:\n\nCritical: an inconsistency or drafting error that may materially change rights, obligations, parties, timing, or enforceability.\nHigh: an error likely to create ambiguity, negotiation friction, or implementation risk.\nMedium: a proofreading or consistency issue that should be fixed but is unlikely to change the main legal effect.\nLow: a minor typo, grammar, formatting, punctuation, or style issue.\n\nReview the document for these categories:\n\nCategory\tWhat to Check\nDefinitions\tCheck that defined terms are used consistently, all capitalized defined terms are defined, definitions are not duplicated or conflicting, definitions are not circular, unused definitions are identified, and defined terms match the operative provisions.\nCross-References\tCheck that clause, section, schedule, exhibit, annex, and document references exist, point to the correct place, use the correct numbering, and remain accurate after any apparent drafting changes.\nInternal Consistency\tCheck for terms, sections, dates, parties, amounts, thresholds, notice periods, conditions, remedies, or obligations that conflict with each other or create inconsistent outcomes.\nParties and Entity Names\tCheck that party names, entity suffixes, registration details, capacities, addresses, signatory names, and role labels are consistent throughout the document.\nNumbers, Dates, and Calculations\tCheck monetary amounts, percentages, dates, deadlines, time periods, notice periods, interest rates, formulas, schedules, and words-versus-figures consistency.\nGrammar and Typos\tCheck spelling, grammar, punctuation, missing words, duplicate words, repeated phrases, tense, subject-verb agreement, and obvious typographical errors.\nNumbering\tCheck clause numbering, section numbering, sub-clause hierarchy, schedule numbering, exhibit numbering, table numbering, skipped numbers, duplicate numbers, and numbering sequences. If the document has a table of contents, check that clause numbers, headings, and hierarchy are consistent with the table of contents.\nFormatting\tCheck headings, list formatting, indentation, spacing, fonts, emphasis, table formatting, schedule formatting, and inconsistent styles that may affect readability or references.\n\nFor each issue, include the best available clause, section, page, schedule, or paragraph reference in the Location column. If the location is unclear, describe where the issue appears as specifically as possible.\n\nIn the Issue column, explain the problem and why it matters. In the Recommended Fix column, provide a specific correction or drafting action. Where useful, include replacement wording, but keep it concise. Do not rewrite the whole document. If no material issues are found, provide a short table row stating that no material proofreading issues were identified and note any review limitations.\n\nBefore finalizing, double-check that definitions, cross-references, numbering, formatting, and internal inconsistencies have each been considered separately. If a table of contents is present, verify that the clause numbers and headings in the document match the table of contents. Keep the response focused on actionable corrections.",
+    "Shareholder Agreement Review": "Review the uploaded shareholder agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client. If the user has not already identified which party they represent, ask them to clarify that party before producing the review.\n\nOnce the represented party is clear, provide exactly one Markdown result table. Use one row for each material issue found in the agreement, guided by the review checklist below, and add a final row called Overall Risk Rating. The result table must have exactly these columns:\n\nIssue\nSummary\nRecommended Change\n\nUse these risk ratings inside the Summary column: Low means standard or minimal concern; Medium means a manageable negotiation concern; High means a material legal, commercial, operational, or enforceability concern requiring negotiation; Critical means a severe issue that may block signing unless resolved. Start each summary with the risk rating, e.g. \"High — drag threshold is too low\".\n\nThe Summary column should include only the relevant points from the General checklist column and the party-specific checklist column for the represented party, together with clause references where available. Do not include issues that are adverse only to the other party unless they also create risk for the represented party. The Recommended Change column must be drafted from the represented party's perspective. Also flag general drafting errors that may affect the represented party, including inconsistent defined terms, inconsistent entity names, cross-reference errors, numbering issues, duplicated provisions, missing schedules, and internal inconsistencies. Keep the response concise and avoid long prose outside the table.\n\nResult Table Format\n\nUse this result table structure. Include annotations such as [1] and [2] in the Summary and Recommended Change columns to reference the relevant sections of the document. The example rows are illustrative only; tailor the actual rows to the uploaded agreement and represented party.\n\nIssue\tSummary\tRecommended Change\nDrag-Along Rights\tHigh — Clause [x] sets the drag threshold at [x]% and does not include a minimum price protection. The minority-specific checklist point indicates the minority can be forced to sell at an unfavorable price.\tFor the minority, raise the drag threshold, add a minimum price equal to fair market value, and limit warranties to proceeds received.\nDrafting Consistency\tMedium — Clauses [x] and [y] use inconsistent defined terms for the share classes. The general drafting point indicates ambiguity that may affect the represented party's rights.\tFor the represented party, align defined terms, share class definitions, and cross-references before signing.\nReview Checklist\n\nUse this checklist as guidance for what to review and flag. It is not the result-table template and should not be reproduced verbatim. For each checklist issue, consider both the General column and the party-specific column for the represented party (Majority or Minority).\n\nIssue\tGeneral\tMajority\tMinority\nParties and Shareholdings\tIdentify each shareholder, role, share class, percentage holding, and fully diluted position. Flag inconsistent cap table information, missing parties, or unclear beneficial ownership.\t\t\nShare Classes and Rights\tSummarize voting rights, dividend rights, liquidation preferences, conversion rights, redemption rights, and class consents.\tFlag class consents or voting requirements that effectively give minority approval rights over ordinary decisions.\tFlag hidden preference rights, disproportionate majority voting rights, or unfavorable class economics.\nBoard Composition and Governance\tIdentify board size, appointment rights, observer rights, quorum, chair, and casting vote.\tFlag quorum or deadlock provisions giving minority an effective veto over governance.\tFlag entrenched majority appointment rights, casting vote held by a majority nominee, or no observer rights for minority.\nReserved Matters\tList matters requiring special majority, unanimity, investor consent, or board consent.\tFlag reserved matters requiring minority consent that constrain ordinary business decisions.\tFlag absence of meaningful minority veto rights or low-dollar thresholds allowing majority to structure around them.\nPre-emption on New Shares\tSummarize pre-emption rights, offer process, timing, exclusions, and carve-outs.\tFlag mechanics slowing fundraising or requiring minority consent to issue new shares.\tFlag broad carve-outs, short exercise periods, or mechanics permitting dilution without proper notice.\nTransfer Restrictions\tSummarize lock-ups, prohibited transfers, permitted transfers, and consent requirements.\tFlag restrictions preventing majority exit or group reorganisation without minority consent.\tFlag absence of lock-up on majority transfers or mechanics allowing majority to exit leaving minority trapped.\nRight of First Refusal / Pre-emption on Transfer\tIdentify trigger, process, pricing, matching rights, and exceptions.\tFlag long ROFR processes or pricing mechanics delaying majority exit.\tFlag unclear matching rights, long processes excluding minority participation, or exceptions removing minority protections.\nDrag-Along Rights\tIdentify drag threshold, sale conditions, minority protections, and power of attorney.\tFlag high drag threshold or conditions preventing majority from executing a sale.\tFlag low drag threshold, no minimum price protection, forced warranties beyond proceeds received, or broad power of attorney.\nTag-Along Rights\tIdentify triggering transfers, eligible holders, and sale terms.\tFlag broad tag triggers complicating majority exit.\tFlag missing or narrow tag rights, or mechanics allowing majority to exclude minority from exit proceeds.\nAnti-Dilution Protections\tIdentify anti-dilution mechanics, carve-outs, and adjustment triggers.\tFlag mechanics punishing founders or majority holders on down-rounds.\tFlag absence of anti-dilution protection, full ratchet terms, or unclear carve-outs from adjustment.\nDividend Policy\tSummarize dividend rights, preferential dividends, restrictions, and discretion.\tFlag mandatory dividend obligations impairing business cash flow or restricting majority discretion.\tFlag unclear preferential dividend rights or majority discretion over dividends without minority consent.\nExit and Liquidity\tIdentify IPO, trade sale, redemption, put/call rights, timelines, and liquidation preferences.\tFlag forced exit timelines or investor put rights constraining majority exit strategy.\tFlag unclear waterfall on exit, exit rights not applying equally, or no minority participation in liquidity events.\nDeadlock\tSummarize deadlock definition, escalation, expert determination, shoot-out, and liquidation mechanics.\tFlag deadlock provisions giving minority disproportionate leverage or effective veto.\tFlag shoot-out rights triggered at low thresholds or mechanics structurally favoring majority.\nNon-Compete and Non-Solicitation\tIdentify who is bound, restricted activities, geography, duration, and carve-outs.\tFlag restraints binding the majority entity or overly broad scope applied to the majority group.\tFlag broad non-competes restricting the minority's ability to operate independently after exit.\nInformation Rights\tIdentify reporting, inspection, management accounts, and confidentiality obligations.\tFlag extensive information rights giving minority commercially sensitive operational visibility.\tFlag absence of reporting or inspection rights, or inadequate confidentiality obligations on recipients.\nRelated Party Transactions\tIdentify approval requirements, disclosure duties, and arm's-length standards.\tFlag overly strict conflict controls restricting legitimate majority-group transactions.\tFlag weak conflict controls, broad permitted related-party dealings, or no arm's-length enforcement.\nGoverning Law and Dispute Resolution\tState governing law, forum, arbitration, escalation, and interim relief rights. Flag unclear or ambiguous forum or dispute mechanics.\t\t\n\nDeliver the review inline in your chat response. Do not generate a downloadable Word document unless the user explicitly asks for one."
+} as const;
+
 export const BUILT_IN_WORKFLOWS: Workflow[] = [
+    {
+        id: "builtin-commercial-lease-assistant",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Commercial Lease Review",
+        type: "assistant",
+        practice: "Real Estate",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Commercial Lease Review"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-corporate-approvals-review",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Corporate Approvals Review",
+        type: "assistant",
+        practice: "Corporate",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Corporate Approvals Review"],
+        columns_config: null,
+    },
     {
         id: "builtin-cp-checklist",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Generate CP Checklist",
+        title: "Draft CP Checklist",
         type: "assistant",
         practice: "General Transactions",
-        prompt_md:
-            "## Generate Conditions Precedent Checklist\n\n" +
-            "Review the uploaded credit agreement or financing document and generate a comprehensive " +
-            "Conditions Precedent (CP) checklist.\n\n" +
-            "You MUST use the generate_docx tool to produce the checklist as a downloadable Word document. " +
-            "You MUST pass landscape: true to the generate_docx tool — the document must be in landscape orientation. " +
-            "Do not display the checklist inline — generate the .docx file and provide the download link.\n\n" +
-            "Structure the document as follows:\n" +
-            "- For each category of conditions (e.g. Corporate, Financial, Legal, Security), add a section with a heading\n" +
-            "- Under each category heading, include a table with exactly these four columns in this order:\n" +
-            "  1. Index — sequential number within the category (1, 2, 3…)\n" +
-            "  2. Clause Number — the clause or schedule reference from the agreement\n" +
-            "  3. Clause — a concise description of the condition precedent\n" +
-            "  4. Status — leave blank (empty string) for the user to fill in\n\n" +
-            "Use the table field in the section object (not content) for each category's rows.",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Draft CP Checklist"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-credit-summary",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Credit Agreement Review",
+        type: "assistant",
+        practice: "Finance",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Credit Agreement Review"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-draft-issues-list",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Draft Issues List",
+        type: "assistant",
+        practice: "General Transactions",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Draft Issues List"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-employment-agreement-assistant",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Employment Agreement Review",
+        type: "assistant",
+        practice: "Employment",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Employment Agreement Review"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-guarantee-agreement-review",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Guarantee Agreement Review",
+        type: "assistant",
+        practice: "Finance",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Guarantee Agreement Review"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-nda-assistant",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "NDA Review",
+        type: "assistant",
+        practice: "General Transactions",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["NDA Review"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-proofread",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Proofread",
+        type: "assistant",
+        practice: "General Transactions",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Proofread"],
+        columns_config: null,
+    },
+    {
+        id: "builtin-sha-summary",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Shareholder Agreement Review",
+        type: "assistant",
+        practice: "Corporate",
+        prompt_md: ASSISTANT_WORKFLOW_PROMPTS["Shareholder Agreement Review"],
         columns_config: null,
     },
     {
@@ -31,7 +129,7 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Change of Control Review",
+        title: "Change of Control Tabular Review",
         type: "tabular",
         practice: "Corporate",
         prompt_md:
@@ -84,49 +182,11 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
         ],
     },
     {
-        id: "builtin-credit-summary",
-        user_id: null,
-        is_system: true,
-        created_at: "",
-        title: "Credit Agreement Summary",
-        type: "assistant",
-        practice: "Finance",
-        prompt_md:
-            "## Credit Agreement Summary\n\n" +
-            "Review the uploaded credit agreement and produce a comprehensive legal summary covering the following topics. " +
-            "For each section, identify the key provisions, quote the relevant clause or schedule references, and flag any unusual, onerous, or non-market terms.\n\n" +
-            "1. **Lenders** — All lenders or members of the lender syndicate, including their full legal name and role (e.g. mandated lead arranger, original lender, agent bank)\n" +
-            "2. **Borrowers** — All borrowers, including their full legal name and jurisdiction of incorporation\n" +
-            "3. **Guarantors** — All guarantors, including their full legal name and the scope of their guarantee obligation\n" +
-            "4. **Other Parties** — Any other material parties (e.g. facility agent, security agent, hedge counterparties, issuing bank) and their roles\n" +
-            "5. **Date of Agreement** — Date of the credit agreement\n" +
-            "6. **Facilities** — Each facility available (e.g. Revolving Credit Facility, Term Loan A, Term Loan B, Term Loan C), the facility type, tranche name, and any key structural features\n" +
-            "7. **Amount** — Total committed amount across all facilities, the currency, and breakdown by tranche if applicable\n" +
-            "8. **Purpose** — Stated purpose for which borrowings may be used and any restrictions on use of proceeds\n" +
-            "9. **Interest** — Applicable reference rate (e.g. SOFR, EURIBOR, base rate), the margin, any margin ratchet mechanism, and how interest periods are structured\n" +
-            "10. **Commitment Fee** — Commitment or utilisation fees, the applicable rate, how they are calculated, and the basis (e.g. undrawn commitment, average utilisation)\n" +
-            "11. **Repayment Schedule** — Repayment profile for each facility, whether by scheduled instalments or bullet repayment, and the repayment dates and amounts\n" +
-            "12. **Maturity** — Final maturity date for each facility\n" +
-            "13. **Security** — Each class of security granted or required (e.g. share pledges, fixed and floating charges, real estate mortgages, account pledges) and the assets or entities over which security is taken\n" +
-            "14. **Guarantees** — Guarantee obligations, the guarantors, the scope of the guarantee, and any limitations (e.g. up-stream guarantee limitations, guarantor coverage test)\n" +
-            "15. **Financial Covenants** — Each financial covenant, the metric (e.g. leverage ratio, interest cover, cashflow cover), the applicable test, testing frequency, and any equity cure rights\n" +
-            "16. **Events of Default** — Each event of default, noting any grace periods, materiality thresholds, or cross-default provisions\n" +
-            "17. **Assignment** — Restrictions or permissions on assignment or transfer (e.g. white/blacklists, borrower consent for lender transfers; restrictions on borrower assignment)\n" +
-            "18. **Change of Control** — What constitutes a change of control, what obligations it triggers (e.g. mandatory prepayment, cancellation, lender consent), and any cure period\n" +
-            "19. **Prepayment Fee** — Any prepayment fees, make-whole premiums, or soft-call protections, the applicable fee, the period during which it applies, and any exceptions (e.g. prepayment from insurance proceeds or asset disposals)\n" +
-            "20. **Governing Law** — Governing law of the agreement\n" +
-            "21. **Dispute Resolution** — Whether disputes go to litigation or arbitration, the chosen forum or seat, and any submission to jurisdiction provisions\n\n" +
-            "Deliver the summary inline in your chat response — do NOT call generate_docx. Only produce a downloadable Word document if the user explicitly asks for one.",
-        columns_config: null,
-    },
-
-    // ─── Commercial Agreement ───────────────────────────────────────────────────
-    {
         id: "builtin-commercial-agreement",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Commercial Agreement Review",
+        title: "Commercial Agreement Tabular Review",
         type: "tabular",
         practice: "General Transactions",
         prompt_md: null,
@@ -241,14 +301,144 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
             },
         ],
     },
-
-    // ─── Credit Agreement ────────────────────────────────────────────────────────
+    {
+        id: "builtin-commercial-lease",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Commercial Lease Tabular Review",
+        type: "tabular",
+        practice: "Real Estate",
+        prompt_md: null,
+        columns_config: [
+            {
+                index: 0,
+                name: "Landlord",
+                format: "text",
+                prompt: "Who is the landlord under this lease? State the full legal name, jurisdiction of incorporation or registration (if applicable), and any registered address or title number stated.",
+            },
+            {
+                index: 1,
+                name: "Tenant",
+                format: "text",
+                prompt: "Who is the tenant under this lease? State the full legal name, jurisdiction of incorporation or registration (if applicable), and any registered address stated.",
+            },
+            {
+                index: 2,
+                name: "Guarantor",
+                format: "text",
+                prompt: "Is there a guarantor under this lease? If so, state the guarantor's full legal name and the scope of the guarantee (e.g. full guarantee of the tenant's obligations, or limited to specific obligations). If there is no guarantor, state this explicitly.",
+            },
+            {
+                index: 3,
+                name: "Premises",
+                format: "text",
+                prompt: "Describe the premises demised under this lease. Include the address, floor(s), unit reference, net internal area (if stated), and any areas included or excluded from the demise (e.g. common parts, roof, structure, car parking).",
+            },
+            {
+                index: 4,
+                name: "Date of Lease",
+                format: "date",
+                prompt: "What is the date of this lease? If the lease is undated or if the term commencement date differs from the execution date, note both.",
+            },
+            {
+                index: 5,
+                name: "Term",
+                format: "text",
+                prompt: "What is the contractual term of this lease? State the length of the term and the term commencement and expiry dates.",
+            },
+            {
+                index: 6,
+                name: "Rent",
+                format: "monetary_amount",
+                prompt: "What is the initial annual rent payable under this lease? State the amount, the currency, the payment frequency (e.g. quarterly in advance), and the payment dates. Note any rent-free period or initial concessionary rent.",
+            },
+            {
+                index: 7,
+                name: "Rent Review",
+                format: "text",
+                prompt: "Are there rent review provisions? If so, state the review dates or frequency, the review mechanism (e.g. open market rent review, RPI/CPI indexation, fixed uplift), whether the review is upward-only, any assumptions and disregards applicable to an open market review, and the dispute resolution mechanism if the parties cannot agree the reviewed rent.",
+            },
+            {
+                index: 8,
+                name: "Service Charge",
+                format: "text",
+                prompt: "Is the tenant liable for a service charge? If so, describe what costs are included within the service charge, the tenant's apportionment or percentage share, any cap on the service charge, and how the service charge is administered and reconciled.",
+            },
+            {
+                index: 9,
+                name: "Insurance",
+                format: "text",
+                prompt: "What are the insurance obligations under this lease? State who insures (landlord or tenant), what risks must be insured, who bears the insurance premium cost, and the tenant's obligations in respect of the landlord's insurance (e.g. not to vitiate the policy, to pay the premium as additional rent).",
+            },
+            {
+                index: 10,
+                name: "Permitted Use",
+                format: "text",
+                prompt: "What is the permitted use of the premises under this lease? State the use class or specific use permitted and identify any restrictions on use. Note whether the landlord's consent is required to change use and on what basis consent may be withheld.",
+            },
+            {
+                index: 11,
+                name: "Repair & Maintenance",
+                format: "text",
+                prompt: "Who is responsible for repair and maintenance of the premises? Describe the extent of the tenant's repairing obligation (e.g. full repairing, internal repairing only, subject to a schedule of condition). State the landlord's repairing obligations, if any, in respect of the structure, exterior, or common parts.",
+            },
+            {
+                index: 12,
+                name: "Alterations",
+                format: "text",
+                prompt: "What alterations may the tenant make to the premises? Distinguish between structural and non-structural alterations. Is landlord consent required, and if so on what basis may it be withheld? Must the tenant reinstate alterations at the end of the term?",
+            },
+            {
+                index: 13,
+                name: "Assignment & Subletting",
+                format: "text",
+                prompt: "What rights does the tenant have to assign or sublet the premises? State whether assignment and subletting are permitted with landlord consent, on what grounds consent may be withheld, any conditions to be satisfied (e.g. an authorised guarantee agreement on assignment, rent at no less than the passing rent on subletting), and whether any dealings are prohibited outright.",
+            },
+            {
+                index: 14,
+                name: "Break Rights",
+                format: "text",
+                prompt: "Are there any break rights in this lease? If so, identify who holds the break right (landlord, tenant, or both), the break date(s), the notice period and form required to exercise the break, and any pre-conditions to effective exercise (e.g. no material breach, vacant possession, payment of all sums due).",
+            },
+            {
+                index: 15,
+                name: "Security of Tenure",
+                format: "yes_no",
+                prompt: "Does the tenant have statutory security of tenure (e.g. under the Landlord and Tenant Act 1954 in England and Wales, or equivalent legislation in another jurisdiction)? Answer Yes if the lease is contracted in or benefits from security of tenure. Answer No if the lease has been contracted out or if security of tenure does not apply. State the basis for your answer.",
+            },
+            {
+                index: 16,
+                name: "Dilapidations",
+                format: "text",
+                prompt: "What dilapidations obligations apply at the end of the term? Describe the tenant's yield-up obligations (e.g. to deliver the premises in repair, to reinstate alterations, to redecorate). Is there a schedule of condition limiting the tenant's liability? Note any dilapidations cap or other limitation on the landlord's claim.",
+            },
+            {
+                index: 17,
+                name: "Rent Deposit",
+                format: "monetary_amount",
+                prompt: "Is a rent deposit required? If so, state the amount, the period for which it is held, the conditions under which the landlord may draw on it, and the circumstances in which it is returned to the tenant.",
+            },
+            {
+                index: 18,
+                name: "Forfeiture & Termination",
+                format: "text",
+                prompt: "What are the landlord's forfeiture or termination rights? Identify the events that entitle the landlord to forfeit the lease (e.g. non-payment of rent after a grace period, material breach of covenant, insolvency) and any notice requirements before forfeiture can be exercised.",
+            },
+            {
+                index: 19,
+                name: "Governing Law",
+                format: "text",
+                prompt: "What governing law applies to this lease and which courts have jurisdiction over disputes?",
+            },
+        ],
+    },
     {
         id: "builtin-credit-agreement",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Credit Agreement Review",
+        title: "Credit Agreement Tabular Review",
         type: "tabular",
         practice: "Finance",
         prompt_md: null,
@@ -381,14 +571,12 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
             },
         ],
     },
-
-    // ─── E-Discovery ─────────────────────────────────────────────────────────────
     {
         id: "builtin-ediscovery",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "E-Discovery Review",
+        title: "E-Discovery Tabular Review",
         type: "tabular",
         practice: "Litigation",
         prompt_md: null,
@@ -437,407 +625,121 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
             },
         ],
     },
-
-    // ─── Supply Agreement ────────────────────────────────────────────────────────
     {
-        id: "builtin-supply-agreement",
+        id: "builtin-employment-agreement",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Supply Agreement Review",
+        title: "Employment Agreement Tabular Review",
         type: "tabular",
-        practice: "General Transactions",
+        practice: "Employment",
         prompt_md: null,
         columns_config: [
             {
                 index: 0,
-                name: "Parties",
-                format: "bulleted_list",
-                prompt: "Identify all parties to this supply agreement. For each, state their full legal name, jurisdiction of incorporation (if stated), and their role (e.g. supplier, buyer, distributor).",
+                name: "Employer",
+                format: "text",
+                prompt: "Who is the employer under this agreement? State the full legal name and jurisdiction of incorporation or establishment.",
             },
             {
                 index: 1,
-                name: "Effective Date",
-                format: "date",
-                prompt: "What is the effective date or commencement date of this agreement? If no explicit date is stated, note the date it is deemed to take effect.",
+                name: "Employee",
+                format: "text",
+                prompt: "Who is the employee under this agreement? State their full name and, if provided, their address or location.",
             },
             {
                 index: 2,
-                name: "Products",
-                format: "bulleted_list",
-                prompt: "What products are to be supplied under this agreement? List each product or product category, including any relevant specifications, part numbers, or standards referenced.",
-            },
-            {
-                index: 3,
-                name: "Term",
-                format: "text",
-                prompt: "What is the initial term or duration of this agreement? State the start date (or reference to when it commences) and the end date or duration.",
-            },
-            {
-                index: 4,
-                name: "Renewal",
-                format: "text",
-                prompt: "What renewal provisions apply? Is renewal automatic or by agreement? State the renewal period, notice requirements to prevent renewal, and any conditions on renewal.",
-            },
-            {
-                index: 5,
-                name: "Delivery",
-                format: "text",
-                prompt: "What delivery obligations and terms apply? Identify the delivery terms (e.g. Incoterms), delivery lead times, delivery locations, risk of loss, and any consequences for late or failed delivery.",
-            },
-            {
-                index: 6,
-                name: "Quality",
-                format: "text",
-                prompt: "What quality standards or specifications apply to the products? Identify any applicable standards (e.g. ISO, regulatory requirements), inspection rights, acceptance procedures, and consequences of non-conformance.",
-            },
-            {
-                index: 7,
-                name: "Warranties",
-                format: "text",
-                prompt: "What warranties does the supplier give in relation to the products? State the warranty period, the scope of the warranty (e.g. free from defects, conformance to specifications), the remedy for breach (e.g. repair, replacement, refund), and any exclusions.",
-            },
-            {
-                index: 8,
-                name: "Liquidated Damages",
-                format: "text",
-                prompt: "Are there any liquidated damages provisions? If so, identify what triggers them (e.g. late delivery, failure to meet quality standards), the applicable rate or formula, any aggregate cap, and whether they are stated to be the exclusive remedy.",
-            },
-            {
-                index: 9,
-                name: "Limitation of Liability",
-                format: "text",
-                prompt: "What limitations of liability apply? Identify any caps on liability (and how they are calculated, e.g. contract value, fees paid), exclusions of consequential or indirect loss, and any carve-outs from the limitation (e.g. fraud, wilful misconduct, death or personal injury).",
-            },
-            {
-                index: 10,
-                name: "Force Majeure",
-                format: "text",
-                prompt: "Summarise the force majeure clause. What events qualify, what obligations are suspended, what notice must be given, how long must the event persist before either party may terminate, and what are the consequences of termination for force majeure?",
-            },
-            {
-                index: 11,
-                name: "Termination Rights",
-                format: "text",
-                prompt: "What are the termination rights of each party? Distinguish between termination for convenience (including notice period) and termination for cause (including cure periods and triggers). Note what happens on termination, including any outstanding purchase orders or payment obligations.",
-            },
-            {
-                index: 12,
-                name: "Governing Law",
-                format: "text",
-                prompt: "What governing law applies to this agreement? State the jurisdiction and any specific legal system referenced.",
-            },
-            {
-                index: 13,
-                name: "Dispute Resolution",
-                format: "text",
-                prompt: "How are disputes resolved under this agreement? Identify whether disputes go to litigation or arbitration, the chosen forum or seat, and any mandatory escalation steps (e.g. negotiation, mediation) before formal proceedings.",
-            },
-        ],
-    },
-
-    // ─── SPA ─────────────────────────────────────────────────────────────────────
-    {
-        id: "builtin-spa",
-        user_id: null,
-        is_system: true,
-        created_at: "",
-        title: "SPA Review",
-        type: "tabular",
-        practice: "Corporate",
-        prompt_md: null,
-        columns_config: [
-            {
-                index: 0,
-                name: "Parties",
-                format: "bulleted_list",
-                prompt: "Identify all parties to this share purchase agreement. For each, state their full legal name, jurisdiction of incorporation (if stated), and their role (e.g. seller, buyer, target company, warrantor, guarantor).",
-            },
-            {
-                index: 1,
                 name: "Date",
                 format: "date",
-                prompt: "What is the date of this share purchase agreement?",
-            },
-            {
-                index: 2,
-                name: "Transaction",
-                format: "text",
-                prompt: "Summarise the transaction. What shares or interests are being acquired, in which target company or companies, and what is the nature of the transaction (e.g. 100% acquisition, majority stake, minority investment)?",
+                prompt: "What is the date of this employment agreement? If a commencement date or start date differs from the signing date, state both.",
             },
             {
                 index: 3,
-                name: "Consideration",
-                format: "monetary_amount",
-                prompt: "What is the consideration payable under this agreement? State the total headline price, the currency, and the structure (e.g. cash, shares, loan notes, deferred consideration, earnout). If the price is subject to adjustment (e.g. locked box, completion accounts), describe the mechanism.",
+                name: "Title",
+                format: "text",
+                prompt: "What is the employee's job title or position as stated in this agreement? If a reporting line is specified, include it.",
             },
             {
                 index: 4,
-                name: "Key Conditions Precedent",
-                format: "bulleted_list",
-                prompt: "List the key conditions precedent (CPs) to completion. For each CP, state what must be satisfied or waived and by whom. Identify any long-stop date by which CPs must be satisfied.",
+                name: "Compensation",
+                format: "text",
+                prompt: "What is the employee's compensation under this agreement? State the base salary or wage, the currency, and the payment frequency (e.g. monthly, bi-weekly). Include any guaranteed bonus, commission, or other fixed remuneration elements.",
             },
             {
                 index: 5,
-                name: "Completion Date",
-                format: "text",
-                prompt: "When does completion occur? State how many business days after satisfaction or waiver of all CPs completion must occur, and/or any fixed outside date for completion. Note whether there is any obligation to complete by a specific date after signing.",
-            },
-            {
-                index: 6,
-                name: "Warranties",
-                format: "text",
-                prompt: "Summarise the warranty package. Who gives the warranties (e.g. seller, management, all sellers jointly and severally)? Are there business warranties and/or title warranties? Identify the scope of any warranty disclosure process and any limitations on warranty claims (e.g. time limits, minimum claim thresholds, aggregate cap).",
-            },
-            {
-                index: 7,
-                name: "Indemnities",
-                format: "text",
-                prompt: "Are there specific indemnities in this agreement? If so, list the key indemnities given, by whom, and for what potential liabilities (e.g. tax indemnity, environmental indemnity, litigation indemnity). Note any time limits or caps applicable to indemnity claims.",
-            },
-            {
-                index: 8,
-                name: "Limitation of Liability",
-                format: "text",
-                prompt: "What limitations on liability apply to warranty and indemnity claims? Identify the aggregate cap (and how it is calculated, e.g. as a percentage of consideration), any separate cap for fundamental warranties or indemnities, minimum claim thresholds (de minimis and basket/deductible), and time limits for bringing claims.",
-            },
-            {
-                index: 9,
-                name: "Covenants",
-                format: "text",
-                prompt: "What restrictive or other covenants are given by the seller or management? Include non-compete, non-solicitation, and non-dealing covenants, stating the scope (activities and geography) and duration of each.",
-            },
-            {
-                index: 10,
-                name: "Exclusivity",
-                format: "text",
-                prompt: "Is there an exclusivity or no-shop provision in this agreement? If so, state the period of exclusivity, what activities are restricted (e.g. soliciting competing offers, engaging with third parties), and any carve-outs or break fee arrangements.",
-            },
-            {
-                index: 11,
-                name: "Governing Law and Jurisdiction",
-                format: "text",
-                prompt: "What governing law applies to this agreement and what courts or arbitral tribunals have jurisdiction? State the chosen law, the forum for disputes, and whether jurisdiction is exclusive or non-exclusive.",
-            },
-            {
-                index: 12,
-                name: "Dispute Resolution",
-                format: "text",
-                prompt: "How are disputes to be resolved under this agreement? Identify whether disputes go to litigation or arbitration, the chosen seat or forum, the applicable rules (if arbitration), and any mandatory pre-dispute escalation steps.",
-            },
-        ],
-    },
-
-    // ─── NDA ─────────────────────────────────────────────────────────────────────
-    {
-        id: "builtin-nda",
-        user_id: null,
-        is_system: true,
-        created_at: "",
-        title: "NDA Review",
-        type: "tabular",
-        practice: "General Transactions",
-        prompt_md: null,
-        columns_config: [
-            {
-                index: 0,
-                name: "Direction",
+                name: "Full Time / Part Time",
                 format: "tag",
-                tags: ["Mutual", "Unilateral"],
-                prompt: "Is this NDA mutual (both parties owe confidentiality obligations to each other) or unilateral (only one party owes confidentiality obligations)? Identify the direction and name the disclosing and receiving party or parties.",
+                tags: ["Full Time", "Part Time"],
+                prompt: "Is this a full-time or part-time position? If part-time, state the number of days or hours per week where specified.",
             },
             {
-                index: 1,
-                name: "Definition of Confidential Information",
-                format: "text",
-                prompt: "How is 'Confidential Information' defined in this agreement? Is it broadly or narrowly drafted? Does it require information to be marked as confidential, or is all information shared in connection with the purpose automatically covered? Note any express inclusions or exclusions.",
-            },
-            {
-                index: 2,
-                name: "Obligations of Receiving Party",
-                format: "bulleted_list",
-                prompt: "What are the key obligations of the receiving party in respect of the confidential information? List each obligation (e.g. keep confidential, not disclose to third parties, use only for the permitted purpose, apply a specific standard of care, restrict access to need-to-know personnel).",
-            },
-            {
-                index: 3,
-                name: "Standard Carveouts Present?",
+                index: 6,
+                name: "Independent Contractor?",
                 format: "yes_no",
-                prompt: "Does the agreement include the standard carveouts to confidentiality obligations? Answer Yes if the agreement excludes information that: (a) is or becomes publicly available without breach; (b) was already known to the receiving party; (c) is independently developed; and (d) is received from a third party without restriction. Note any carveouts that are missing or are drafted differently from the standard formulation.",
+                prompt: "Does the agreement characterise the worker as an independent contractor rather than an employee? Answer Yes if the agreement uses contractor, consultant, or self-employed language. Note any provisions that address the nature of the relationship.",
             },
             {
-                index: 4,
-                name: "Permitted Disclosures",
+                index: 7,
+                name: "Benefits",
                 format: "bulleted_list",
-                prompt: "To whom may the receiving party disclose confidential information? List each category of permitted recipient (e.g. employees, professional advisers, affiliates, financing parties, regulatory authorities). Note whether onward disclosure requires the recipient to be bound by equivalent obligations.",
-            },
-            {
-                index: 5,
-                name: "Term and Duration",
-                format: "text",
-                prompt: "What is the term of this NDA and how long do the confidentiality obligations last? State the initial term of the agreement and the duration of the confidentiality obligations (noting whether they survive termination and for how long).",
-            },
-            {
-                index: 6,
-                name: "Return and Destruction",
-                format: "text",
-                prompt: "What obligations apply on expiry or termination regarding return or destruction of confidential information? Is there a choice between return and destruction? Must destruction be certified? Are there any retention exceptions (e.g. for regulatory purposes, IT backup systems)?",
-            },
-            {
-                index: 7,
-                name: "Remedies",
-                format: "text",
-                prompt: "What remedies are available for breach of the confidentiality obligations? Does the agreement acknowledge that damages may be inadequate and that injunctive relief or specific performance is available? Are there any agreed liquidated damages or indemnities for breach?",
+                prompt: "What benefits are the employee entitled to under this agreement? List each benefit (e.g. health insurance, pension/retirement contributions, life assurance, car allowance, share options, expense reimbursement). Note any eligibility conditions or limits.",
             },
             {
                 index: 8,
-                name: "Governing Law and Jurisdiction",
+                name: "Notice Period (Employer to Employee)",
                 format: "text",
-                prompt: "What governing law applies to this agreement and which courts have jurisdiction? State the chosen law, the forum, and whether jurisdiction is exclusive or non-exclusive.",
-            },
-        ],
-    },
-
-    // ─── Commercial Lease ─────────────────────────────────────────────────────────
-    {
-        id: "builtin-commercial-lease",
-        user_id: null,
-        is_system: true,
-        created_at: "",
-        title: "Commercial Lease Review",
-        type: "tabular",
-        practice: "Real Estate",
-        prompt_md: null,
-        columns_config: [
-            {
-                index: 0,
-                name: "Landlord",
-                format: "text",
-                prompt: "Who is the landlord under this lease? State the full legal name, jurisdiction of incorporation or registration (if applicable), and any registered address or title number stated.",
-            },
-            {
-                index: 1,
-                name: "Tenant",
-                format: "text",
-                prompt: "Who is the tenant under this lease? State the full legal name, jurisdiction of incorporation or registration (if applicable), and any registered address stated.",
-            },
-            {
-                index: 2,
-                name: "Guarantor",
-                format: "text",
-                prompt: "Is there a guarantor under this lease? If so, state the guarantor's full legal name and the scope of the guarantee (e.g. full guarantee of the tenant's obligations, or limited to specific obligations). If there is no guarantor, state this explicitly.",
-            },
-            {
-                index: 3,
-                name: "Premises",
-                format: "text",
-                prompt: "Describe the premises demised under this lease. Include the address, floor(s), unit reference, net internal area (if stated), and any areas included or excluded from the demise (e.g. common parts, roof, structure, car parking).",
-            },
-            {
-                index: 4,
-                name: "Date of Lease",
-                format: "date",
-                prompt: "What is the date of this lease? If the lease is undated or if the term commencement date differs from the execution date, note both.",
-            },
-            {
-                index: 5,
-                name: "Term",
-                format: "text",
-                prompt: "What is the contractual term of this lease? State the length of the term and the term commencement and expiry dates.",
-            },
-            {
-                index: 6,
-                name: "Rent",
-                format: "monetary_amount",
-                prompt: "What is the initial annual rent payable under this lease? State the amount, the currency, the payment frequency (e.g. quarterly in advance), and the payment dates. Note any rent-free period or initial concessionary rent.",
-            },
-            {
-                index: 7,
-                name: "Rent Review",
-                format: "text",
-                prompt: "Are there rent review provisions? If so, state the review dates or frequency, the review mechanism (e.g. open market rent review, RPI/CPI indexation, fixed uplift), whether the review is upward-only, any assumptions and disregards applicable to an open market review, and the dispute resolution mechanism if the parties cannot agree the reviewed rent.",
-            },
-            {
-                index: 8,
-                name: "Service Charge",
-                format: "text",
-                prompt: "Is the tenant liable for a service charge? If so, describe what costs are included within the service charge, the tenant's apportionment or percentage share, any cap on the service charge, and how the service charge is administered and reconciled.",
+                prompt: "What notice must the employer give to terminate the employee's employment (other than for cause)? State the notice period and any provisions for payment in lieu of notice.",
             },
             {
                 index: 9,
-                name: "Insurance",
+                name: "Notice Period (Employee to Employer)",
                 format: "text",
-                prompt: "What are the insurance obligations under this lease? State who insures (landlord or tenant), what risks must be insured, who bears the insurance premium cost, and the tenant's obligations in respect of the landlord's insurance (e.g. not to vitiate the policy, to pay the premium as additional rent).",
+                prompt: "What notice must the employee give to resign? State the notice period and any provisions for payment in lieu of notice or garden leave.",
             },
             {
                 index: 10,
-                name: "Permitted Use",
+                name: "Overtime",
                 format: "text",
-                prompt: "What is the permitted use of the premises under this lease? State the use class or specific use permitted and identify any restrictions on use. Note whether the landlord's consent is required to change use and on what basis consent may be withheld.",
+                prompt: "What provisions apply to overtime? Is the employee eligible for overtime pay, and if so at what rate? Or does the agreement state that the salary is inclusive of any overtime? Note any opt-out of statutory working time limits.",
             },
             {
                 index: 11,
-                name: "Repair & Maintenance",
+                name: "Working Hours",
                 format: "text",
-                prompt: "Who is responsible for repair and maintenance of the premises? Describe the extent of the tenant's repairing obligation (e.g. full repairing, internal repairing only, subject to a schedule of condition). State the landlord's repairing obligations, if any, in respect of the structure, exterior, or common parts.",
+                prompt: "What working hours are specified in this agreement? State the normal hours of work, any flexibility provisions, and whether the employee is expected to work additional hours as required.",
             },
             {
                 index: 12,
-                name: "Alterations",
+                name: "Variation",
                 format: "text",
-                prompt: "What alterations may the tenant make to the premises? Distinguish between structural and non-structural alterations. Is landlord consent required, and if so on what basis may it be withheld? Must the tenant reinstate alterations at the end of the term?",
+                prompt: "What provisions govern variation of the terms of this agreement? Can the employer unilaterally vary terms, or is the employee's consent required? Note any specific terms that are stated to be variable without consent.",
             },
             {
                 index: 13,
-                name: "Assignment & Subletting",
+                name: "Intellectual Property Assignment",
                 format: "text",
-                prompt: "What rights does the tenant have to assign or sublet the premises? State whether assignment and subletting are permitted with landlord consent, on what grounds consent may be withheld, any conditions to be satisfied (e.g. an authorised guarantee agreement on assignment, rent at no less than the passing rent on subletting), and whether any dealings are prohibited outright.",
+                prompt: "What intellectual property assignment provisions are included? Does the employee assign to the employer all IP created in the course of employment? Are there any carve-outs for pre-existing IP or inventions created outside working hours? Note any moral rights waiver.",
             },
             {
                 index: 14,
-                name: "Break Rights",
-                format: "text",
-                prompt: "Are there any break rights in this lease? If so, identify who holds the break right (landlord, tenant, or both), the break date(s), the notice period and form required to exercise the break, and any pre-conditions to effective exercise (e.g. no material breach, vacant possession, payment of all sums due).",
+                name: "Grounds for Termination",
+                format: "bulleted_list",
+                prompt: "What grounds for summary dismissal or termination for cause are set out in the agreement? List each ground (e.g. gross misconduct, breach of confidentiality, insolvency, criminal conviction). Note whether summary dismissal is without notice or payment in lieu.",
             },
             {
                 index: 15,
-                name: "Security of Tenure",
-                format: "yes_no",
-                prompt: "Does the tenant have statutory security of tenure (e.g. under the Landlord and Tenant Act 1954 in England and Wales, or equivalent legislation in another jurisdiction)? Answer Yes if the lease is contracted in or benefits from security of tenure. Answer No if the lease has been contracted out or if security of tenure does not apply. State the basis for your answer.",
-            },
-            {
-                index: 16,
-                name: "Dilapidations",
+                name: "Annual Leave Entitlement",
                 format: "text",
-                prompt: "What dilapidations obligations apply at the end of the term? Describe the tenant's yield-up obligations (e.g. to deliver the premises in repair, to reinstate alterations, to redecorate). Is there a schedule of condition limiting the tenant's liability? Note any dilapidations cap or other limitation on the landlord's claim.",
-            },
-            {
-                index: 17,
-                name: "Rent Deposit",
-                format: "monetary_amount",
-                prompt: "Is a rent deposit required? If so, state the amount, the period for which it is held, the conditions under which the landlord may draw on it, and the circumstances in which it is returned to the tenant.",
-            },
-            {
-                index: 18,
-                name: "Forfeiture & Termination",
-                format: "text",
-                prompt: "What are the landlord's forfeiture or termination rights? Identify the events that entitle the landlord to forfeit the lease (e.g. non-payment of rent after a grace period, material breach of covenant, insolvency) and any notice requirements before forfeiture can be exercised.",
-            },
-            {
-                index: 19,
-                name: "Governing Law",
-                format: "text",
-                prompt: "What governing law applies to this lease and which courts have jurisdiction over disputes?",
+                prompt: "What is the employee's annual leave entitlement? State the number of days (or weeks) per year, whether this is inclusive of or in addition to public holidays, and any provisions for accrual, carry-over, or payment of untaken leave on termination.",
             },
         ],
     },
-
-    // ─── Limited Partnership Agreement ───────────────────────────────────────────
     {
         id: "builtin-lpa",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Limited Partnership Agreement Review",
+        title: "Limited Partnership Agreement Tabular Review",
         type: "tabular",
         practice: "Private Equity",
         prompt_md: null,
@@ -964,46 +866,79 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
             },
         ],
     },
-
-    // ─── Shareholder Agreement (Assistant) ───────────────────────────────────────
     {
-        id: "builtin-sha-summary",
+        id: "builtin-nda",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Shareholder Agreement Summary",
-        type: "assistant",
-        practice: "Corporate",
-        prompt_md:
-            "## Shareholder Agreement Summary\n\n" +
-            "Review the uploaded shareholder agreement and produce a comprehensive legal summary covering the following topics. " +
-            "For each section, identify the key provisions, quote the relevant clause references, and flag any unusual, onerous, or market-standard deviations.\n\n" +
-            "1. **Parties & Shareholdings** — Full legal names, roles, share classes held, and percentage interests (on a fully diluted basis if stated)\n" +
-            "2. **Share Classes & Rights** — For each class: voting rights, dividend rights, liquidation preference, conversion or redemption features\n" +
-            "3. **Board Composition & Governance** — Board size, director appointment rights (and the shareholding thresholds required to maintain them), quorum, and casting vote\n" +
-            "4. **Reserved Matters** — Decisions requiring a special majority, unanimity, or a specific shareholder's consent; note the threshold and whose consent is required for each\n" +
-            "5. **Pre-emption on New Shares** — Who holds pre-emption rights, procedure, timeline, and any carve-outs (e.g. employee option schemes)\n" +
-            "6. **Transfer Restrictions** — Lock-up periods, prohibited transfers, permitted transfers (e.g. to affiliates), and any board or shareholder approval requirements\n" +
-            "7. **Right of First Refusal / Pre-emption on Transfer** — Trigger, procedure, pricing mechanics, and any exceptions\n" +
-            "8. **Drag-Along Rights** — Who holds the right, threshold to trigger, conditions (e.g. minimum price, independent valuation), and minority protections\n" +
-            "9. **Tag-Along Rights** — Who holds the right, triggering threshold, exercise procedure, and price terms\n" +
-            "10. **Anti-Dilution Protections** — Type (full ratchet, weighted average), trigger events, calculation mechanics, and exceptions\n" +
-            "11. **Dividend Policy** — Any obligation or target to pay dividends, preferential dividend rights, and restrictions on distributions\n" +
-            "12. **Exit & Liquidity** — Agreed exit routes (trade sale, IPO, drag sale), timelines, and liquidation preferences on exit\n" +
-            "13. **Deadlock** — Deadlock definition, escalation and resolution mechanisms (e.g. Russian roulette, put/call options), and consequences if unresolved\n" +
-            "14. **Non-Compete & Non-Solicitation** — Who is bound, scope of activities and geography, duration, and carve-outs\n" +
-            "15. **Governing Law & Dispute Resolution** — Applicable law, forum, arbitration or litigation, and any mandatory escalation steps\n\n" +
-            "Generate the summary as a downloadable Word document.",
-        columns_config: null,
+        title: "NDA Tabular Review",
+        type: "tabular",
+        practice: "General Transactions",
+        prompt_md: null,
+        columns_config: [
+            {
+                index: 0,
+                name: "Direction",
+                format: "tag",
+                tags: ["Mutual", "Unilateral"],
+                prompt: "Is this NDA mutual (both parties owe confidentiality obligations to each other) or unilateral (only one party owes confidentiality obligations)? Identify the direction and name the disclosing and receiving party or parties.",
+            },
+            {
+                index: 1,
+                name: "Definition of Confidential Information",
+                format: "text",
+                prompt: "How is 'Confidential Information' defined in this agreement? Is it broadly or narrowly drafted? Does it require information to be marked as confidential, or is all information shared in connection with the purpose automatically covered? Note any express inclusions or exclusions.",
+            },
+            {
+                index: 2,
+                name: "Obligations of Receiving Party",
+                format: "bulleted_list",
+                prompt: "What are the key obligations of the receiving party in respect of the confidential information? List each obligation (e.g. keep confidential, not disclose to third parties, use only for the permitted purpose, apply a specific standard of care, restrict access to need-to-know personnel).",
+            },
+            {
+                index: 3,
+                name: "Standard Carveouts Present?",
+                format: "yes_no",
+                prompt: "Does the agreement include the standard carveouts to confidentiality obligations? Answer Yes if the agreement excludes information that: (a) is or becomes publicly available without breach; (b) was already known to the receiving party; (c) is independently developed; and (d) is received from a third party without restriction. Note any carveouts that are missing or are drafted differently from the standard formulation.",
+            },
+            {
+                index: 4,
+                name: "Permitted Disclosures",
+                format: "bulleted_list",
+                prompt: "To whom may the receiving party disclose confidential information? List each category of permitted recipient (e.g. employees, professional advisers, affiliates, financing parties, regulatory authorities). Note whether onward disclosure requires the recipient to be bound by equivalent obligations.",
+            },
+            {
+                index: 5,
+                name: "Term and Duration",
+                format: "text",
+                prompt: "What is the term of this NDA and how long do the confidentiality obligations last? State the initial term of the agreement and the duration of the confidentiality obligations (noting whether they survive termination and for how long).",
+            },
+            {
+                index: 6,
+                name: "Return and Destruction",
+                format: "text",
+                prompt: "What obligations apply on expiry or termination regarding return or destruction of confidential information? Is there a choice between return and destruction? Must destruction be certified? Are there any retention exceptions (e.g. for regulatory purposes, IT backup systems)?",
+            },
+            {
+                index: 7,
+                name: "Remedies",
+                format: "text",
+                prompt: "What remedies are available for breach of the confidentiality obligations? Does the agreement acknowledge that damages may be inadequate and that injunctive relief or specific performance is available? Are there any agreed liquidated damages or indemnities for breach?",
+            },
+            {
+                index: 8,
+                name: "Governing Law and Jurisdiction",
+                format: "text",
+                prompt: "What governing law applies to this agreement and which courts have jurisdiction? State the chosen law, the forum, and whether jurisdiction is exclusive or non-exclusive.",
+            },
+        ],
     },
-
-    // ─── Shareholder Agreement ────────────────────────────────────────────────────
     {
         id: "builtin-shareholder-agreement",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Shareholder Agreement Review",
+        title: "Shareholder Agreement Tabular Review",
         type: "tabular",
         practice: "Corporate",
         prompt_md: null,
@@ -1130,117 +1065,192 @@ export const BUILT_IN_WORKFLOWS: Workflow[] = [
             },
         ],
     },
-
-    // ─── Employment Agreement ─────────────────────────────────────────────────────
     {
-        id: "builtin-employment-agreement",
+        id: "builtin-spa",
         user_id: null,
         is_system: true,
         created_at: "",
-        title: "Employment Agreement Review",
+        title: "SPA Tabular Review",
         type: "tabular",
-        practice: "Employment",
+        practice: "Corporate",
         prompt_md: null,
         columns_config: [
             {
                 index: 0,
-                name: "Employer",
-                format: "text",
-                prompt: "Who is the employer under this agreement? State the full legal name and jurisdiction of incorporation or establishment.",
+                name: "Parties",
+                format: "bulleted_list",
+                prompt: "Identify all parties to this share purchase agreement. For each, state their full legal name, jurisdiction of incorporation (if stated), and their role (e.g. seller, buyer, target company, warrantor, guarantor).",
             },
             {
                 index: 1,
-                name: "Employee",
-                format: "text",
-                prompt: "Who is the employee under this agreement? State their full name and, if provided, their address or location.",
+                name: "Date",
+                format: "date",
+                prompt: "What is the date of this share purchase agreement?",
             },
             {
                 index: 2,
-                name: "Date",
-                format: "date",
-                prompt: "What is the date of this employment agreement? If a commencement date or start date differs from the signing date, state both.",
+                name: "Transaction",
+                format: "text",
+                prompt: "Summarise the transaction. What shares or interests are being acquired, in which target company or companies, and what is the nature of the transaction (e.g. 100% acquisition, majority stake, minority investment)?",
             },
             {
                 index: 3,
-                name: "Title",
-                format: "text",
-                prompt: "What is the employee's job title or position as stated in this agreement? If a reporting line is specified, include it.",
+                name: "Consideration",
+                format: "monetary_amount",
+                prompt: "What is the consideration payable under this agreement? State the total headline price, the currency, and the structure (e.g. cash, shares, loan notes, deferred consideration, earnout). If the price is subject to adjustment (e.g. locked box, completion accounts), describe the mechanism.",
             },
             {
                 index: 4,
-                name: "Compensation",
-                format: "text",
-                prompt: "What is the employee's compensation under this agreement? State the base salary or wage, the currency, and the payment frequency (e.g. monthly, bi-weekly). Include any guaranteed bonus, commission, or other fixed remuneration elements.",
+                name: "Key Conditions Precedent",
+                format: "bulleted_list",
+                prompt: "List the key conditions precedent (CPs) to completion. For each CP, state what must be satisfied or waived and by whom. Identify any long-stop date by which CPs must be satisfied.",
             },
             {
                 index: 5,
-                name: "Full Time / Part Time",
-                format: "tag",
-                tags: ["Full Time", "Part Time"],
-                prompt: "Is this a full-time or part-time position? If part-time, state the number of days or hours per week where specified.",
+                name: "Completion Date",
+                format: "text",
+                prompt: "When does completion occur? State how many business days after satisfaction or waiver of all CPs completion must occur, and/or any fixed outside date for completion. Note whether there is any obligation to complete by a specific date after signing.",
             },
             {
                 index: 6,
-                name: "Independent Contractor?",
-                format: "yes_no",
-                prompt: "Does the agreement characterise the worker as an independent contractor rather than an employee? Answer Yes if the agreement uses contractor, consultant, or self-employed language. Note any provisions that address the nature of the relationship.",
+                name: "Warranties",
+                format: "text",
+                prompt: "Summarise the warranty package. Who gives the warranties (e.g. seller, management, all sellers jointly and severally)? Are there business warranties and/or title warranties? Identify the scope of any warranty disclosure process and any limitations on warranty claims (e.g. time limits, minimum claim thresholds, aggregate cap).",
             },
             {
                 index: 7,
-                name: "Benefits",
-                format: "bulleted_list",
-                prompt: "What benefits are the employee entitled to under this agreement? List each benefit (e.g. health insurance, pension/retirement contributions, life assurance, car allowance, share options, expense reimbursement). Note any eligibility conditions or limits.",
+                name: "Indemnities",
+                format: "text",
+                prompt: "Are there specific indemnities in this agreement? If so, list the key indemnities given, by whom, and for what potential liabilities (e.g. tax indemnity, environmental indemnity, litigation indemnity). Note any time limits or caps applicable to indemnity claims.",
             },
             {
                 index: 8,
-                name: "Notice Period (Employer to Employee)",
+                name: "Limitation of Liability",
                 format: "text",
-                prompt: "What notice must the employer give to terminate the employee's employment (other than for cause)? State the notice period and any provisions for payment in lieu of notice.",
+                prompt: "What limitations on liability apply to warranty and indemnity claims? Identify the aggregate cap (and how it is calculated, e.g. as a percentage of consideration), any separate cap for fundamental warranties or indemnities, minimum claim thresholds (de minimis and basket/deductible), and time limits for bringing claims.",
             },
             {
                 index: 9,
-                name: "Notice Period (Employee to Employer)",
+                name: "Covenants",
                 format: "text",
-                prompt: "What notice must the employee give to resign? State the notice period and any provisions for payment in lieu of notice or garden leave.",
+                prompt: "What restrictive or other covenants are given by the seller or management? Include non-compete, non-solicitation, and non-dealing covenants, stating the scope (activities and geography) and duration of each.",
             },
             {
                 index: 10,
-                name: "Overtime",
+                name: "Exclusivity",
                 format: "text",
-                prompt: "What provisions apply to overtime? Is the employee eligible for overtime pay, and if so at what rate? Or does the agreement state that the salary is inclusive of any overtime? Note any opt-out of statutory working time limits.",
+                prompt: "Is there an exclusivity or no-shop provision in this agreement? If so, state the period of exclusivity, what activities are restricted (e.g. soliciting competing offers, engaging with third parties), and any carve-outs or break fee arrangements.",
             },
             {
                 index: 11,
-                name: "Working Hours",
+                name: "Governing Law and Jurisdiction",
                 format: "text",
-                prompt: "What working hours are specified in this agreement? State the normal hours of work, any flexibility provisions, and whether the employee is expected to work additional hours as required.",
+                prompt: "What governing law applies to this agreement and what courts or arbitral tribunals have jurisdiction? State the chosen law, the forum for disputes, and whether jurisdiction is exclusive or non-exclusive.",
             },
             {
                 index: 12,
-                name: "Variation",
+                name: "Dispute Resolution",
                 format: "text",
-                prompt: "What provisions govern variation of the terms of this agreement? Can the employer unilaterally vary terms, or is the employee's consent required? Note any specific terms that are stated to be variable without consent.",
-            },
-            {
-                index: 13,
-                name: "Intellectual Property Assignment",
-                format: "text",
-                prompt: "What intellectual property assignment provisions are included? Does the employee assign to the employer all IP created in the course of employment? Are there any carve-outs for pre-existing IP or inventions created outside working hours? Note any moral rights waiver.",
-            },
-            {
-                index: 14,
-                name: "Grounds for Termination",
-                format: "bulleted_list",
-                prompt: "What grounds for summary dismissal or termination for cause are set out in the agreement? List each ground (e.g. gross misconduct, breach of confidentiality, insolvency, criminal conviction). Note whether summary dismissal is without notice or payment in lieu.",
-            },
-            {
-                index: 15,
-                name: "Annual Leave Entitlement",
-                format: "text",
-                prompt: "What is the employee's annual leave entitlement? State the number of days (or weeks) per year, whether this is inclusive of or in addition to public holidays, and any provisions for accrual, carry-over, or payment of untaken leave on termination.",
+                prompt: "How are disputes to be resolved under this agreement? Identify whether disputes go to litigation or arbitration, the chosen seat or forum, the applicable rules (if arbitration), and any mandatory pre-dispute escalation steps.",
             },
         ],
     },
+    {
+        id: "builtin-supply-agreement",
+        user_id: null,
+        is_system: true,
+        created_at: "",
+        title: "Supply Agreement Tabular Review",
+        type: "tabular",
+        practice: "General Transactions",
+        prompt_md: null,
+        columns_config: [
+            {
+                index: 0,
+                name: "Parties",
+                format: "bulleted_list",
+                prompt: "Identify all parties to this supply agreement. For each, state their full legal name, jurisdiction of incorporation (if stated), and their role (e.g. supplier, buyer, distributor).",
+            },
+            {
+                index: 1,
+                name: "Effective Date",
+                format: "date",
+                prompt: "What is the effective date or commencement date of this agreement? If no explicit date is stated, note the date it is deemed to take effect.",
+            },
+            {
+                index: 2,
+                name: "Products",
+                format: "bulleted_list",
+                prompt: "What products are to be supplied under this agreement? List each product or product category, including any relevant specifications, part numbers, or standards referenced.",
+            },
+            {
+                index: 3,
+                name: "Term",
+                format: "text",
+                prompt: "What is the initial term or duration of this agreement? State the start date (or reference to when it commences) and the end date or duration.",
+            },
+            {
+                index: 4,
+                name: "Renewal",
+                format: "text",
+                prompt: "What renewal provisions apply? Is renewal automatic or by agreement? State the renewal period, notice requirements to prevent renewal, and any conditions on renewal.",
+            },
+            {
+                index: 5,
+                name: "Delivery",
+                format: "text",
+                prompt: "What delivery obligations and terms apply? Identify the delivery terms (e.g. Incoterms), delivery lead times, delivery locations, risk of loss, and any consequences for late or failed delivery.",
+            },
+            {
+                index: 6,
+                name: "Quality",
+                format: "text",
+                prompt: "What quality standards or specifications apply to the products? Identify any applicable standards (e.g. ISO, regulatory requirements), inspection rights, acceptance procedures, and consequences of non-conformance.",
+            },
+            {
+                index: 7,
+                name: "Warranties",
+                format: "text",
+                prompt: "What warranties does the supplier give in relation to the products? State the warranty period, the scope of the warranty (e.g. free from defects, conformance to specifications), the remedy for breach (e.g. repair, replacement, refund), and any exclusions.",
+            },
+            {
+                index: 8,
+                name: "Liquidated Damages",
+                format: "text",
+                prompt: "Are there any liquidated damages provisions? If so, identify what triggers them (e.g. late delivery, failure to meet quality standards), the applicable rate or formula, any aggregate cap, and whether they are stated to be the exclusive remedy.",
+            },
+            {
+                index: 9,
+                name: "Limitation of Liability",
+                format: "text",
+                prompt: "What limitations of liability apply? Identify any caps on liability (and how they are calculated, e.g. contract value, fees paid), exclusions of consequential or indirect loss, and any carve-outs from the limitation (e.g. fraud, wilful misconduct, death or personal injury).",
+            },
+            {
+                index: 10,
+                name: "Force Majeure",
+                format: "text",
+                prompt: "Summarise the force majeure clause. What events qualify, what obligations are suspended, what notice must be given, how long must the event persist before either party may terminate, and what are the consequences of termination for force majeure?",
+            },
+            {
+                index: 11,
+                name: "Termination Rights",
+                format: "text",
+                prompt: "What are the termination rights of each party? Distinguish between termination for convenience (including notice period) and termination for cause (including cure periods and triggers). Note what happens on termination, including any outstanding purchase orders or payment obligations.",
+            },
+            {
+                index: 12,
+                name: "Governing Law",
+                format: "text",
+                prompt: "What governing law applies to this agreement? State the jurisdiction and any specific legal system referenced.",
+            },
+            {
+                index: 13,
+                name: "Dispute Resolution",
+                format: "text",
+                prompt: "How are disputes resolved under this agreement? Identify whether disputes go to litigation or arbitration, the chosen forum or seat, and any mandatory escalation steps (e.g. negotiation, mediation) before formal proceedings.",
+            },
+        ],
+    }
 ];
 
 export const BUILT_IN_IDS = new Set(BUILT_IN_WORKFLOWS.map((wf) => wf.id));

@@ -53,6 +53,8 @@
     --radius: 0.625rem;
     --font-inter: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
         "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-cjk: "PingFang SC", "Hiragino Sans GB", "Heiti SC",
+        "Microsoft YaHei", "Noto Sans CJK SC", ui-sans-serif, sans-serif;
     --font-eb-garamond: "Iowan Old Style", "Palatino Linotype", Palatino,
         Georgia, serif;
     --color-azure: 0, 136, 255;
@@ -135,6 +137,12 @@
     button {
         cursor: pointer;
     }
+}
+
+.brand-cjk {
+    font-family: var(--font-cjk);
+    font-weight: 500;
+    font-synthesis: none;
 }
 
 .usc-section {

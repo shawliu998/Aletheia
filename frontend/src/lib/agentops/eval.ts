@@ -6,6 +6,7 @@ import type {
   IssueNode,
   ReviewComment,
 } from "../../aletheia/agentops/types";
+import type { TypedHandoffPersistedGateEvidence } from "../../aletheia/agentops/handoff";
 
 export type EvalMetrics = {
   citation_coverage: number;
@@ -28,9 +29,45 @@ export type EvalMetricInput = {
   issues?: IssueNode[];
 };
 
+export type EvalSnapshotProvenance = {
+  matterId: string;
+  snapshotId: string;
+  sourceRunIds: string[];
+  sourceReviewCommentIds: string[];
+  sourceReviewTagIds: string[];
+  sourceGateResultIds: string[];
+  sourceCheckpointIds: string[];
+  sourceEvidenceItemIds: string[];
+  sourceClaimIds: string[];
+  sourceAuditEventIds: string[];
+  feedbackExportIds: string[];
+  candidateSkillIds: string[];
+  approvedPlaybookIds: string[];
+  metrics: EvalMetrics;
+  warnings: string[];
+};
+
+export type EvalSnapshotProvenanceOptions = {
+  snapshotId?: string;
+  feedbackExportIds?: string[];
+  candidateSkillIds?: string[];
+  approvedPlaybookIds?: string[];
+  persistedGateEvidence?: TypedHandoffPersistedGateEvidence;
+};
+
 function ratio(numerator: number, denominator: number) {
   if (denominator === 0) return 0;
   return Number((numerator / denominator).toFixed(2));
+}
+
+function unique(values: Array<string | undefined | null>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function checkpointIdFromGate(gate: GateResult) {
+  return gate.id.startsWith("gate-checkpoint-")
+    ? gate.id.replace(/^gate-checkpoint-/, "")
+    : undefined;
 }
 
 function computeCitationCoverage(draftMemos: DraftMemo[]) {
@@ -103,4 +140,70 @@ export function computeWorkspaceEvalMetrics(
     eval_cases: workspace.eval_cases,
     issues: workspace.issues,
   });
+}
+
+export function buildEvalSnapshotProvenance(
+  workspace: AgentOpsMatterWorkspace,
+  options: EvalSnapshotProvenanceOptions = {},
+): EvalSnapshotProvenance {
+  const persistedGateEvidence = options.persistedGateEvidence;
+  const sourceAuditEventIds = unique([
+    ...workspace.audit_events.map((event) => event.id),
+    ...(persistedGateEvidence?.gate_snapshot_audit_event_ids ?? []),
+    ...(persistedGateEvidence?.gate_authorization_audit_event_ids ?? []),
+    ...(persistedGateEvidence?.blocked_final_export_audit_event_ids ?? []),
+    ...(persistedGateEvidence?.related_gate_audit_event_ids ?? []),
+  ]);
+  const candidateSkillIds = unique([
+    ...workspace.skills
+      .filter((skill) => skill.approval_status === "candidate")
+      .map((skill) => skill.id),
+    ...(options.candidateSkillIds ?? []),
+  ]);
+  const persistedWarnings =
+    persistedGateEvidence?.validation
+      ?.filter((item) => item.status !== "passed")
+      .map((item) => `${item.name}: ${item.detail}`) ?? [];
+  const candidateWarnings = candidateSkillIds.map(
+    (skillId) =>
+      `${skillId} is a candidate skill and must remain inactive until a human-approved playbook exists.`,
+  );
+
+  return {
+    matterId: workspace.matter.id,
+    snapshotId:
+      options.snapshotId ?? `eval-snapshot-${workspace.matter.id}`,
+    sourceRunIds: unique([
+      ...workspace.runs.map((run) => run.id),
+      ...workspace.eval_cases.map((evalCase) => evalCase.source_run_id),
+    ]),
+    sourceReviewCommentIds: unique(
+      workspace.review_comments.map((comment) => comment.id),
+    ),
+    sourceReviewTagIds: unique(
+      workspace.review_comments.map((comment) => comment.tag),
+    ),
+    sourceGateResultIds: unique([
+      ...workspace.gate_results.map((gate) => gate.id),
+      ...(persistedGateEvidence?.gate_result_ids ?? []),
+    ]),
+    sourceCheckpointIds: unique([
+      ...workspace.gate_results.map(checkpointIdFromGate),
+      ...(persistedGateEvidence?.approval_checkpoint_ids ?? []),
+    ]),
+    sourceEvidenceItemIds: unique([
+      ...workspace.evidence.map((item) => item.id),
+      ...workspace.review_comments.map((comment) => comment.evidence_item_id),
+      ...workspace.issues.flatMap((issue) => issue.related_evidence_ids),
+    ]),
+    sourceClaimIds: unique(
+      workspace.evidence.flatMap((item) => item.supports_claim_ids),
+    ),
+    sourceAuditEventIds,
+    feedbackExportIds: unique(options.feedbackExportIds ?? []),
+    candidateSkillIds,
+    approvedPlaybookIds: unique(options.approvedPlaybookIds ?? []),
+    metrics: computeWorkspaceEvalMetrics(workspace),
+    warnings: unique([...persistedWarnings, ...candidateWarnings]),
+  };
 }

@@ -60,10 +60,7 @@ function main() {
     root,
     "backend/src/scripts/aletheiaLocalRegression.ts",
   );
-  const seedUiSmoke = readText(
-    root,
-    "backend/src/scripts/aletheiaSeedUiSmoke.ts",
-  );
+  const demoSeed = readText(root, "backend/src/lib/aletheia/demoSeed.ts");
   const evidenceUi = [
     "frontend/src/aletheia/types.ts",
     "frontend/src/aletheia/RemoteMatterPage.tsx",
@@ -175,8 +172,8 @@ function main() {
     ),
     check(
       "ui-and-smoke-provenance",
-      hasAll(seedUiSmoke, [
-        "sourceChunkId: searchResults[0].chunk_id",
+      hasAll(demoSeed, [
+        "sourceChunkId: result.chunk_id",
         "documentId: document.id",
       ]) &&
         hasAll(evidenceUi, [

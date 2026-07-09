@@ -192,6 +192,10 @@ function shouldPersistLocalExport(kind: string) {
     "feedback_export",
     "final_memo",
     "registry_snapshot",
+    "external_source_workpaper",
+    "shareholder_penetration_graph",
+    "legal_qa_answer",
+    "word_addin_handoff",
   ].includes(kind);
 }
 
@@ -2077,6 +2081,292 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       auditEvent,
       evalCase,
     };
+  }
+
+  async approveShareholderPenetrationGraph(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    graphId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const graph = this.db
+      .prepare(
+        `
+        select * from aletheia_work_products
+        where id = ?
+          and matter_id = ?
+          and user_id = ?
+          and kind = 'shareholder_penetration_graph'
+        `,
+      )
+      .get(graphId, matterId, ctx.userId) as any | undefined;
+    if (!graph) return null;
+    if (graph.status === "accepted") return this.workProduct(graph);
+    if (graph.status !== "needs_review") {
+      throw new ApprovalRequiredError(
+        "Only a shareholder graph in needs_review status can be approved.",
+      );
+    }
+    const reviews = this.db
+      .prepare(
+        `
+        select id, resolution_status
+        from aletheia_review_items
+        where matter_id = ?
+          and work_product_id = ?
+        order by created_at asc
+        `,
+      )
+      .all(matterId, graphId) as Array<{
+      id: string;
+      resolution_status?: string | null;
+    }>;
+    if (!reviews.length || reviews.some((review) => review.resolution_status === "open")) {
+      throw new ApprovalRequiredError(
+        "Resolve every shareholder graph review item before approval.",
+      );
+    }
+    const graphAudit = (this.db
+      .prepare(
+        `
+        select id, details
+        from aletheia_audit_events
+        where matter_id = ?
+          and action = 'shareholder_penetration_graph_persisted'
+        order by created_at desc
+        `,
+      )
+      .all(matterId) as Array<{ id: string; details: string }>)
+      .find((event) => parseObject(event.details).workpaperId === graphId);
+    if (!graphAudit) {
+      throw new ApprovalRequiredError(
+        "Shareholder graph approval requires a persisted graph provenance audit event.",
+      );
+    }
+    const timestamp = now();
+    this.db
+      .prepare(
+        `
+        update aletheia_work_products
+        set status = 'accepted', updated_at = ?
+        where id = ? and matter_id = ? and user_id = ?
+        `,
+      )
+      .run(timestamp, graphId, matterId, ctx.userId);
+    await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "human",
+      action: "shareholder_penetration_graph_approved",
+      workflowVersion: "hermes-shareholder-penetration-v0",
+      model: null,
+      details: {
+        graphWorkProductId: graphId,
+        graphPersistenceAuditEventId: graphAudit.id,
+        reviewIds: reviews.map((review) => review.id),
+        reviewStatuses: reviews.map((review) => review.resolution_status ?? "open"),
+      },
+    });
+    this.touchMatter(ctx.userId, matterId);
+    return this.workProduct(
+      this.db
+        .prepare("select * from aletheia_work_products where id = ?")
+        .get(graphId),
+    );
+  }
+
+  async approveLegalQaAnswer(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    answerId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const answer = this.db
+      .prepare(
+        `select * from aletheia_work_products where id = ? and matter_id = ? and user_id = ? and kind = 'legal_qa_answer'`,
+      )
+      .get(answerId, matterId, ctx.userId) as any | undefined;
+    if (!answer) return null;
+    if (answer.status === "accepted") return this.workProduct(answer);
+    if (answer.status !== "needs_review") {
+      throw new ApprovalRequiredError(
+        "Only a Legal Q&A answer in needs_review status can be approved.",
+      );
+    }
+    const reviews = this.db
+      .prepare(
+        `select id, resolution_status from aletheia_review_items where matter_id = ? and work_product_id = ? order by created_at asc`,
+      )
+      .all(matterId, answerId) as Array<{ id: string; resolution_status?: string | null }>;
+    if (!reviews.length || reviews.some((review) => review.resolution_status === "open")) {
+      throw new ApprovalRequiredError(
+        "Resolve every Legal Q&A review item before approval.",
+      );
+    }
+    const answerAudit = (this.db
+      .prepare(
+        `select id, details from aletheia_audit_events where matter_id = ? and action = 'legal_qa_answer_persisted' order by created_at desc`,
+      )
+      .all(matterId) as Array<{ id: string; details: string }>)
+      .find((event) => parseObject(event.details).workpaperId === answerId);
+    if (!answerAudit) {
+      throw new ApprovalRequiredError(
+        "Legal Q&A approval requires a persisted answer provenance audit event.",
+      );
+    }
+    const timestamp = now();
+    this.db
+      .prepare(
+        `update aletheia_work_products set status = 'accepted', updated_at = ? where id = ? and matter_id = ? and user_id = ?`,
+      )
+      .run(timestamp, answerId, matterId, ctx.userId);
+    await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "human",
+      action: "legal_qa_answer_approved",
+      workflowVersion: "hermes-legal-qa-v0",
+      model: null,
+      details: {
+        answerWorkProductId: answerId,
+        answerPersistenceAuditEventId: answerAudit.id,
+        reviewIds: reviews.map((review) => review.id),
+        reviewStatuses: reviews.map((review) => review.resolution_status ?? "open"),
+      },
+    });
+    this.touchMatter(ctx.userId, matterId);
+    return this.workProduct(
+      this.db.prepare("select * from aletheia_work_products where id = ?").get(answerId),
+    );
+  }
+
+  async approveWordAddinHandoff(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    handoffId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const handoff = this.db.prepare(`select * from aletheia_work_products where id = ? and matter_id = ? and user_id = ? and kind = 'word_addin_handoff'`).get(handoffId, matterId, ctx.userId) as any | undefined;
+    if (!handoff) return null;
+    if (handoff.status === "accepted") return this.workProduct(handoff);
+    if (handoff.status !== "needs_review") throw new ApprovalRequiredError("Only a Word Add-in handoff in needs_review status can be approved.");
+    const reviews = this.db.prepare(`select id, resolution_status from aletheia_review_items where matter_id = ? and work_product_id = ? order by created_at asc`).all(matterId, handoffId) as Array<{ id: string; resolution_status?: string | null }>;
+    if (!reviews.length || reviews.some((review) => review.resolution_status === "open")) throw new ApprovalRequiredError("Resolve every Word Add-in handoff review item before approval.");
+    const handoffAudit = (this.db.prepare(`select id, details from aletheia_audit_events where matter_id = ? and action = 'word_addin_handoff_persisted' order by created_at desc`).all(matterId) as Array<{ id: string; details: string }>).find((event) => parseObject(event.details).workpaperId === handoffId);
+    if (!handoffAudit) throw new ApprovalRequiredError("Word Add-in approval requires a persisted handoff provenance audit event.");
+    this.db.prepare(`update aletheia_work_products set status = 'accepted', updated_at = ? where id = ? and matter_id = ? and user_id = ?`).run(now(), handoffId, matterId, ctx.userId);
+    await this.writeAuditEvent(ctx.userId, matterId, { actor: "human", action: "word_addin_handoff_approved", workflowVersion: "hermes-word-addin-handoff-v0", model: null, details: { handoffWorkProductId: handoffId, handoffPersistenceAuditEventId: handoffAudit.id, reviewIds: reviews.map((review) => review.id), reviewStatuses: reviews.map((review) => review.resolution_status ?? "open"), wordClientApplied: false } });
+    this.touchMatter(ctx.userId, matterId);
+    return this.workProduct(this.db.prepare("select * from aletheia_work_products where id = ?").get(handoffId));
+  }
+
+  async approvePreferenceLearningCandidate(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    memoryItemId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const memory = this.db
+      .prepare(
+        `select * from aletheia_matter_memory_items where id = ? and matter_id = ? and user_id = ? and category = 'output_preference'`,
+      )
+      .get(memoryItemId, matterId, ctx.userId) as any | undefined;
+    if (!memory) return null;
+    const metadata = parseObject(memory.metadata);
+    if (
+      metadata.preferenceLearningProposal !== true ||
+      metadata.scopeType !== "matter" ||
+      metadata.scopeId !== matterId ||
+      metadata.optIn !== true ||
+      metadata.revocable !== true ||
+      metadata.autoApply !== false
+    ) {
+      throw new ApprovalRequiredError(
+        "Only an opted-in, revocable, matter-scoped non-automatic preference candidate can be approved.",
+      );
+    }
+    const proposalAudit = (this.db
+      .prepare(
+        `select id, details from aletheia_audit_events where matter_id = ? and action = 'preference_learning_proposal_recorded' order by created_at desc`,
+      )
+      .all(matterId) as Array<{ id: string; details: string }>)
+      .find((event) => parseObject(event.details).memoryItemId === memoryItemId);
+    if (!proposalAudit) {
+      throw new ApprovalRequiredError(
+        "Preference approval requires the original proposal audit record.",
+      );
+    }
+    const proposalDetails = parseObject(proposalAudit.details);
+    const reviewId = typeof proposalDetails.reviewCommentId === "string"
+      ? proposalDetails.reviewCommentId
+      : "";
+    const review = reviewId
+      ? (this.db
+          .prepare(
+            `select id, resolution_status from aletheia_review_items where id = ? and matter_id = ? and user_id = ?`,
+          )
+          .get(reviewId, matterId, ctx.userId) as { id: string; resolution_status?: string | null } | undefined)
+      : undefined;
+    if (!review || review.resolution_status !== "accepted") {
+      throw new ApprovalRequiredError(
+        "Preference approval requires its linked review to be accepted.",
+      );
+    }
+    if (metadata.status === "approved" && typeof metadata.approvedPlaybookId === "string") {
+      const existing = this.db
+        .prepare(`select * from aletheia_playbooks where id = ? and matter_id = ? and user_id = ?`)
+        .get(metadata.approvedPlaybookId, matterId, ctx.userId);
+      if (existing) return this.playbook(existing);
+    }
+    const playbook = (await this.createPlaybook(ctx, matterId, {
+      name: `Approved output preference: ${String(memory.title).slice(0, 160)}`,
+      description: "Human-approved, matter-scoped output preference from a revocable candidate.",
+      version: "v1.0",
+      content: {
+        schemaVersion: "hermes-preference-playbook-v1",
+        preferenceMemoryItemId: memoryItemId,
+        preference: memory.body,
+        scopeType: "matter",
+        scopeId: matterId,
+        autoApply: false,
+        revocable: true,
+        proposalAuditEventId: proposalAudit.id,
+        acceptedReviewId: review.id,
+      },
+    })) as { id: string } | null;
+    if (!playbook) return null;
+    const approved = await this.approvePlaybook(ctx, matterId, playbook.id);
+    const timestamp = now();
+    this.db
+      .prepare(`update aletheia_matter_memory_items set metadata = ?, updated_at = ? where id = ? and matter_id = ? and user_id = ?`)
+      .run(
+        json({
+          ...metadata,
+          status: "approved",
+          approvedPlaybookId: playbook.id,
+          approvedAt: timestamp,
+          autoApply: false,
+        }),
+        timestamp,
+        memoryItemId,
+        matterId,
+        ctx.userId,
+      );
+    await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "human",
+      action: "preference_learning_candidate_approved",
+      workflowVersion: "hermes-preference-learning-v1",
+      model: null,
+      details: {
+        memoryItemId,
+        proposalAuditEventId: proposalAudit.id,
+        acceptedReviewId: review.id,
+        approvedPlaybookId: playbook.id,
+        autoApply: false,
+      },
+    });
+    this.touchMatter(ctx.userId, matterId);
+    return approved;
   }
 
   async listReviewDerivedEvalCases(

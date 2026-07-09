@@ -64,6 +64,10 @@ export const WORK_PRODUCT_KINDS = new Set([
   "audit_pack",
   "feedback_export",
   "registry_snapshot",
+  "external_source_workpaper",
+  "shareholder_penetration_graph",
+  "legal_qa_answer",
+  "word_addin_handoff",
 ]);
 
 export const WORK_PRODUCT_STATUSES = new Set([
@@ -123,6 +127,14 @@ export function auditActionForWorkProduct(kind: string) {
   if (kind === "compliance_register") return "compliance_register_generated";
   if (kind === "red_flag_memo") return "red_flag_memo_generated";
   if (kind === "registry_snapshot") return "registry_snapshot_saved";
+  if (kind === "external_source_workpaper") {
+    return "external_source_workpaper_saved";
+  }
+  if (kind === "shareholder_penetration_graph") {
+    return "shareholder_penetration_graph_saved";
+  }
+  if (kind === "legal_qa_answer") return "legal_qa_answer_saved";
+  if (kind === "word_addin_handoff") return "word_addin_handoff_saved";
   return "work_product_saved";
 }
 

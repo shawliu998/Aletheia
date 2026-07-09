@@ -1,6 +1,4 @@
-import { CheckCircle2, CircleDashed, LockKeyhole, Sparkles } from "lucide-react";
 import type { ProfessionalSkill } from "@/aletheia/agentops";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 function titleize(value: string) {
@@ -9,15 +7,26 @@ function titleize(value: string) {
 
 function statusClass(status: ProfessionalSkill["approval_status"]) {
   if (status === "approved") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    return "bg-emerald-500 text-emerald-700";
   }
   if (status === "rejected") {
-    return "border-red-200 bg-red-50 text-red-700";
+    return "bg-red-500 text-red-700";
   }
   if (status === "deprecated") {
-    return "border-gray-200 bg-gray-50 text-gray-600";
+    return "bg-gray-400 text-gray-500";
   }
-  return "border-amber-200 bg-amber-50 text-amber-800";
+  return "bg-amber-500 text-amber-700";
+}
+
+function StatusMark({ status }: { status: ProfessionalSkill["approval_status"] }) {
+  const classes = statusClass(status).split(" ");
+
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs", classes[1])}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", classes[0])} />
+      {titleize(status)}
+    </span>
+  );
 }
 
 export function SkillCandidateList({
@@ -37,32 +46,29 @@ export function SkillCandidateList({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-gray-500" />
-            <h3 className="text-sm font-semibold uppercase text-gray-500">
-              Candidate Skills
-            </h3>
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-950">Candidate skills</h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Inactive until review approval.
+            </p>
           </div>
-          <Badge
-            variant="outline"
-            className="rounded-md border-amber-200 bg-amber-50 text-amber-800"
-          >
+          <span className="text-xs font-medium text-amber-700">
             Approval required
-          </Badge>
+          </span>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="divide-y divide-gray-100">
           {candidateSkills.length === 0 ? (
-            <p className="rounded-md border border-dashed border-gray-200 p-3 text-sm text-gray-500">
+            <p className="px-4 py-5 text-sm text-gray-500">
               No repeated feedback pattern has crossed the candidate threshold.
             </p>
           ) : (
             candidateSkills.map((skill, index) => (
               <article
                 key={`${skill.id}-${skill.version}-${index}`}
-                className="rounded-md border border-gray-100 bg-gray-50 p-3"
+                className="px-4 py-4"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -73,21 +79,15 @@ export function SkillCandidateList({
                       {skill.description}
                     </p>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={cn("rounded-md", statusClass(skill.approval_status))}
-                  >
-                    <CircleDashed className="h-3 w-3" />
-                    {titleize(skill.approval_status)}
-                  </Badge>
+                  <StatusMark status={skill.approval_status} />
                 </div>
-                <div className="mt-3 grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
+                <div className="mt-3 grid gap-3 text-xs text-gray-600 sm:grid-cols-[1fr_auto]">
                   <p>
-                    <span className="font-semibold text-gray-800">Triggers:</span>{" "}
+                    <span className="font-medium text-gray-800">Triggers</span>{" "}
                     {skill.trigger_conditions.join("; ")}
                   </p>
                   <p>
-                    <span className="font-semibold text-gray-800">Eval cases:</span>{" "}
+                    <span className="font-medium text-gray-800">Eval cases</span>{" "}
                     {skill.created_from_eval_case_ids.length || "review/gate pattern"}
                   </p>
                 </div>
@@ -97,36 +97,42 @@ export function SkillCandidateList({
         </div>
       </section>
 
-      <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-2">
-          <LockKeyhole className="h-4 w-4 text-gray-500" />
-          <h3 className="text-sm font-semibold uppercase text-gray-500">
-            Approved Playbook Skills
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <h3 className="text-sm font-semibold text-gray-950">
+            Approved playbook skills
           </h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Active skills backed by human approval.
+          </p>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="divide-y divide-gray-100">
           {approvedSkills.length === 0 ? (
-            <p className="rounded-md border border-dashed border-gray-200 p-3 text-sm text-gray-500">
+            <p className="px-4 py-5 text-sm text-gray-500">
               No human-approved playbook skill is active for this workspace.
             </p>
           ) : (
             approvedSkills.map((skill, index) => (
               <article
                 key={`${skill.id}-${skill.version}-${index}`}
-                className="rounded-md border border-emerald-100 bg-emerald-50 p-3"
+                className="px-4 py-4"
               >
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-emerald-950">
-                      {skill.name}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-emerald-800">
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-950">
+                        {skill.name}
+                      </p>
+                      <span className="text-xs text-gray-500">
+                        v{skill.version}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-gray-600">
                       {skill.description}
                     </p>
-                    <p className="mt-2 text-xs text-emerald-700">
-                      v{skill.version} from{" "}
+                    <p className="mt-2 text-xs text-gray-500">
                       {skill.created_from_eval_case_ids.length} eval case
                       {skill.created_from_eval_case_ids.length === 1 ? "" : "s"}
                     </p>

@@ -324,6 +324,93 @@ function main() {
       ],
     }),
     item({
+      id: "external-source-connector",
+      requirement:
+        "External-source capture has an explicit per-matter opt-in, HTTPS host allowlist, public-address policy, pinned request path, response limits, and a reviewable workpaper handoff.",
+      evidence: [
+        "backend/src/lib/aletheia/externalSourceFetch.ts",
+        "backend/src/routes/aletheia.ts",
+        "backend/src/scripts/aletheiaExternalSourceConnectorAudit.ts",
+        "frontend/src/components/agentops/ExternalSourceWorkpaperPanel.tsx",
+      ],
+      checks: [
+        contains(root, "backend/src/lib/aletheia/externalSourceFetch.ts", [
+          "ALETHEIA_EXTERNAL_SOURCE_ALLOWED_DOMAINS",
+          "validateExternalSourceUrl",
+          "resolvePublicAddress",
+          "fetchPinnedHttps",
+          "MAX_RESPONSE_BYTES",
+          "externalAccessOptIn",
+        ]),
+        contains(root, "backend/src/routes/aletheia.ts", [
+          "/matters/:matterId/external-source/fetch",
+          "fetchAllowlistedExternalSource",
+          "external_source_policy",
+        ]),
+        contains(root, "frontend/src/components/agentops/ExternalSourceWorkpaperPanel.tsx", [
+          "allowlisted_https_fetch",
+          "fetchAletheiaExternalSource",
+          "externalAccessOptIn",
+          "needs_review",
+        ]),
+        packageScript(root, "backend/package.json", "check:aletheia:external-source-connector"),
+      ],
+    }),
+    item({
+      id: "word-addin-taskpane",
+      requirement:
+        "A Word Office Add-in manifest and task pane can capture a selected text into a review-only, audited Hermes handoff without mutating the document.",
+      evidence: [
+        "office-addin/word-manifest.xml",
+        "frontend/src/app/office/word/page.tsx",
+        "backend/src/scripts/aletheiaWordAddinManifestAudit.ts",
+      ],
+      checks: [
+        contains(root, "office-addin/word-manifest.xml", [
+          "TaskPaneApp",
+          "WordApi",
+          "https://localhost:3000/office/word",
+          "ReadDocument",
+        ]),
+        contains(root, "frontend/src/app/office/word/page.tsx", [
+          "getSelectedDataAsync",
+          "createAletheiaWorkProduct",
+          "addAletheiaReview",
+          "wordClientApplied: false",
+        ]),
+        packageScript(root, "backend/package.json", "check:aletheia:word-addin-manifest"),
+      ],
+    }),
+    item({
+      id: "preference-learning-approval",
+      requirement:
+        "An opted-in, revocable matter-scoped preference can only map to a new approved matter playbook after its linked review and proposal audit are accepted; it cannot auto-apply or cross matters.",
+      evidence: [
+        "backend/src/lib/aletheia/localRepository.ts",
+        "backend/src/routes/aletheia.ts",
+        "frontend/src/components/agentops/PreferenceLearningPanel.tsx",
+      ],
+      checks: [
+        contains(root, "backend/src/lib/aletheia/localRepository.ts", [
+          "approvePreferenceLearningCandidate",
+          "Preference approval requires the original proposal audit record.",
+          "linked review to be accepted",
+          "autoApply: false",
+          "preference_learning_candidate_approved",
+        ]),
+        contains(root, "backend/src/routes/aletheia.ts", [
+          "/matters/:matterId/preference-learning/:memoryItemId/approve",
+          "approvePreferenceLearningCandidate",
+        ]),
+        contains(root, "frontend/src/components/agentops/PreferenceLearningPanel.tsx", [
+          "acceptProposalReview",
+          "approveProposal",
+          "approved playbook mapping",
+          "auto-change playbooks or other matters",
+        ]),
+      ],
+    }),
+    item({
       id: "automation-validation",
       requirement:
         "Automated validation exists for backend build, local regression, restore drill, retrieval eval, package preflight, frontend lint/build, and UI smoke.",
@@ -373,6 +460,16 @@ function main() {
         packageScript(
           root,
           "backend/package.json",
+          "check:aletheia:external-source-connector",
+        ),
+        packageScript(
+          root,
+          "backend/package.json",
+          "check:aletheia:word-addin-manifest",
+        ),
+        packageScript(
+          root,
+          "backend/package.json",
           "check:aletheia:matter-isolation",
         ),
         packageScript(root, "backend/package.json", "check:aletheia:run-trace"),
@@ -410,6 +507,8 @@ function main() {
           "npm run check:aletheia:audit-workbench",
           "npm run check:aletheia:tool-policy",
           "npm run check:aletheia:approval-policy",
+          "npm run check:aletheia:external-source-connector",
+          "npm run check:aletheia:word-addin-manifest",
           "npm run check:aletheia:matter-isolation",
           "npm run check:aletheia:run-trace",
           "npm run check:aletheia:evidence",
@@ -433,6 +532,8 @@ function main() {
           "npm run check:aletheia:audit-workbench",
           "npm run check:aletheia:tool-policy",
           "npm run check:aletheia:approval-policy",
+          "npm run check:aletheia:external-source-connector",
+          "npm run check:aletheia:word-addin-manifest",
           "npm run check:aletheia:matter-isolation",
           "npm run check:aletheia:run-trace",
           "npm run check:aletheia:evidence",

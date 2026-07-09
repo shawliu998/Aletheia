@@ -4,9 +4,8 @@ import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
     metadataBase: new URL("https://aletheia.local"),
-    title: "Aletheia 明证 - Agent Workspace",
-    description:
-        "Agent workspace for verifiable, reviewable, and auditable professional work.",
+    title: "Aletheia",
+    description: "Local legal workspace.",
     icons: {
         icon: [
             { url: "/icon.png", type: "image/png", sizes: "1024x1024" },
@@ -18,9 +17,8 @@ export const metadata: Metadata = {
         type: "website",
         url: "https://aletheia.local",
         siteName: "Aletheia 明证",
-        title: "Aletheia 明证 - Agent Workspace",
-        description:
-            "Agent workspace for verifiable, reviewable, and auditable professional work.",
+        title: "Aletheia",
+        description: "Local legal workspace.",
         images: [
             {
                 url: "/link-image.jpg",
@@ -32,9 +30,8 @@ export const metadata: Metadata = {
     },
     twitter: {
         card: "summary_large_image",
-        title: "Aletheia 明证 - Agent Workspace",
-        description:
-            "Agent workspace for verifiable, reviewable, and auditable professional work.",
+        title: "Aletheia",
+        description: "Local legal workspace.",
         images: ["/link-image.jpg"],
     },
 };
