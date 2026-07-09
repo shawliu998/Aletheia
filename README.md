@@ -159,6 +159,17 @@ This validates the restore source without copying or deleting data. It checks
 the local data boundary, required backup directories, symlink-free content,
 SQLite `quick_check`, core Aletheia tables, and an optional backup manifest.
 
+Run the privacy preflight before committing, handoff, or packaging:
+
+```bash
+cd backend
+npm run check:aletheia:privacy
+```
+
+This scans tracked repository files for accidental `.data` artifacts,
+disallowed `.env` files, high-confidence secret patterns, and non-placeholder
+private deployment tokens without reading untracked client documents.
+
 Generate the release evidence manifest before handoff:
 
 ```bash
@@ -186,8 +197,8 @@ local export files are reported with byte counts and sha256 hashes.
 The same validation posture is enforced on `main` and pull requests through
 `.github/workflows/aletheia-local-ci.yml`. The CI workflow installs backend and
 frontend dependencies, builds both apps, runs the local regression and retrieval
-eval, executes package preflight and completion audit, then runs frontend lint
-and the Aletheia UI smoke suite.
+eval, executes privacy, package, evidence, integrity, and completion checks,
+then runs frontend lint and the Aletheia UI smoke suite.
 
 Create a screenshot-ready local UI smoke matter:
 

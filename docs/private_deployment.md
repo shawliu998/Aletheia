@@ -55,6 +55,10 @@ Operational notes:
   after a real workflow to verify export events, local export files, and
   approved checkpoint links. The JSON output includes byte counts and sha256
   hashes for local export files.
+- Run `npm run check:aletheia:privacy` before committing, packaging, or
+  handoff. It scans only tracked repository files for accidental `.data`
+  artifacts, disallowed `.env` files, high-confidence API key shapes, private
+  key blocks, and non-placeholder private deployment secrets.
 - Treat `exports/` as client-sensitive output.
 - Do not enable external web/model tools unless the deployment owner explicitly
   configures them.
@@ -118,6 +122,7 @@ Before upgrading:
 - run `npm run check:aletheia:doctor`;
 - run `npm run check:aletheia:backup`;
 - run `ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore`;
+- run `npm run check:aletheia:privacy`;
 - run `ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity`;
 - run `npm run test:aletheia:local`;
 - run `npm run test:aletheia:package` after frontend build output exists;

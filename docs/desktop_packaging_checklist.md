@@ -10,6 +10,9 @@ not a release process yet; it defines what must be true before packaging.
 - `npm run check:aletheia:backup` produces the backup scope manifest.
 - `npm run check:aletheia:restore` validates the restore source without
   copying, overwriting, or deleting local data.
+- `npm run check:aletheia:privacy` fails on tracked local data, disallowed
+  `.env` files, private key blocks, high-confidence API key shapes, or
+  non-placeholder private deployment secrets.
 - `npm run check:aletheia:evidence` produces the release evidence manifest for
   the current git commit, validation commands, screenshots, and deployment docs.
 - `npm run check:aletheia:audit-integrity` verifies that local export work
@@ -100,6 +103,7 @@ npm run build
 npm run check:aletheia:doctor
 npm run check:aletheia:backup
 ALETHEIA_RESTORE_SOURCE_DIR=.data/aletheia npm run check:aletheia:restore
+npm run check:aletheia:privacy
 ALETHEIA_RELEASE_EVIDENCE_OUT=../release-evidence.json npm run check:aletheia:evidence
 ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity
 npm run test:aletheia:local

@@ -22,6 +22,7 @@ const VALIDATION_COMMANDS = [
   "cd backend && npm run check:aletheia:doctor",
   "cd backend && npm run check:aletheia:backup",
   "cd backend && npm run check:aletheia:restore",
+  "cd backend && npm run check:aletheia:privacy",
   "cd backend && npm run check:aletheia:evidence",
   "cd backend && npm run check:aletheia:audit-integrity",
   "cd backend && npm run check:aletheia:operator",
@@ -143,9 +144,10 @@ function main() {
     ),
     check(
       "validation-entrypoints-present",
-      packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
+        packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
         packageScript(root, "backend/package.json", "check:aletheia:backup") &&
         packageScript(root, "backend/package.json", "check:aletheia:restore") &&
+        packageScript(root, "backend/package.json", "check:aletheia:privacy") &&
         packageScript(root, "backend/package.json", "check:aletheia:evidence") &&
         packageScript(root, "backend/package.json", "test:aletheia:local") &&
         packageScript(root, "backend/package.json", "test:aletheia:retrieval-eval") &&
@@ -160,6 +162,7 @@ function main() {
       "ci-covers-release-evidence",
       contains(root, ".github/workflows/aletheia-local-ci.yml", [
         "npm run check:aletheia:evidence",
+        "npm run check:aletheia:privacy",
         "npm run test:aletheia:local",
         "npm run test:aletheia:retrieval-eval",
         "npm run test:aletheia:completion",
@@ -171,6 +174,7 @@ function main() {
       "status-doc-lists-evidence-check",
       contains(root, "docs/status.md", [
         "npm run check:aletheia:evidence",
+        "npm run check:aletheia:privacy",
         "release evidence manifest",
       ]),
       "Product status must list the release evidence manifest command and result.",

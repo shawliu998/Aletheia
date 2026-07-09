@@ -42,6 +42,12 @@ The restore preflight entrypoint is:
 cd backend && npm run check:aletheia:restore
 ```
 
+The tracked-file privacy preflight entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:privacy
+```
+
 The release evidence manifest entrypoint is:
 
 ```bash
@@ -101,6 +107,7 @@ cd backend && npm run build
 cd backend && npm run check:aletheia:doctor
 cd backend && npm run check:aletheia:backup
 cd backend && npm run check:aletheia:restore
+cd backend && npm run check:aletheia:privacy
 cd backend && npm run check:aletheia:evidence
 cd backend && npm run check:aletheia:audit-integrity
 cd backend && npm run check:aletheia:operator
@@ -122,6 +129,9 @@ Current known result:
 - restore preflight passes and validates required backup directories, path
   boundaries, symlink-free backup content, SQLite integrity, and core Aletheia
   schema when a local database is present.
+- tracked-file privacy preflight passes and blocks committed local data,
+  disallowed `.env` files, private key blocks, high-confidence API key shapes,
+  and non-placeholder private deployment secrets.
 - release evidence manifest passes and records the current git commit,
   validation commands, screenshot hashes, deployment/attribution docs, privacy
   defaults, and approval posture.

@@ -124,6 +124,7 @@ function main() {
         packageScript(root, "backend/package.json", "check:aletheia:doctor") &&
         packageScript(root, "backend/package.json", "check:aletheia:backup") &&
         packageScript(root, "backend/package.json", "check:aletheia:restore") &&
+        packageScript(root, "backend/package.json", "check:aletheia:privacy") &&
         packageScript(root, "backend/package.json", "check:aletheia:evidence") &&
         packageScript(root, "backend/package.json", "check:aletheia:audit-integrity") &&
         packageScript(root, "backend/package.json", "test:aletheia:local") &&
@@ -137,10 +138,11 @@ function main() {
     check(
       "ci-validation",
       contains(root, ".github/workflows/aletheia-local-ci.yml", [
-        "Aletheia Local CI",
-        "npm run test:aletheia:local",
-        "npm run test:aletheia:retrieval-eval",
-        "npm run test:aletheia:package",
+          "Aletheia Local CI",
+          "npm run test:aletheia:local",
+          "npm run test:aletheia:retrieval-eval",
+          "npm run check:aletheia:privacy",
+          "npm run test:aletheia:package",
         "npm run test:aletheia:completion",
         "npm run test:aletheia:ui",
       ]),
@@ -174,6 +176,7 @@ function main() {
           "cd backend && npm run check:aletheia:doctor",
           "cd backend && npm run check:aletheia:backup",
           "cd backend && npm run check:aletheia:restore",
+          "cd backend && npm run check:aletheia:privacy",
           "cd backend && npm run check:aletheia:evidence",
           "cd backend && npm run check:aletheia:audit-integrity",
           "cd backend && npm run test:aletheia:local",
