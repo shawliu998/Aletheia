@@ -17,6 +17,7 @@ import type {
   TabularReview,
   TabularReviewDetailOut,
 } from "@/app/components/shared/types";
+import type { V1SourceIndexSnapshot } from "@/aletheia/agentops/exportPackage";
 
 // Server-side shape before mapping
 interface ServerMessage {
@@ -230,7 +231,7 @@ export interface AletheiaMatterDocumentRecord {
   document_id: string | null;
   name: string;
   document_type: string;
-  parsed_status: "pending" | "parsed" | "failed";
+  parsed_status: "pending" | "parsed" | "failed" | "needs_ocr";
   summary: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -238,6 +239,7 @@ export interface AletheiaMatterDocumentRecord {
 }
 
 export interface AletheiaDocumentSearchResult {
+  id?: string;
   chunk_id: string;
   matter_id: string;
   document_id: string;
@@ -249,6 +251,9 @@ export interface AletheiaDocumentSearchResult {
   quote_start: number;
   quote_end: number;
   score: number;
+  quote_preview?: string;
+  method?: "keyword" | "hybrid" | "semantic";
+  ranking_basis?: string;
   retrieval_mode?: "keyword" | "hybrid" | "semantic";
   retrieval_layers?: string[];
   retrieval_rank?: number;
@@ -269,6 +274,18 @@ export interface AletheiaDocumentSearchResult {
     confidence: string;
     source: string;
   } | null;
+}
+
+export type AletheiaV1SourceIndex = V1SourceIndexSnapshot;
+
+export interface AletheiaDocumentBatchUploadResult {
+  schema_version: "aletheia-document-import-batch-v0";
+  matter_id: string;
+  total: number;
+  imported: number;
+  failed: number;
+  documents: AletheiaMatterDocumentRecord[];
+  errors: Array<{ filename: string; detail: string }>;
 }
 
 export interface AletheiaWorkProductRecord {
@@ -542,12 +559,57 @@ export async function uploadAletheiaMatterDocument(
   );
 }
 
+export async function uploadAletheiaMatterDocuments(
+  matterId: string,
+  files: File[],
+): Promise<AletheiaDocumentBatchUploadResult> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  return apiRequest<AletheiaDocumentBatchUploadResult>(
+    `/aletheia/matters/${matterId}/documents/batch`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+}
+
 export async function searchAletheiaMatterDocuments(
   matterId: string,
   query: string,
 ): Promise<AletheiaDocumentSearchResult[]> {
   return apiRequest<AletheiaDocumentSearchResult[]>(
     `/aletheia/matters/${matterId}/documents/search?q=${encodeURIComponent(query)}`,
+  );
+}
+
+export async function listAletheiaV1SourceIndex(
+  matterId: string,
+  options: {
+    includeChunks?: boolean;
+    includeEvidenceLinks?: boolean;
+    chunkLimit?: number;
+    documentIds?: string[];
+  } = {},
+): Promise<AletheiaV1SourceIndex> {
+  const params = new URLSearchParams();
+  if (options.includeChunks !== undefined) {
+    params.set("includeChunks", String(options.includeChunks));
+  }
+  if (options.includeEvidenceLinks !== undefined) {
+    params.set("includeEvidenceLinks", String(options.includeEvidenceLinks));
+  }
+  if (options.chunkLimit !== undefined) {
+    params.set("chunkLimit", String(options.chunkLimit));
+  }
+  for (const documentId of options.documentIds ?? []) {
+    params.append("documentId", documentId);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<AletheiaV1SourceIndex>(
+    `/aletheia/matters/${matterId}/v1/source-index${suffix}`,
   );
 }
 
@@ -795,6 +857,24 @@ export async function appendAletheiaAuditEvent(
 ): Promise<AletheiaAuditEventRecord> {
   return apiRequest<AletheiaAuditEventRecord>(
     `/aletheia/matters/${matterId}/audit-events`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function persistAletheiaGateSnapshot(
+  matterId: string,
+  payload: {
+    action: "final_memo_export";
+    approvalCheckpointId?: string | null;
+    content: Record<string, unknown>;
+  },
+): Promise<AletheiaAuditEventRecord> {
+  return apiRequest<AletheiaAuditEventRecord>(
+    `/aletheia/matters/${matterId}/gate-snapshots`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

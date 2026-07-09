@@ -8,3 +8,5 @@ export * from "./fixtures";
 export * from "./gateProvenance";
 export * from "./matterMemory";
 export * from "./references";
+export * from "./v1Contracts";
+export * from "./v1Runtime";

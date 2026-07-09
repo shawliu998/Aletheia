@@ -43,6 +43,8 @@ export type GateEngineInput = {
 const conflictPattern = /\b(conflict|conflicting|contradict|contradiction|inconsistent|dispute|disputed)\b/i;
 const uncertaintyPattern = /\b(unclear|unknown|tbd|to be determined|unspecified|not provided|unresolved)\b/i;
 const privilegePattern = /\b(privileged|attorney[- ]client|legal advice|work product|confidential|sensitive|secret|non[- ]public)\b/i;
+const externalSourcePattern = /\b(external source|outside source|third[- ]party source|public web|web search|internet|external research)\b/i;
+const externalUriPattern = /^https?:\/\//i;
 
 function gateId(matterId: string, gateType: GateType) {
   return `gate-${matterId}-${gateType}`;
@@ -86,6 +88,25 @@ function validEvidenceReferences(
 
 function textIncludes(pattern: RegExp, values: Array<string | undefined>) {
   return values.some((value) => Boolean(value && pattern.test(value)));
+}
+
+function metadataIndicatesExternalSource(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
+  }
+  return Object.entries(metadata as Record<string, unknown>).some(([key, value]) => {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedKey.includes("external") ||
+      normalizedKey.includes("source_url") ||
+      normalizedKey.includes("sourceuri") ||
+      normalizedKey.includes("source_uri")
+    ) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "string") return value.trim().length > 0;
+    }
+    return typeof value === "string" && externalUriPattern.test(value.trim());
+  });
 }
 
 export function findUnsupportedClaims(
@@ -202,6 +223,15 @@ export function canExportFinal(gateResults: GateResult[]) {
   );
 }
 
+export function isApprovalResolvableFinalExportGate(gate: GateResult) {
+  return (
+    gate.status === "failed" &&
+    (gate.gate_type === "human_approval" ||
+      gate.gate_type === "external_source" ||
+      gate.gate_type === "export")
+  );
+}
+
 function conflictArtifactIds(args: {
   evidence: EvidenceItem[];
   issues: IssueNode[];
@@ -302,6 +332,51 @@ function privilegedArtifactIds(args: {
   return [...ids];
 }
 
+function externalSourceArtifactIds(args: {
+  matter: Matter;
+  memo: DraftMemo;
+  evidence: EvidenceItem[];
+  risks: RiskItem[];
+  reviewComments: ReviewComment[];
+}) {
+  const ids = new Set<string>();
+  for (const document of args.matter.documents) {
+    if (document.source_uri && externalUriPattern.test(document.source_uri.trim())) {
+      ids.add(document.id);
+    }
+  }
+  for (const section of args.memo.sections) {
+    if (textIncludes(externalSourcePattern, [section.title, section.body])) {
+      ids.add(section.id);
+    }
+  }
+  for (const item of args.evidence) {
+    if (
+      metadataIndicatesExternalSource(item.metadata) ||
+      textIncludes(externalSourcePattern, [item.quote, item.normalized_fact])
+    ) {
+      ids.add(item.id);
+    }
+  }
+  for (const risk of args.risks) {
+    if (
+      textIncludes(externalSourcePattern, [
+        risk.title,
+        risk.description,
+        risk.recommendation,
+      ])
+    ) {
+      ids.add(risk.id);
+    }
+  }
+  for (const comment of args.reviewComments) {
+    if (textIncludes(externalSourcePattern, [comment.tag, comment.comment])) {
+      ids.add(comment.artifact_id);
+    }
+  }
+  return [...ids];
+}
+
 export function runGates(input: GateEngineInput): GateResult[] {
   const now = input.now ?? new Date().toISOString();
   const exportIntent = input.exportIntent ?? "draft";
@@ -334,6 +409,13 @@ export function runGates(input: GateEngineInput): GateResult[] {
   const humanApproved =
     input.humanApproved || input.draftMemo.review_status === "approved";
   const isHighRisk = input.matter.risk_level === "high";
+  const externalSourceArtifacts = externalSourceArtifactIds({
+    matter: input.matter,
+    memo: input.draftMemo,
+    evidence: input.evidence,
+    risks: input.risks,
+    reviewComments: input.reviewComments,
+  });
 
   const gates: GateResult[] = [
     makeGate({
@@ -449,6 +531,26 @@ export function runGates(input: GateEngineInput): GateResult[] {
       requiredAction:
         privilegedArtifacts.length > 0
           ? "Confirm export audience, redactions, and confidentiality handling."
+          : undefined,
+      now,
+    }),
+    makeGate({
+      matterId: input.matter.id,
+      gateType: "external_source",
+      status:
+        externalSourceArtifacts.length === 0
+          ? "passed"
+          : exportIntent === "final" && !humanApproved
+            ? "failed"
+            : "warning",
+      reason:
+        externalSourceArtifacts.length === 0
+          ? "No external-source markers were found."
+          : `${externalSourceArtifacts.length} external-source artifact${externalSourceArtifacts.length === 1 ? "" : "s"} found.`,
+      affectedArtifactIds: externalSourceArtifacts,
+      requiredAction:
+        externalSourceArtifacts.length > 0
+          ? "Confirm external-source reliability, licensing, and disclosure before final export."
           : undefined,
       now,
     }),

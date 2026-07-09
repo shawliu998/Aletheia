@@ -13,10 +13,15 @@ import {
   Search,
   Upload,
   Workflow,
+  X,
 } from "lucide-react";
 import { AletheiaShell } from "./AletheiaShell";
 import { RemoteMatterRunTrace } from "./RemoteMatterRunTrace";
 import { RemoteMatterSidebar } from "./RemoteMatterSidebar";
+import {
+  buildFinalMemoApprovalRequestedPayload,
+  buildFinalMemoGateSnapshotContent,
+} from "./agentops/finalMemoApprovalPayload";
 import {
   buildAuditPack,
   buildFeedbackDataset,
@@ -49,23 +54,31 @@ import {
   generateAletheiaEvidenceMatrix,
   generateAletheiaIssueMap,
   getAletheiaMatter,
+  listAletheiaV1SourceIndex,
+  persistAletheiaGateSnapshot,
   proposeAletheiaPlaybookImprovement,
   requestAletheiaApproval,
   resumeAletheiaAgentRun,
   searchAletheiaMatterDocuments,
   uploadAletheiaMatterDocument,
+  uploadAletheiaMatterDocuments,
   type AletheiaDocumentSearchResult,
   type AletheiaEvidenceRecord,
   type AletheiaHumanCheckpointRecord,
   type AletheiaMatterMemoryRecord,
   type AletheiaMatterDetail,
   type AletheiaReviewRecord,
+  type AletheiaV1SourceIndex,
   type AletheiaWorkProductKind,
 } from "@/app/lib/aletheiaApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GateChecklist } from "@/components/agentops/GateChecklist";
-import { canExportFinal, runGates } from "@/aletheia/agentops/gates";
+import {
+  canExportFinal,
+  isApprovalResolvableFinalExportGate,
+  runGates,
+} from "@/aletheia/agentops/gates";
 
 export function RemoteMatterPage({ matterId }: { matterId: string }) {
   const [detail, setDetail] = useState<AletheiaMatterDetail | null>(null);
@@ -88,6 +101,14 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
   const [documentResults, setDocumentResults] = useState<
     AletheiaDocumentSearchResult[]
   >([]);
+  const [sourceIndex, setSourceIndex] = useState<AletheiaV1SourceIndex | null>(
+    null,
+  );
+  const [sourceIndexLoading, setSourceIndexLoading] = useState(false);
+  const [sourceIndexError, setSourceIndexError] = useState("");
+  const [selectedSourceDocumentId, setSelectedSourceDocumentId] = useState<
+    string | null
+  >(null);
   const [evidenceClaimId, setEvidenceClaimId] = useState("");
   const [evidenceSupportStatus, setEvidenceSupportStatus] =
     useState<AletheiaEvidenceRecord["support_status"]>("supports");
@@ -150,6 +171,30 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
   const sourceMapItems = useMemo(
     () => (detail ? sourceMapDocuments(detail) : []),
     [detail],
+  );
+  const sourceChunksByDocument = useMemo(() => {
+    const chunks = new Map<string, NonNullable<typeof sourceIndex>["chunks"]>();
+    for (const chunk of sourceIndex?.chunks ?? []) {
+      chunks.set(chunk.document_id, [
+        ...(chunks.get(chunk.document_id) ?? []),
+        chunk,
+      ]);
+    }
+    return chunks;
+  }, [sourceIndex?.chunks]);
+  const selectedSourceDocument = useMemo(
+    () =>
+      sourceMapItems.find(
+        (document) => document.id === selectedSourceDocumentId,
+      ) ?? null,
+    [selectedSourceDocumentId, sourceMapItems],
+  );
+  const selectedSourceChunks = useMemo(
+    () =>
+      selectedSourceDocumentId
+        ? (sourceChunksByDocument.get(selectedSourceDocumentId) ?? [])
+        : [],
+    [selectedSourceDocumentId, sourceChunksByDocument],
   );
   const evidenceRows = useMemo(
     () => (detail ? evidenceMatrixRows(detail) : []),
@@ -274,7 +319,12 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
             approvalCheckpointId: approvedFinalMemoApproval?.id,
           })
         : [],
-    [approvedFinalMemoApproval?.id, detail, finalMemoGateResults, latestDraftMemo],
+    [
+      approvedFinalMemoApproval?.id,
+      detail,
+      finalMemoGateResults,
+      latestDraftMemo,
+    ],
   );
 
   useEffect(() => {
@@ -298,6 +348,41 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
       cancelled = true;
     };
   }, [matterId]);
+
+  useEffect(() => {
+    if (!detail) {
+      setSourceIndex(null);
+      return;
+    }
+
+    let cancelled = false;
+    async function loadSourceIndex() {
+      setSourceIndexLoading(true);
+      setSourceIndexError("");
+      try {
+        const data = await listAletheiaV1SourceIndex(matterId, {
+          includeChunks: true,
+          includeEvidenceLinks: true,
+          chunkLimit: 200,
+        });
+        if (!cancelled) setSourceIndex(data);
+      } catch (err) {
+        if (!cancelled) {
+          setSourceIndex(null);
+          setSourceIndexError(
+            err instanceof Error ? err.message : "Source index unavailable",
+          );
+        }
+      } finally {
+        if (!cancelled) setSourceIndexLoading(false);
+      }
+    }
+
+    void loadSourceIndex();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail, matterId]);
 
   async function saveWorkProduct(kind: "audit_pack" | "feedback_export") {
     if (!detail) return;
@@ -391,7 +476,7 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
         (gate) =>
           gate.status === "failed" &&
           (approvedFinalMemoApproval ||
-            !["human_approval", "export"].includes(gate.gate_type)),
+            !isApprovalResolvableFinalExportGate(gate)),
       );
       if (blockingGateResults.length > 0) {
         setSaveMessage(formatGateBlockMessage(blockingGateResults));
@@ -402,18 +487,29 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
           setSaveMessage("Final memo export is waiting for human approval.");
           return;
         }
+        const gateSnapshotContent = buildFinalMemoGateSnapshotContent({
+          matterTitle: detail.matter.title,
+          sourceDraftMemoId: latestDraftMemo.id,
+          gateSummary: summarizeGateResults(finalMemoGateResults),
+          gateResults: finalMemoGateResults,
+          gateProvenance: finalMemoGateProvenance,
+        });
+        const gateSnapshotAuditEvent = await persistAletheiaGateSnapshot(
+          matterId,
+          {
+            action: "final_memo_export",
+            approvalCheckpointId: null,
+            content: gateSnapshotContent,
+          },
+        );
         await requestAletheiaApproval(matterId, {
           action: "final_memo_export",
           prompt:
             "Approve final memo export only after verifying evidence support, unresolved review flags, and professional caveats.",
-          requestedPayload: {
-            matterTitle: detail.matter.title,
-            workProductKind: "final_memo",
-            sourceDraftMemoId: latestDraftMemo.id,
-            gateSummary: summarizeGateResults(finalMemoGateResults),
-            gateResults: finalMemoGateResults,
-            gateProvenance: finalMemoGateProvenance,
-          },
+          requestedPayload: buildFinalMemoApprovalRequestedPayload({
+            gateSnapshotContent,
+            gateSnapshotAuditEventId: gateSnapshotAuditEvent.id,
+          }),
         });
         const refreshed = await getAletheiaMatter(matterId);
         setDetail(refreshed);
@@ -751,19 +847,46 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
     }
   }
 
-  async function uploadDocument(file: File | null) {
-    if (!file) return;
+  async function uploadDocuments(files: FileList | File[] | null) {
+    const selectedFiles = Array.from(files ?? []);
+    if (selectedFiles.length === 0) return;
+
     setUploadingDocument(true);
     setSaveMessage("");
     setError("");
 
     try {
-      await uploadAletheiaMatterDocument(matterId, file);
+      if (selectedFiles.length === 1) {
+        const [file] = selectedFiles;
+        await uploadAletheiaMatterDocument(matterId, file);
+        const refreshed = await getAletheiaMatter(matterId);
+        setDetail(refreshed);
+        setSaveMessage("Document uploaded and indexed.");
+        return;
+      }
+
+      const result = await uploadAletheiaMatterDocuments(
+        matterId,
+        selectedFiles,
+      );
       const refreshed = await getAletheiaMatter(matterId);
       setDetail(refreshed);
-      setSaveMessage("Document uploaded and indexed.");
+      if (result.failed > 0) {
+        setSaveMessage(
+          `${result.imported} documents uploaded; ${result.failed} failed.`,
+        );
+        setError(
+          result.errors
+            .map((item) => `${item.filename}: ${item.detail}`)
+            .join("; "),
+        );
+      } else {
+        setSaveMessage(`${result.imported} documents uploaded and indexed.`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Document upload failed");
+      const message =
+        err instanceof Error ? err.message : "Document upload failed";
+      setError(message);
     } finally {
       setUploadingDocument(false);
     }
@@ -948,9 +1071,11 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
                           : "MVP path: source-backed professional review memo."}
                       </li>
                       <li>
-                        {detail.evidence.filter(
-                          (item) => item.support_status !== "supports",
-                        ).length}{" "}
+                        {
+                          detail.evidence.filter(
+                            (item) => item.support_status !== "supports",
+                          ).length
+                        }{" "}
                         mapped evidence items need contradiction or sufficiency
                         review.
                       </li>
@@ -1029,7 +1154,9 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
                                     : "text-amber-700"
                                 }
                               >
-                                {item.status === "present" ? "Present" : "Missing"}
+                                {item.status === "present"
+                                  ? "Present"
+                                  : "Missing"}
                               </span>
                               {": "}
                               {item.label}
@@ -1086,6 +1213,10 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
                     </h2>
                     <p className="mt-1 text-xs text-[#9ca3af]">
                       Document Registry
+                      {sourceIndexLoading ? " · loading source index" : ""}
+                      {sourceIndex
+                        ? ` · ${sourceIndex.chunks.length} source chunks`
+                        : ""}
                     </p>
                   </div>
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-[#e5e7eb] px-3 py-2 text-sm font-medium text-[#374151] hover:bg-[#f9fafb]">
@@ -1094,11 +1225,11 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
                     <input
                       type="file"
                       className="hidden"
-                      accept=".pdf,.doc,.docx,.txt,.md"
+                      accept=".pdf,.doc,.docx,.txt,.md,.xlsx"
+                      multiple
                       disabled={uploadingDocument}
                       onChange={(event) => {
-                        const file = event.target.files?.[0] ?? null;
-                        void uploadDocument(file);
+                        void uploadDocuments(event.target.files);
                         event.currentTarget.value = "";
                       }}
                     />
@@ -1111,62 +1242,180 @@ export function RemoteMatterPage({ matterId }: { matterId: string }) {
                       No source documents uploaded yet.
                     </p>
                   ) : (
-                    sourceMapItems.map((document) => (
-                      <div
-                        key={document.id}
-                        className="rounded-md border border-[#e5e7eb] p-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm font-medium">{document.name}</p>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge
-                              variant="outline"
-                              className="rounded-md border-[#e5e7eb] text-[#374151]"
-                            >
-                              {document.parsedStatus}
-                            </Badge>
-                            <Badge
-                              variant="outline"
-                              className={
-                                document.searchable
-                                  ? "rounded-md border-emerald-200 bg-emerald-50 text-emerald-800"
-                                  : "rounded-md border-amber-200 bg-amber-50 text-amber-800"
-                              }
-                            >
-                              {document.searchable ? "searchable" : "not indexed"}
-                            </Badge>
-                          </div>
-                        </div>
-                        <p className="mt-2 text-sm leading-5 text-[#6b7280]">
-                          {document.summary}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#6b7280]">
-                          <span>{titleize(document.documentType)}</span>
-                          <span>
-                            {document.chunkCount === null
-                              ? "Chunk count unavailable"
-                              : `${document.chunkCount} chunks`}
-                          </span>
-                          <span>{document.evidenceCount} evidence items</span>
-                        </div>
-                        {document.sensitiveMaterialFlags.length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {document.sensitiveMaterialFlags.map((flag) => (
+                    sourceMapItems.map((document) => {
+                      const previewChunks =
+                        sourceChunksByDocument.get(document.id)?.slice(0, 2) ??
+                        [];
+                      return (
+                        <div
+                          key={document.id}
+                          className="rounded-md border border-[#e5e7eb] p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">
+                              {document.name}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
                               <Badge
-                                key={flag}
                                 variant="outline"
-                                className="rounded-md border-red-200 bg-red-50 text-red-700"
+                                className="rounded-md border-[#e5e7eb] text-[#374151]"
                               >
-                                <ShieldAlert className="h-3 w-3" />
-                                {titleize(flag)}
+                                {document.parsedStatus}
                               </Badge>
-                            ))}
+                              <Badge
+                                variant="outline"
+                                className={
+                                  document.searchable
+                                    ? "rounded-md border-emerald-200 bg-emerald-50 text-emerald-800"
+                                    : "rounded-md border-amber-200 bg-amber-50 text-amber-800"
+                                }
+                              >
+                                {document.searchable
+                                  ? "searchable"
+                                  : "not indexed"}
+                              </Badge>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    ))
+                          <p className="mt-2 text-sm leading-5 text-[#6b7280]">
+                            {document.summary}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#6b7280]">
+                            <span>{titleize(document.documentType)}</span>
+                            <span>
+                              {document.chunkCount === null
+                                ? "Chunk count unavailable"
+                                : `${document.chunkCount} chunks`}
+                            </span>
+                            <span>{document.evidenceCount} evidence items</span>
+                          </div>
+                          <div className="mt-3">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!document.searchable}
+                              onClick={() =>
+                                setSelectedSourceDocumentId(document.id)
+                              }
+                              className="border-[#d1d5db] text-[#374151] hover:bg-[#f9fafb]"
+                            >
+                              <FileSearch className="h-4 w-4" />
+                              Preview source
+                            </Button>
+                          </div>
+                          {previewChunks.length > 0 && (
+                            <div className="mt-3 space-y-2 rounded-md border border-[#e5e7eb] bg-[#f9fafb] p-3">
+                              <p className="text-xs font-semibold uppercase text-[#6b7280]">
+                                Source Preview
+                              </p>
+                              {previewChunks.map((chunk) => (
+                                <div
+                                  key={chunk.id}
+                                  className="border-t border-[#e5e7eb] pt-2 first:border-t-0 first:pt-0"
+                                >
+                                  <p className="text-xs text-[#9ca3af]">
+                                    {chunk.page ? `p.${chunk.page}` : "no page"}
+                                    {chunk.section ? ` · ${chunk.section}` : ""}
+                                    {typeof chunk.start_offset === "number" &&
+                                    typeof chunk.end_offset === "number"
+                                      ? ` · chars ${chunk.start_offset}-${chunk.end_offset}`
+                                      : ""}
+                                  </p>
+                                  <p className="mt-1 line-clamp-3 text-sm leading-5 text-[#374151]">
+                                    {chunk.text}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {document.sensitiveMaterialFlags.length > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {document.sensitiveMaterialFlags.map((flag) => (
+                                <Badge
+                                  key={flag}
+                                  variant="outline"
+                                  className="rounded-md border-red-200 bg-red-50 text-red-700"
+                                >
+                                  <ShieldAlert className="h-3 w-3" />
+                                  {titleize(flag)}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
+
+                {sourceIndexError && (
+                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Source index unavailable: {sourceIndexError}
+                  </p>
+                )}
+
+                {selectedSourceDocument && (
+                  <div className="mt-4 rounded-md border border-[#d1d5db] bg-[#f9fafb] p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-[#6b7280]">
+                          Source Document Preview
+                        </p>
+                        <h3 className="mt-1 text-base font-semibold text-[#111827]">
+                          {selectedSourceDocument.name}
+                        </h3>
+                        <p className="mt-1 text-xs text-[#6b7280]">
+                          {selectedSourceChunks.length} indexed chunks
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setSelectedSourceDocumentId(null)}
+                        className="border-[#d1d5db] text-[#374151] hover:bg-white"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {selectedSourceChunks.length === 0 ? (
+                      <p className="mt-3 rounded-md border border-dashed border-[#d1d5db] bg-white p-3 text-sm text-[#6b7280]">
+                        No indexed source chunks are available for this
+                        document.
+                      </p>
+                    ) : (
+                      <div className="mt-3 max-h-[420px] space-y-3 overflow-auto pr-1">
+                        {selectedSourceChunks.map((chunk, index) => (
+                          <div
+                            key={chunk.id}
+                            className="rounded-md border border-[#e5e7eb] bg-white p-3"
+                          >
+                            <div className="flex flex-wrap gap-2 text-xs text-[#6b7280]">
+                              <Badge
+                                variant="outline"
+                                className="rounded-md border-[#e5e7eb] text-[#374151]"
+                              >
+                                Chunk {index + 1}
+                              </Badge>
+                              {chunk.page && <span>p.{chunk.page}</span>}
+                              {chunk.section && <span>{chunk.section}</span>}
+                              {typeof chunk.start_offset === "number" &&
+                                typeof chunk.end_offset === "number" && (
+                                  <span>
+                                    chars {chunk.start_offset}-
+                                    {chunk.end_offset}
+                                  </span>
+                                )}
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#374151]">
+                              {chunk.text}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="mt-4 grid gap-2 md:grid-cols-[1fr_180px_150px_150px_44px]">
                   <input

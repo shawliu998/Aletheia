@@ -1,6 +1,7 @@
 import type {
   AletheiaAgentRunRecord,
   AletheiaAuditEventRecord,
+  AletheiaDocumentSearchResult,
   AletheiaEvidenceRecord,
   AletheiaHumanCheckpointRecord,
   AletheiaMatterDetail,
@@ -11,7 +12,16 @@ import type {
 import { withComputedMemoCoverage } from "@/aletheia/agentops/schemas";
 import type { GateEngineInput } from "@/aletheia/agentops/gates";
 import type {
+  DocumentChunk,
+  DocumentRecord,
+  RetrievalMethod,
+  RetrievalResult,
+  V1DocumentStatus,
+} from "@/aletheia/agentops/v1Contracts";
+import { createV1EvalCaseFixture } from "@/aletheia/agentops/v1Contracts";
+import type {
   DraftMemo,
+  DocumentStatus,
   EvidenceItem,
   GateResult,
   IssueNode,
@@ -22,6 +32,84 @@ import type {
   RiskItem,
   RiskLevel,
 } from "@/aletheia/agentops/types";
+
+const V1_DOCUMENT_TYPES = new Set<DocumentRecord["document_type"]>([
+  "contract",
+  "correspondence",
+  "policy",
+  "regulation",
+  "financial",
+  "pleading",
+  "evidence",
+  "other",
+]);
+
+function v1DocumentType(value: string): DocumentRecord["document_type"] {
+  return V1_DOCUMENT_TYPES.has(value as DocumentRecord["document_type"])
+    ? (value as DocumentRecord["document_type"])
+    : "other";
+}
+
+function v1DocumentStatus(
+  parsedStatus: AletheiaMatterDetail["documents"][number]["parsed_status"],
+): V1DocumentStatus {
+  if (parsedStatus === "parsed") return "parsed";
+  return parsedStatus;
+}
+
+function numberMetadata(
+  metadata: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  return typeof metadata[key] === "number" && Number.isFinite(metadata[key])
+    ? metadata[key]
+    : undefined;
+}
+
+function stringMetadata(
+  metadata: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  return typeof metadata[key] === "string" && metadata[key]
+    ? metadata[key]
+    : undefined;
+}
+
+function v1DocumentParser(
+  document: AletheiaMatterDetail["documents"][number],
+): DocumentRecord["parser"] {
+  if (document.parsed_status === "needs_ocr") return "ocr";
+  if (document.document_type === "pdf") return "pdf";
+  if (document.document_type === "docx" || document.document_type === "doc") {
+    return "docx";
+  }
+  if (document.document_type === "xlsx") return "xlsx";
+  if (document.document_type === "text") return "deterministic";
+  return "manual";
+}
+
+function optionalNumber(value: number | null): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalString(value: string | null): string | undefined {
+  return value || undefined;
+}
+
+function v1RetrievalMethod(
+  value: AletheiaDocumentSearchResult["method"],
+  fallback: AletheiaDocumentSearchResult["retrieval_mode"],
+): RetrievalMethod {
+  return value ?? fallback ?? "keyword";
+}
+
+function agentOpsDocumentStatus(
+  parsedStatus: AletheiaMatterDetail["documents"][number]["parsed_status"],
+): DocumentStatus {
+  if (parsedStatus === "parsed") return "indexed";
+  if (parsedStatus === "needs_ocr") return "failed";
+  return parsedStatus;
+}
 
 export function titleize(value: string) {
   return value.replaceAll("_", " ");
@@ -278,6 +366,10 @@ function buildEvalCases(detail: AletheiaMatterDetail) {
   return [...reviewCases, ...auditCases];
 }
 
+function latestSourceRunId(detail: AletheiaMatterDetail) {
+  return detail.agentRuns?.[0]?.id ?? "run-unavailable";
+}
+
 export function buildAuditPack(
   detail: AletheiaMatterDetail,
 ): Record<string, unknown> {
@@ -356,6 +448,14 @@ export function buildFeedbackDataset(
     failureTypes: evalFailureTypes,
     records,
     evalCases: buildEvalCases(detail),
+    v1EvalCaseFixture: createV1EvalCaseFixture({
+      matter_id: detail.matter.id,
+      source_run_id: latestSourceRunId(detail),
+      review_comments: agentOpsReviewComments(detail),
+      local_only_limitations: [
+        "Remote Matter review rows derive open/resolved state from accepted versus non-accepted tags until durable review-resolution status exists.",
+      ],
+    }),
   };
 }
 
@@ -497,6 +597,46 @@ function gateSensitiveMaterialRefs(
   }
   for (const evidence of detail.evidence) {
     if (metadataFlags(evidence.metadata).length > 0) {
+      addGateSourceRef(refs, evidenceRef(evidence, "provenance"));
+    }
+  }
+}
+
+function metadataString(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : null;
+}
+
+function externalSourceRefs(
+  detail: AletheiaMatterDetail,
+  refs: GatePersistenceSourceRef[],
+) {
+  for (const document of detail.documents) {
+    const sourceUri =
+      metadataString(document.metadata, "source_uri") ??
+      metadataString(document.metadata, "sourceUrl");
+    if (sourceUri?.startsWith("http")) {
+      addGateSourceRef(refs, {
+        type: "document",
+        id: document.id,
+        role: "provenance",
+        document_id: document.document_id,
+      });
+    }
+  }
+  for (const evidence of detail.evidence) {
+    const sourceUrl =
+      metadataString(evidence.metadata, "source_url") ??
+      metadataString(evidence.metadata, "sourceUrl");
+    const externalSource =
+      Boolean(
+        evidence.metadata &&
+          typeof evidence.metadata === "object" &&
+          !Array.isArray(evidence.metadata) &&
+          (evidence.metadata as Record<string, unknown>).externalSource,
+      ) || Boolean(sourceUrl?.startsWith("http"));
+    if (externalSource) {
       addGateSourceRef(refs, evidenceRef(evidence, "provenance"));
     }
   }
@@ -681,6 +821,10 @@ export function buildGatePersistenceProvenance(args: {
       gateSensitiveMaterialRefs(args.detail, refs);
     }
 
+    if (gate.gate_type === "external_source") {
+      externalSourceRefs(args.detail, refs);
+    }
+
     for (const event of gateAuditEvents(args.detail, gate)) {
       addGateSourceRef(refs, {
         type: "audit_event",
@@ -861,6 +1005,121 @@ export function sourceMapDocuments(detail: AletheiaMatterDetail) {
       sensitiveMaterialFlags: metadataFlags(document.metadata),
     } satisfies SourceMapDocument;
   });
+}
+
+export function v1DocumentRecords(detail: AletheiaMatterDetail): DocumentRecord[] {
+  return detail.documents.map((document) => {
+    const metadata = document.metadata ?? {};
+    const parseFailureReason = stringMetadata(metadata, "parseFailureReason");
+    return {
+      id: document.document_id ?? document.id,
+      matter_id: document.matter_id,
+      title: document.name,
+      filename: document.name,
+      document_type: v1DocumentType(document.document_type),
+      status: v1DocumentStatus(document.parsed_status),
+      uploaded_at: document.created_at,
+      source_uri: stringMetadata(metadata, "sourceUri") ?? document.id,
+      hash: stringMetadata(metadata, "hash"),
+      mime_type: stringMetadata(metadata, "mimeType"),
+      byte_size: numberMetadata(metadata, "sizeBytes"),
+      page_count: numberMetadata(metadata, "pageCount"),
+      sheet_count: numberMetadata(metadata, "sheetCount"),
+      section_count: numberMetadata(metadata, "sectionCount"),
+      parser: v1DocumentParser(document),
+      parse_error:
+        parseFailureReason ??
+        (document.parsed_status === "failed" || document.parsed_status === "needs_ocr"
+          ? document.summary ?? undefined
+          : undefined),
+      metadata: {
+        ...metadata,
+        p0_document_id: document.id,
+        p0_document_type: document.document_type,
+        p0_parsed_status: document.parsed_status,
+      },
+    } satisfies DocumentRecord;
+  });
+}
+
+export function v1DocumentChunkFromSearchResult(
+  result: AletheiaDocumentSearchResult,
+): DocumentChunk {
+  return {
+    id: result.chunk_id,
+    matter_id: result.matter_id,
+    document_id: result.document_id,
+    text: result.text,
+    page: optionalNumber(result.page),
+    section: optionalString(result.section),
+    start_offset: result.quote_start,
+    end_offset: result.quote_end,
+    metadata: {
+      chunk_index: result.chunk_index,
+      document_name: result.document_name,
+      retrieval_result_id: result.id ?? null,
+    },
+  };
+}
+
+export function v1RetrievalResultFromSearchResult(
+  result: AletheiaDocumentSearchResult,
+): RetrievalResult {
+  const method = v1RetrievalMethod(result.method, result.retrieval_mode);
+  const rank = result.retrieval_rank ?? 1;
+  return {
+    id:
+      result.id ??
+      `retrieval:${result.matter_id}:${result.chunk_id}:${method}:${rank}`,
+    matter_id: result.matter_id,
+    document_id: result.document_id,
+    chunk_id: result.chunk_id,
+    score: result.retrieval_score ?? result.score,
+    quote_preview:
+      result.quote_preview ??
+      result.text.replace(/\s+/g, " ").trim().slice(0, 360),
+    method,
+    ranking_basis:
+      result.ranking_basis ??
+      result.retrieval_explanation?.basis ??
+      "Local matter-scoped document retrieval.",
+    page: optionalNumber(result.page),
+    section: optionalString(result.section),
+  };
+}
+
+export function v1DocumentChunkFromEvidenceItem(
+  evidence: AletheiaEvidenceRecord,
+): DocumentChunk | null {
+  if (!evidence.source_chunk_id || !evidence.document_id || !evidence.quote) {
+    return null;
+  }
+
+  return {
+    id: evidence.source_chunk_id,
+    matter_id: evidence.matter_id,
+    document_id: evidence.document_id,
+    text: evidence.quote,
+    page: optionalNumber(evidence.page),
+    section: optionalString(evidence.section),
+    start_offset: optionalNumber(evidence.quote_start ?? null),
+    end_offset: optionalNumber(evidence.quote_end ?? null),
+    metadata: {
+      evidence_item_id: evidence.id,
+      document_name: evidence.document_name,
+      relevance: evidence.relevance,
+      support_status: evidence.support_status,
+      confidence: evidence.confidence,
+    },
+  };
+}
+
+export function v1EvidenceSourceChunks(
+  detail: AletheiaMatterDetail,
+): DocumentChunk[] {
+  return detail.evidence
+    .map((evidence) => v1DocumentChunkFromEvidenceItem(evidence))
+    .filter((chunk): chunk is DocumentChunk => Boolean(chunk));
 }
 
 export type EvidenceMatrixRow = {
@@ -1080,8 +1339,7 @@ function agentOpsMatter(detail: AletheiaMatterDetail): Matter {
     title: document.name,
     filename: document.name,
     document_type: "other",
-    status:
-      document.parsed_status === "parsed" ? "indexed" : document.parsed_status,
+    status: agentOpsDocumentStatus(document.parsed_status),
     uploaded_at: document.created_at,
     source_uri:
       typeof document.metadata.sourceUri === "string"
@@ -1289,17 +1547,46 @@ function severityForReview(review: AletheiaReviewRecord): ReviewComment["severit
   return "low";
 }
 
+function referencedArtifactsForReview(
+  review: AletheiaReviewRecord,
+): NonNullable<ReviewComment["referenced_artifacts"]> {
+  const refs: NonNullable<ReviewComment["referenced_artifacts"]> = [
+    {
+      id: review.target_id,
+      type: artifactTypeForReview(review),
+      title: `${review.target_type}:${review.target_id}`,
+    },
+  ];
+  if (
+    review.evidence_item_id &&
+    review.evidence_item_id !== review.target_id
+  ) {
+    refs.push({
+      id: review.evidence_item_id,
+      type: "evidence_item",
+      title: `evidence:${review.evidence_item_id}`,
+    });
+  }
+  return refs;
+}
+
 function agentOpsReviewComments(detail: AletheiaMatterDetail): ReviewComment[] {
   return detail.reviews.map((review) => ({
     id: review.id,
     matter_id: review.matter_id,
     artifact_id: review.target_id,
     artifact_type: artifactTypeForReview(review),
+    target_type: review.target_type,
+    target_id: review.target_id,
+    tag: review.tag,
+    work_product_id: review.work_product_id ?? undefined,
+    evidence_item_id: review.evidence_item_id ?? undefined,
     author: review.reviewer_name ?? review.reviewer_user_id ?? "Reviewer",
     comment: `${review.tag}: ${review.comment}`,
     severity: severityForReview(review),
     status: review.tag === "accepted" ? "resolved" : "open",
     created_at: review.created_at,
+    referenced_artifacts: referencedArtifactsForReview(review),
   }));
 }
 
