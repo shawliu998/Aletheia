@@ -123,6 +123,11 @@ export function RemoteMatterSidebar({
   onProposePlaybookImprovement,
   onApprovePlaybook,
 }: RemoteMatterSidebarProps) {
+  const unresolvedReviews = detail.reviews.filter(
+    (review) => review.tag !== "accepted",
+  );
+  const evidenceById = new Map(evidenceRows.map((item) => [item.id, item]));
+
   return (
     <aside className="space-y-4">
       <section className="rounded-lg border border-[#e5e7eb] bg-white p-4">
@@ -245,6 +250,97 @@ export function RemoteMatterSidebar({
         {saveMessage && (
           <p className="mt-3 text-sm text-emerald-700">{saveMessage}</p>
         )}
+      </section>
+
+      <section
+        data-testid="remote-unresolved-review-comments"
+        className="rounded-lg border border-[#e5e7eb] bg-white p-4"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">Open Review Comments</h2>
+          <Badge
+            variant="outline"
+            className={
+              unresolvedReviews.length === 0
+                ? "rounded-md border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "rounded-md border-amber-200 bg-amber-50 text-amber-800"
+            }
+          >
+            {unresolvedReviews.length}
+          </Badge>
+        </div>
+        <div className="mt-3 space-y-3">
+          {unresolvedReviews.length === 0 ? (
+            <p className="text-sm text-[#6b7280]">
+              No open review comments.
+            </p>
+          ) : (
+            unresolvedReviews.slice(0, 5).map((review) => {
+              const sourceEvidenceId =
+                review.evidence_item_id ??
+                (review.target_type === "evidence" ? review.target_id : null);
+              const sourceEvidence = sourceEvidenceId
+                ? evidenceById.get(sourceEvidenceId)
+                : undefined;
+              return (
+                <div
+                  key={review.id}
+                  data-testid={`remote-unresolved-review-${review.id}`}
+                  className="rounded-md border border-amber-200 bg-amber-50 p-3"
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      variant="outline"
+                      className="rounded-md border-amber-200 bg-white text-amber-800"
+                    >
+                      {titleize(review.tag)}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="rounded-md border-[#e5e7eb] bg-white text-[#374151]"
+                    >
+                      {titleize(review.target_type)} · {review.target_id}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-5 text-[#374151]">
+                    {review.comment}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {review.work_product_id && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-md border-[#e5e7eb] bg-white text-[#374151]"
+                      >
+                        work product {review.work_product_id.slice(0, 8)}
+                      </Badge>
+                    )}
+                    {sourceEvidenceId && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-md border-emerald-100 bg-white text-emerald-700"
+                      >
+                        evidence {sourceEvidenceId.slice(0, 8)}
+                      </Badge>
+                    )}
+                    {sourceEvidence?.sourceChunkId && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-md border-emerald-100 bg-white text-emerald-700"
+                      >
+                        chunk {sourceEvidence.sourceChunkId.slice(0, 8)}
+                      </Badge>
+                    )}
+                  </div>
+                  {sourceEvidence?.quote && (
+                    <p className="mt-2 line-clamp-2 border-l-2 border-amber-200 pl-3 text-xs leading-5 text-[#6b7280]">
+                      {sourceEvidence.quote}
+                    </p>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       </section>
 
       <section className="rounded-lg border border-[#e5e7eb] bg-white p-4">

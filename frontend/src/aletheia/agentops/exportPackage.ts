@@ -1,4 +1,12 @@
 import type {
+  DocumentChunk,
+  DocumentRecord,
+  V1DocumentStatus,
+} from "./v1Contracts";
+import { validateV1ArtifactShape } from "./v1Contracts";
+import { canExportFinal } from "./gates";
+import type { ExportIntent } from "./gates";
+import type {
   AgentOpsMatterWorkspace,
   AgentRun,
   ArtifactRef,
@@ -6,6 +14,7 @@ import type {
   DraftMemo,
   EvalCase,
   EvalFailureType,
+  EvidenceItem,
   GateResult,
   ReviewComment,
   ToolCall,
@@ -66,6 +75,74 @@ export type HumanApprovalLogEntry = {
   rationale: string;
 };
 
+export type V1SourceIndexSourceLink = {
+  evidence_item_id: string;
+  matter_id: string;
+  document_id: string;
+  source_chunk_id?: string | null;
+  claim_id?: string | null;
+  page?: number | null;
+  section?: string | null;
+  quote?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  relevance?: EvidenceItem["relevance"] | null;
+  support_status?: EvidenceItem["support_status"] | null;
+  confidence?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
+
+export type V1SourceIndexSnapshot = {
+  schema_version: string;
+  storage_driver: string;
+  matter_id: string;
+  generated_at: string;
+  documents: DocumentRecord[];
+  chunks: DocumentChunk[];
+  source_links: V1SourceIndexSourceLink[];
+  limitations: string[];
+};
+
+export type V1SourceIndexHashRef = {
+  id: string;
+  hash: string;
+};
+
+export type V1SourceIndexManifest = {
+  schema_version: "aletheia-v1-source-index-manifest-v1";
+  source_index_schema_version: string;
+  storage_driver: string;
+  matter_id: string;
+  generated_at: string;
+  local_only: boolean;
+  document_count: number;
+  chunk_count: number;
+  source_link_count: number;
+  document_hashes: V1SourceIndexHashRef[];
+  chunk_hashes: V1SourceIndexHashRef[];
+  source_link_hashes: V1SourceIndexHashRef[];
+  document_status_counts: Partial<Record<V1DocumentStatus, number>>;
+  limitations: string[];
+  validation: ExportValidationItem[];
+};
+
+export type ExportAuthorization = {
+  intent: ExportIntent;
+  status: "authorized" | "blocked" | "warning";
+  final_export_allowed: boolean;
+  gate_summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    warning: number;
+    skipped: number;
+    blocking_gate_ids: string[];
+    export_gate_status?: GateResult["status"];
+  };
+  validation: ExportValidationItem[];
+};
+
 export type AuditPack = {
   schema_version: "aletheia-audit-pack-v1";
   exported_at: string;
@@ -84,6 +161,8 @@ export type AuditPack = {
   typed_handoff_provenance: TypedHandoffProvenance[];
   audit_events: AgentOpsMatterWorkspace["audit_events"];
   eval_cases: EvalCase[];
+  source_index_manifest?: V1SourceIndexManifest;
+  export_authorization: ExportAuthorization;
   validation: ExportValidationItem[];
   export_hash: string;
 };
@@ -113,13 +192,29 @@ export type ExportPackage = {
     review_comments: number;
     gate_results: number;
     audit_events: number;
+    audit_event_agent_runs: number;
+    audit_event_tool_calls: number;
+    audit_event_review_comments: number;
+    audit_event_gate_results: number;
     agent_runs: number;
     tool_calls: number;
     handoff_provenance_items: number;
     eval_cases: number;
+    source_index_documents: number;
+    source_index_chunks: number;
+    source_index_source_links: number;
+    final_export_allowed: boolean;
   };
   export_hash: string;
 };
+
+export type ExportPackageBuildOptions = TypedHandoffProvenanceOptions & {
+  sourceIndex?: V1SourceIndexSnapshot;
+  exportIntent?: ExportIntent;
+};
+
+const LOCAL_ONLY_SOURCE_INDEX_LIMITATION =
+  "V1 source index is local-only for this private pilot; Supabase V1 document, chunk, and source-link listing remains unavailable.";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -155,6 +250,240 @@ function uniqueById<T extends { id: string }>(items: T[]) {
   });
 }
 
+function uniqueStrings(items: string[]) {
+  return [...new Set(items.filter(Boolean))];
+}
+
+function hashRefs<T extends { id: string; hash?: string }>(
+  items: T[],
+): V1SourceIndexHashRef[] {
+  return items
+    .map((item) => ({
+      id: item.id,
+      hash: item.hash ?? computeExportHash(item),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function sourceLinkId(link: V1SourceIndexSourceLink) {
+  return [
+    link.evidence_item_id,
+    link.document_id,
+    link.source_chunk_id ?? "chunk-unavailable",
+  ].join(":");
+}
+
+function sourceLinkHashRefs(
+  links: V1SourceIndexSourceLink[],
+): V1SourceIndexHashRef[] {
+  return links
+    .map((link) => ({
+      id: sourceLinkId(link),
+      hash: computeExportHash(link),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function documentStatusCounts(documents: DocumentRecord[]) {
+  return documents.reduce<Partial<Record<V1DocumentStatus, number>>>(
+    (counts, document) => {
+      counts[document.status] = (counts[document.status] ?? 0) + 1;
+      return counts;
+    },
+    {},
+  );
+}
+
+function validateSourceIndexManifestInput(
+  sourceIndex: V1SourceIndexSnapshot,
+  matterId: string,
+): ExportValidationItem[] {
+  const validation: ExportValidationItem[] = [
+    {
+      name: "source_index_matter_scope",
+      status: sourceIndex.matter_id === matterId ? "passed" : "failed",
+      detail:
+        sourceIndex.matter_id === matterId
+          ? "Source index matter ID matches the export matter."
+          : `Source index matter ID ${sourceIndex.matter_id} does not match export matter ${matterId}.`,
+    },
+    {
+      name: "source_index_documents",
+      status: sourceIndex.documents.length > 0 ? "passed" : "warning",
+      detail: `${sourceIndex.documents.length} source-index document(s) included.`,
+    },
+    {
+      name: "source_index_chunks",
+      status: sourceIndex.chunks.length > 0 ? "passed" : "warning",
+      detail: `${sourceIndex.chunks.length} source-index chunk(s) included.`,
+    },
+    {
+      name: "source_index_source_links",
+      status: sourceIndex.source_links.length > 0 ? "passed" : "warning",
+      detail: `${sourceIndex.source_links.length} evidence source link(s) included.`,
+    },
+  ];
+
+  const invalidDocuments = sourceIndex.documents.filter(
+    (document) =>
+      !validateV1ArtifactShape("document_record", document).ok ||
+      document.matter_id !== sourceIndex.matter_id,
+  );
+  const invalidChunks = sourceIndex.chunks.filter(
+    (chunk) =>
+      !validateV1ArtifactShape("document_chunk", chunk).ok ||
+      chunk.matter_id !== sourceIndex.matter_id,
+  );
+  const invalidLinks = sourceIndex.source_links.filter(
+    (link) =>
+      !link.evidence_item_id ||
+      link.matter_id !== sourceIndex.matter_id ||
+      !link.document_id,
+  );
+  const documentIds = new Set(
+    sourceIndex.documents.map((document) => document.id),
+  );
+  const chunkIds = new Set(sourceIndex.chunks.map((chunk) => chunk.id));
+  const chunksWithMissingDocuments = sourceIndex.chunks.filter(
+    (chunk) => chunk.document_id && !documentIds.has(chunk.document_id),
+  );
+  const linksWithMissingDocuments = sourceIndex.source_links.filter(
+    (link) => link.document_id && !documentIds.has(link.document_id),
+  );
+  const linksWithMissingChunks = sourceIndex.source_links.filter(
+    (link) =>
+      Boolean(link.source_chunk_id) &&
+      !chunkIds.has(link.source_chunk_id ?? ""),
+  );
+
+  validation.push({
+    name: "source_index_contract_shape",
+    status:
+      invalidDocuments.length || invalidChunks.length || invalidLinks.length
+        ? "failed"
+        : "passed",
+    detail:
+      invalidDocuments.length || invalidChunks.length || invalidLinks.length
+        ? `${invalidDocuments.length} document(s), ${invalidChunks.length} chunk(s), and ${invalidLinks.length} source link(s) failed baseline V1 source-index shape checks.`
+        : "Source-index records satisfy the baseline V1 document, chunk, and source-link shape checks.",
+  });
+  validation.push({
+    name: "source_index_chunk_document_refs",
+    status: chunksWithMissingDocuments.length ? "failed" : "passed",
+    detail: chunksWithMissingDocuments.length
+      ? `${chunksWithMissingDocuments.length} chunk(s) reference document IDs that are absent from the source-index document list.`
+      : "All source-index chunks reference included documents.",
+  });
+  validation.push({
+    name: "source_index_link_document_refs",
+    status: linksWithMissingDocuments.length ? "failed" : "passed",
+    detail: linksWithMissingDocuments.length
+      ? `${linksWithMissingDocuments.length} source link(s) reference document IDs that are absent from the source-index document list.`
+      : "All source-index source links reference included documents.",
+  });
+  validation.push({
+    name: "source_index_link_chunk_refs",
+    status: linksWithMissingChunks.length ? "failed" : "passed",
+    detail: linksWithMissingChunks.length
+      ? `${linksWithMissingChunks.length} source link(s) reference chunk IDs that are absent from the source-index chunk list.`
+      : "All chunk-backed source links reference included chunks.",
+  });
+
+  if (sourceIndex.storage_driver === "local") {
+    validation.push({
+      name: "source_index_local_only",
+      status: "warning",
+      detail: LOCAL_ONLY_SOURCE_INDEX_LIMITATION,
+    });
+  }
+
+  return validation;
+}
+
+export function buildV1SourceIndexManifest(
+  sourceIndex: V1SourceIndexSnapshot,
+  matterId = sourceIndex.matter_id,
+): V1SourceIndexManifest {
+  const localOnly = sourceIndex.storage_driver === "local";
+  const limitations = uniqueStrings([
+    ...sourceIndex.limitations,
+    ...(localOnly ? [LOCAL_ONLY_SOURCE_INDEX_LIMITATION] : []),
+  ]);
+
+  return {
+    schema_version: "aletheia-v1-source-index-manifest-v1",
+    source_index_schema_version: sourceIndex.schema_version,
+    storage_driver: sourceIndex.storage_driver,
+    matter_id: sourceIndex.matter_id,
+    generated_at: sourceIndex.generated_at,
+    local_only: localOnly,
+    document_count: sourceIndex.documents.length,
+    chunk_count: sourceIndex.chunks.length,
+    source_link_count: sourceIndex.source_links.length,
+    document_hashes: hashRefs(sourceIndex.documents),
+    chunk_hashes: hashRefs(sourceIndex.chunks),
+    source_link_hashes: sourceLinkHashRefs(sourceIndex.source_links),
+    document_status_counts: documentStatusCounts(sourceIndex.documents),
+    limitations,
+    validation: validateSourceIndexManifestInput(sourceIndex, matterId),
+  };
+}
+
+export function buildExportAuthorization(
+  gateResults: GateResult[],
+  intent: ExportIntent = "draft",
+): ExportAuthorization {
+  const failedGates = gateResults.filter((gate) => gate.status === "failed");
+  const exportGate = gateResults.find((gate) => gate.gate_type === "export");
+  const finalExportAllowed = canExportFinal(gateResults);
+  const status: ExportAuthorization["status"] =
+    intent === "final"
+      ? finalExportAllowed
+        ? "authorized"
+        : "blocked"
+      : finalExportAllowed
+        ? "authorized"
+        : "warning";
+  const validationStatus: ExportValidationItem["status"] =
+    intent === "final"
+      ? finalExportAllowed
+        ? "passed"
+        : "failed"
+      : finalExportAllowed
+        ? "passed"
+        : "warning";
+  const detail =
+    intent === "final"
+      ? finalExportAllowed
+        ? "Final export is authorized by the export gate and no failed gates."
+        : "Final export blocked: export gate must pass and all failed gates must be resolved."
+      : finalExportAllowed
+        ? "Draft export may proceed; final export gates are already satisfied."
+        : "Draft export may proceed with visible warnings; final export remains blocked until gates pass.";
+
+  return {
+    intent,
+    status,
+    final_export_allowed: finalExportAllowed,
+    gate_summary: {
+      total: gateResults.length,
+      passed: gateResults.filter((gate) => gate.status === "passed").length,
+      failed: failedGates.length,
+      warning: gateResults.filter((gate) => gate.status === "warning").length,
+      skipped: gateResults.filter((gate) => gate.status === "skipped").length,
+      blocking_gate_ids: failedGates.map((gate) => gate.id),
+      export_gate_status: exportGate?.status,
+    },
+    validation: [
+      {
+        name: "export_authorization",
+        status: validationStatus,
+        detail,
+      },
+    ],
+  };
+}
+
 function failureTypeForText(text: string): EvalFailureType {
   const normalized = text.toLowerCase();
 
@@ -162,7 +491,10 @@ function failureTypeForText(text: string): EvalFailureType {
     return "contradiction_missed";
   }
 
-  if (normalized.includes("missed issue") || normalized.includes("missing issue")) {
+  if (
+    normalized.includes("missed issue") ||
+    normalized.includes("missing issue")
+  ) {
     return "missed_issue";
   }
 
@@ -209,7 +541,10 @@ function evalCaseFromReviewComment(
   };
 }
 
-function evalCaseFromGateResult(gate: GateResult, sourceRunId: string): EvalCase {
+function evalCaseFromGateResult(
+  gate: GateResult,
+  sourceRunId: string,
+): EvalCase {
   return {
     id: `eval-from-gate-${gate.id}`,
     matter_id: gate.matter_id,
@@ -297,7 +632,9 @@ function artifactRefForWorkspaceId(
   return undefined;
 }
 
-function approvalStatusFromGate(gate: GateResult): HumanApprovalLogEntry["status"] {
+function approvalStatusFromGate(
+  gate: GateResult,
+): HumanApprovalLogEntry["status"] {
   if (gate.status === "passed") return "approved";
   if (gate.status === "failed") return "open";
   if (gate.status === "skipped") return "warning";
@@ -555,7 +892,11 @@ export function buildEvalCaseExport(
   const gateCases = workspace.gate_results
     .filter((gate) => gate.status === "failed")
     .map((gate) => evalCaseFromGateResult(gate, fallbackRunId));
-  const cases = uniqueById([...workspace.eval_cases, ...reviewCases, ...gateCases]);
+  const cases = uniqueById([
+    ...workspace.eval_cases,
+    ...reviewCases,
+    ...gateCases,
+  ]);
 
   return {
     schema_version: "aletheia-eval-case-export-v1",
@@ -572,11 +913,14 @@ export function buildEvalCaseExport(
   };
 }
 
-function validateExportPackage(workspace: AgentOpsMatterWorkspace): ExportValidationItem[] {
+function validateExportPackage(
+  workspace: AgentOpsMatterWorkspace,
+): ExportValidationItem[] {
   return [
     {
       name: "matter_profile",
-      status: workspace.matter.id && workspace.matter.title ? "passed" : "failed",
+      status:
+        workspace.matter.id && workspace.matter.title ? "passed" : "failed",
       detail: "Matter profile includes id and title.",
     },
     {
@@ -611,10 +955,20 @@ function validateExportPackage(workspace: AgentOpsMatterWorkspace): ExportValida
 export function buildAuditPack(
   workspace: AgentOpsMatterWorkspace,
   exportedAt = new Date().toISOString(),
-  options: TypedHandoffProvenanceOptions = {},
+  options: ExportPackageBuildOptions = {},
 ): AuditPack {
   const evalCaseExport = buildEvalCaseExport(workspace, exportedAt);
-  const typedHandoffProvenance = buildTypedHandoffProvenance(workspace, options);
+  const typedHandoffProvenance = buildTypedHandoffProvenance(
+    workspace,
+    options,
+  );
+  const sourceIndexManifest = options.sourceIndex
+    ? buildV1SourceIndexManifest(options.sourceIndex, workspace.matter.id)
+    : undefined;
+  const exportAuthorization = buildExportAuthorization(
+    workspace.gate_results,
+    options.exportIntent ?? "draft",
+  );
   const auditEvents = uniqueById([
     ...workspace.audit_events,
     ...buildAgentRunAuditEvents(workspace, exportedAt),
@@ -632,7 +986,8 @@ export function buildAuditPack(
     risk_register: workspace.risks,
     draft_memos: workspace.draft_memos,
     final_memos: workspace.draft_memos.filter(
-      (memo) => memo.review_status === "approved" && memo.gate_status === "passed",
+      (memo) =>
+        memo.review_status === "approved" && memo.gate_status === "passed",
     ),
     review_comments: workspace.review_comments,
     gate_results: workspace.gate_results,
@@ -642,7 +997,15 @@ export function buildAuditPack(
     typed_handoff_provenance: typedHandoffProvenance,
     audit_events: auditEvents,
     eval_cases: evalCaseExport.cases,
-    validation: validateExportPackage(workspace),
+    ...(sourceIndexManifest
+      ? { source_index_manifest: sourceIndexManifest }
+      : {}),
+    export_authorization: exportAuthorization,
+    validation: [
+      ...validateExportPackage(workspace),
+      ...(sourceIndexManifest ? sourceIndexManifest.validation : []),
+      ...exportAuthorization.validation,
+    ],
   };
 
   return {
@@ -654,10 +1017,11 @@ export function buildAuditPack(
 export function buildExportPackage(
   workspace: AgentOpsMatterWorkspace,
   exportedAt = new Date().toISOString(),
-  options: TypedHandoffProvenanceOptions = {},
+  options: ExportPackageBuildOptions = {},
 ): ExportPackage {
   const auditPack = buildAuditPack(workspace, exportedAt, options);
   const evalCaseExport = buildEvalCaseExport(workspace, exportedAt);
+  const sourceIndexManifest = auditPack.source_index_manifest;
   const packageWithoutHash = {
     schema_version: "aletheia-export-package-v1" as const,
     exported_at: exportedAt,
@@ -673,10 +1037,26 @@ export function buildExportPackage(
       review_comments: workspace.review_comments.length,
       gate_results: workspace.gate_results.length,
       audit_events: auditPack.audit_events.length,
+      audit_event_agent_runs: auditPack.audit_events.filter(
+        (event) => event.action === "agent_run_recorded",
+      ).length,
+      audit_event_tool_calls: auditPack.audit_events.filter(
+        (event) => event.action === "tool_call_recorded",
+      ).length,
+      audit_event_review_comments: auditPack.audit_events.filter(
+        (event) => event.action === "review_comment_recorded",
+      ).length,
+      audit_event_gate_results: auditPack.audit_events.filter(
+        (event) => event.action === "gate_result_recorded",
+      ).length,
       agent_runs: workspace.runs.length,
       tool_calls: buildToolCallLog(workspace).length,
       handoff_provenance_items: auditPack.typed_handoff_provenance.length,
       eval_cases: evalCaseExport.cases.length,
+      source_index_documents: sourceIndexManifest?.document_count ?? 0,
+      source_index_chunks: sourceIndexManifest?.chunk_count ?? 0,
+      source_index_source_links: sourceIndexManifest?.source_link_count ?? 0,
+      final_export_allowed: auditPack.export_authorization.final_export_allowed,
     },
   };
 
@@ -715,19 +1095,31 @@ export function validateExportPackageIntegrity(
     typed_handoff_provenance: exportPackage.audit_pack.typed_handoff_provenance,
     audit_events: exportPackage.audit_pack.audit_events,
     eval_cases: exportPackage.audit_pack.eval_cases,
+    ...(exportPackage.audit_pack.source_index_manifest
+      ? {
+          source_index_manifest: exportPackage.audit_pack.source_index_manifest,
+        }
+      : {}),
+    export_authorization: exportPackage.audit_pack.export_authorization,
     validation: exportPackage.audit_pack.validation,
   });
   const evalSourceIds = new Set([
     ...exportPackage.eval_case_export.source_review_comment_ids,
     ...exportPackage.eval_case_export.source_gate_result_ids,
   ]);
-  const evalCasesWithSourceSignals = exportPackage.eval_case_export.cases.filter(
-    (evalCase) => {
-      if (evalSourceIds.has(evalCase.id.replace(/^eval-from-(review|gate)-/, ""))) {
+  const evalCasesWithSourceSignals =
+    exportPackage.eval_case_export.cases.filter((evalCase) => {
+      if (
+        evalSourceIds.has(evalCase.id.replace(/^eval-from-(review|gate)-/, ""))
+      ) {
         return true;
       }
       const snapshot = evalCase.input_snapshot;
-      if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      if (
+        !snapshot ||
+        typeof snapshot !== "object" ||
+        Array.isArray(snapshot)
+      ) {
         return false;
       }
       const record = snapshot as Record<string, unknown>;
@@ -737,14 +1129,23 @@ export function validateExportPackageIntegrity(
         typeof record.artifact_id === "string" ||
         typeof record.memo_section_id === "string"
       );
-    },
+    });
+  const sourceIndexManifestValidation =
+    exportPackage.audit_pack.source_index_manifest?.validation ?? [];
+  const failedSourceIndexManifestItems = sourceIndexManifestValidation.filter(
+    (item) => item.status === "failed",
+  );
+  const warningSourceIndexManifestItems = sourceIndexManifestValidation.filter(
+    (item) => item.status === "warning",
   );
 
   return [
     {
       name: "package_hash",
       status:
-        recomputedPackageHash === exportPackage.export_hash ? "passed" : "failed",
+        recomputedPackageHash === exportPackage.export_hash
+          ? "passed"
+          : "failed",
       detail: "ExportPackage hash matches its canonical package payload.",
     },
     {
@@ -760,6 +1161,24 @@ export function validateExportPackageIntegrity(
       status:
         exportPackage.manifest.evidence_items ===
           exportPackage.audit_pack.evidence_matrix.length &&
+        exportPackage.manifest.audit_events ===
+          exportPackage.audit_pack.audit_events.length &&
+        exportPackage.manifest.audit_event_agent_runs ===
+          exportPackage.audit_pack.audit_events.filter(
+            (event) => event.action === "agent_run_recorded",
+          ).length &&
+        exportPackage.manifest.audit_event_tool_calls ===
+          exportPackage.audit_pack.audit_events.filter(
+            (event) => event.action === "tool_call_recorded",
+          ).length &&
+        exportPackage.manifest.audit_event_review_comments ===
+          exportPackage.audit_pack.audit_events.filter(
+            (event) => event.action === "review_comment_recorded",
+          ).length &&
+        exportPackage.manifest.audit_event_gate_results ===
+          exportPackage.audit_pack.audit_events.filter(
+            (event) => event.action === "gate_result_recorded",
+          ).length &&
         exportPackage.manifest.agent_runs ===
           exportPackage.audit_pack.agent_run_trace.length &&
         exportPackage.manifest.tool_calls ===
@@ -767,11 +1186,38 @@ export function validateExportPackageIntegrity(
         exportPackage.manifest.handoff_provenance_items ===
           exportPackage.audit_pack.typed_handoff_provenance.length &&
         exportPackage.manifest.eval_cases ===
-          exportPackage.eval_case_export.cases.length
+          exportPackage.eval_case_export.cases.length &&
+        exportPackage.manifest.source_index_documents ===
+          (exportPackage.audit_pack.source_index_manifest?.document_count ??
+            0) &&
+        exportPackage.manifest.source_index_chunks ===
+          (exportPackage.audit_pack.source_index_manifest?.chunk_count ?? 0) &&
+        exportPackage.manifest.source_index_source_links ===
+          (exportPackage.audit_pack.source_index_manifest?.source_link_count ??
+            0) &&
+        exportPackage.manifest.final_export_allowed ===
+          exportPackage.audit_pack.export_authorization.final_export_allowed
           ? "passed"
           : "failed",
       detail: "Manifest counts agree with nested audit and eval sections.",
     },
+    ...(sourceIndexManifestValidation.length
+      ? [
+          {
+            name: "source_index_manifest_validation",
+            status: failedSourceIndexManifestItems.length
+              ? ("failed" as const)
+              : warningSourceIndexManifestItems.length
+                ? ("warning" as const)
+                : ("passed" as const),
+            detail: failedSourceIndexManifestItems.length
+              ? `${failedSourceIndexManifestItems.length} source-index manifest validation item(s) failed.`
+              : warningSourceIndexManifestItems.length
+                ? `${warningSourceIndexManifestItems.length} source-index manifest validation warning(s) remain visible.`
+                : "Source-index manifest validation passed.",
+          },
+        ]
+      : []),
     {
       name: "evidence_audit_eval_loop",
       status:

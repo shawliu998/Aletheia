@@ -279,6 +279,7 @@ export type GateType =
   | "conflict"
   | "jurisdiction"
   | "privilege"
+  | "external_source"
   | "export";
 
 export type GateResult = {

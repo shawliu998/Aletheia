@@ -11,6 +11,7 @@ import type {
   ArtifactType,
   AuditEvent,
   DraftMemo,
+  DocumentStatus,
   EvalCase,
   EvidenceItem,
   GateResult,
@@ -28,6 +29,14 @@ import type {
   ToolCall,
 } from "./types";
 import { computeArtifactId, withComputedMemoCoverage } from "./schemas";
+
+function documentStatus(
+  parsedStatus: AletheiaMatterDetail["documents"][number]["parsed_status"],
+): DocumentStatus {
+  if (parsedStatus === "parsed") return "indexed";
+  if (parsedStatus === "needs_ocr") return "failed";
+  return parsedStatus;
+}
 
 function matterType(template: AletheiaMatterDetail["matter"]["template"]): MatterType {
   if (template === "compliance_impact_review") return "compliance_review";
@@ -137,7 +146,7 @@ function adaptMatter(detail: AletheiaMatterDetail): Matter {
       title: document.name,
       filename: document.name,
       document_type: "other",
-      status: document.parsed_status === "parsed" ? "indexed" : document.parsed_status,
+      status: documentStatus(document.parsed_status),
       uploaded_at: document.created_at,
       source_uri: document.id,
       hash:

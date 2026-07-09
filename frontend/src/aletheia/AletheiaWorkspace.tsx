@@ -592,6 +592,15 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                                                         risk: {id}
                                                     </Badge>
                                                 ))}
+                                                {link.unresolvedReviewIds.length > 0 && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        data-testid={`memo-unresolved-reviews-${section.id}`}
+                                                        className="rounded-md border-amber-200 bg-amber-50 text-amber-700"
+                                                    >
+                                                        open review: {link.unresolvedReviewIds.length}
+                                                    </Badge>
+                                                )}
                                             </div>
                                         );
                                     })()}
@@ -704,12 +713,54 @@ export function AletheiaWorkspace({ workspace }: { workspace: MatterWorkspace })
                             <button
                                 type="button"
                                 data-testid="request-supplemental-material"
-                                onClick={addMaterialRequest}
-                                className="mt-2 h-9 w-full rounded-md border border-[#e5e7eb] px-4 text-sm font-medium text-[#374151] transition-colors hover:bg-[#f9fafb]"
-                            >
+                            onClick={addMaterialRequest}
+                            className="mt-2 h-9 w-full rounded-md border border-[#e5e7eb] px-4 text-sm font-medium text-[#374151] transition-colors hover:bg-[#f9fafb]"
+                        >
                                 Request Material
                             </button>
                         </div>
+                        {reviewStudio.unresolvedComments.length > 0 && (
+                            <div
+                                data-testid="review-studio-unresolved-comments"
+                                className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3"
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-semibold text-amber-800">Open Review Blockers</p>
+                                    <Badge variant="outline" className="rounded-md border-amber-200 bg-white text-amber-700">
+                                        {reviewStudio.unresolvedComments.length}
+                                    </Badge>
+                                </div>
+                                <div className="mt-3 space-y-2">
+                                    {reviewStudio.unresolvedComments.slice(0, 5).map((review) => (
+                                        <div
+                                            key={review.id}
+                                            data-testid={`unresolved-review-${review.id}`}
+                                            className="rounded-md border border-amber-200 bg-white p-3"
+                                        >
+                                            <div className="flex flex-wrap gap-2">
+                                                <Badge variant="outline" className={cn("rounded-md", riskClass(review.severity))}>
+                                                    {titleize(review.tag)}
+                                                </Badge>
+                                                <Badge variant="outline" className="rounded-md border-gray-200 text-gray-600">
+                                                    {titleize(review.targetType)} · {review.targetId}
+                                                </Badge>
+                                            </div>
+                                            <p className="mt-2 text-sm leading-5 text-[#374151]">{review.comment}</p>
+                                            {review.sourceEvidenceIds.length > 0 && (
+                                                <div className="mt-2 flex flex-wrap gap-1">
+                                                    {review.sourceEvidenceIds.map((id) => (
+                                                        <Badge key={id} variant="outline" className="rounded-md border-emerald-100 bg-emerald-50 text-emerald-700">
+                                                            source: {id}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <p className="mt-2 text-xs leading-5 text-amber-800">{review.resolutionCue}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <div className="mt-4 space-y-2">
                             {reviewStudio.reviewLog.slice(0, 10).map((review) => (
                                 <div

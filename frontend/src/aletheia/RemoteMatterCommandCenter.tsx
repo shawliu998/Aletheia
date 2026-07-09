@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, BarChart3, Download, RefreshCw } from "lucide-react";
 import {
@@ -22,7 +22,9 @@ import { computeWorkspaceEvalMetrics } from "@/lib/agentops/eval";
 import {
   appendAletheiaAuditEvent,
   getAletheiaMatter,
+  listAletheiaV1SourceIndex,
   type AletheiaMatterDetail,
+  type AletheiaV1SourceIndex,
 } from "@/app/lib/aletheiaApi";
 import { GateChecklist } from "@/components/agentops/GateChecklist";
 import { MatterCommandCenter } from "@/components/agentops/MatterCommandCenter";
@@ -53,30 +55,68 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
   const [snapshotSaving, setSnapshotSaving] = useState(false);
   const [snapshotStatus, setSnapshotStatus] = useState("");
   const [exportStatus, setExportStatus] = useState("");
+  const [sourceIndex, setSourceIndex] = useState<AletheiaV1SourceIndex | null>(
+    null,
+  );
+  const [sourceIndexStatus, setSourceIndexStatus] = useState("");
+
+  const loadRemoteMatter = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      setLoading(true);
+      setError("");
+      setSourceIndex(null);
+      setSourceIndexStatus("Loading local V1 source index...");
+
+      const [detailResult, sourceIndexResult] = await Promise.allSettled([
+        getAletheiaMatter(matterId),
+        listAletheiaV1SourceIndex(matterId, {
+          includeChunks: true,
+          includeEvidenceLinks: true,
+          chunkLimit: 2000,
+        }),
+      ]);
+
+      if (isCancelled()) return;
+
+      if (detailResult.status === "fulfilled") {
+        setDetail(detailResult.value);
+      } else {
+        setDetail(null);
+        setError(
+          detailResult.reason instanceof Error
+            ? detailResult.reason.message
+            : "Matter load failed",
+        );
+      }
+
+      if (sourceIndexResult.status === "fulfilled") {
+        const nextSourceIndex = sourceIndexResult.value;
+        setSourceIndex(nextSourceIndex);
+        setSourceIndexStatus(
+          `Local-only V1 source index included (${nextSourceIndex.documents.length} documents, ${nextSourceIndex.chunks.length} chunks, ${nextSourceIndex.source_links.length} source links). Supabase V1 source listing remains unavailable.`,
+        );
+      } else {
+        setSourceIndex(null);
+        setSourceIndexStatus(
+          sourceIndexResult.reason instanceof Error
+            ? `V1 source index unavailable: ${sourceIndexResult.reason.message}. Export package omits the source-index manifest; Supabase V1 source listing remains unavailable.`
+            : "V1 source index unavailable. Export package omits the source-index manifest; Supabase V1 source listing remains unavailable.",
+        );
+      }
+
+      setLoading(false);
+    },
+    [matterId],
+  );
 
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      setLoading(true);
-      setError("");
-      try {
-        const data = await getAletheiaMatter(matterId);
-        if (!cancelled) setDetail(data);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Matter load failed");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void load();
+    void loadRemoteMatter(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [matterId]);
+  }, [loadRemoteMatter]);
 
   const workspace = useMemo(
     () => (detail ? adaptAletheiaMatterDetailToAgentOpsWorkspace(detail) : null),
@@ -137,9 +177,10 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
       workspace
         ? buildExportPackage(workspace, workspace.matter.updated_at, {
             gateProvenance,
+            sourceIndex: sourceIndex ?? undefined,
           })
         : null,
-    [gateProvenance, workspace],
+    [gateProvenance, sourceIndex, workspace],
   );
   const exportPreview = useMemo(() => {
     if (!exportPackage) return "";
@@ -150,6 +191,8 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
         matter_id: exportPackage.matter_id,
         export_hash: exportPackage.export_hash,
         manifest: exportPackage.manifest,
+        export_authorization: exportPackage.audit_pack.export_authorization,
+        source_index_manifest: exportPackage.audit_pack.source_index_manifest,
         typed_handoff_provenance:
           exportPackage.audit_pack.typed_handoff_provenance,
       },
@@ -172,7 +215,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
     anchor.remove();
     URL.revokeObjectURL(url);
     setExportStatus(
-      `Export package JSON prepared (${exportPackage.manifest.handoff_provenance_items} handoff provenance items).`,
+      `Export package JSON prepared (${exportPackage.manifest.handoff_provenance_items} handoff provenance items, ${exportPackage.manifest.source_index_chunks} source-index chunks).`,
     );
   }
 
@@ -255,16 +298,7 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
             variant="outline"
             size="sm"
             onClick={() => {
-              setDetail(null);
-              setLoading(true);
-              void getAletheiaMatter(matterId)
-                .then(setDetail)
-                .catch((err: unknown) => {
-                  setError(
-                    err instanceof Error ? err.message : "Matter reload failed",
-                  );
-                })
-                .finally(() => setLoading(false));
+              void loadRemoteMatter();
             }}
           >
             <RefreshCw className="h-4 w-4" />
@@ -463,11 +497,57 @@ export function RemoteMatterCommandCenter({ matterId }: { matterId: string }) {
                     {exportPackage.export_hash}
                   </dd>
                 </div>
+                <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
+                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                    Source documents
+                  </dt>
+                  <dd className="mt-2 text-xl font-semibold text-gray-950">
+                    {exportPackage.manifest.source_index_documents}
+                  </dd>
+                </div>
+                <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
+                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                    Source chunks
+                  </dt>
+                  <dd className="mt-2 text-xl font-semibold text-gray-950">
+                    {exportPackage.manifest.source_index_chunks}
+                  </dd>
+                </div>
+                <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
+                  <dt className="text-xs font-semibold uppercase text-gray-400">
+                    Final export
+                  </dt>
+                  <dd className="mt-2 text-sm font-semibold text-gray-950">
+                    {exportPackage.audit_pack.export_authorization
+                      .final_export_allowed
+                      ? "Allowed"
+                      : "Blocked"}
+                  </dd>
+                </div>
               </dl>
               <p className="mt-3 text-xs text-gray-500">
                 Manifest links {exportPackage.manifest.gate_results} gates,{" "}
                 {exportPackage.manifest.audit_events} audit events, and{" "}
-                {exportPackage.manifest.eval_cases} eval cases.
+                {exportPackage.manifest.eval_cases} eval cases. Source-index
+                manifest links{" "}
+                {exportPackage.manifest.source_index_source_links} evidence
+                source links.
+              </p>
+              <p
+                data-testid="agentops-export-authorization-status"
+                className="mt-2 text-xs text-gray-500"
+              >
+                Export authorization:{" "}
+                {exportPackage.audit_pack.export_authorization.status}. Draft
+                exports may proceed with warnings; final export remains
+                fail-closed until the export gate passes and failed gates are
+                resolved.
+              </p>
+              <p
+                data-testid="agentops-source-index-status"
+                className="mt-2 text-xs text-gray-500"
+              >
+                {sourceIndexStatus}
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Button

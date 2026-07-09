@@ -63,11 +63,25 @@ export type ReviewStudioMemoLink = {
   issueIds: string[];
   riskIds: string[];
   unsupported: boolean;
+  unresolvedReviewIds: string[];
 };
 
 export type ReviewStudioGate = {
   status: "blocked" | "ready";
   reasons: string[];
+};
+
+export type ReviewStudioUnresolvedComment = {
+  id: string;
+  targetType: ReviewItem["targetType"];
+  targetId: string;
+  tag: ReviewItem["tag"];
+  comment: string;
+  reviewer: string;
+  createdAt: string;
+  severity: RiskLevel;
+  sourceEvidenceIds: string[];
+  resolutionCue: string;
 };
 
 export type ReviewStudioEvalRecord = {
@@ -93,6 +107,7 @@ export type ReviewStudioModel = {
   redFlags: ReviewStudioRedFlag[];
   openQuestions: string[];
   memoLinks: ReviewStudioMemoLink[];
+  unresolvedComments: ReviewStudioUnresolvedComment[];
   reviewLog: ReviewStudioLogEntry[];
   evalRecords: ReviewStudioEvalRecord[];
   gate: ReviewStudioGate;
@@ -121,6 +136,44 @@ function reviewFailureType(review: ReviewItem) {
   if (review.tag === "conflicting_evidence") return "contradiction_missed";
   if (review.tag === "missing_fact") return "missed_issue";
   return "expert_override";
+}
+
+function reviewSeverity(tag: ReviewItem["tag"]): RiskLevel {
+  if (
+    tag === "citation_not_supporting" ||
+    tag === "conflicting_evidence" ||
+    tag === "rejected" ||
+    tag === "unsupported_claim"
+  ) {
+    return "high";
+  }
+  if (
+    tag === "missing_fact" ||
+    tag === "needs_human_judgment" ||
+    tag === "overclaim"
+  ) {
+    return "medium";
+  }
+  return "low";
+}
+
+function reviewResolutionCue(review: ReviewItem) {
+  if (review.tag === "citation_not_supporting") {
+    return "Confirm the cited source or revise the linked claim before final export.";
+  }
+  if (review.tag === "unsupported_claim" || review.tag === "overclaim") {
+    return "Tie the statement to supporting evidence or narrow the memo language.";
+  }
+  if (review.tag === "conflicting_evidence") {
+    return "Reconcile the conflicting evidence and keep the conflict visible.";
+  }
+  if (review.tag === "missing_fact") {
+    return "Request the missing fact or preserve it as an open question.";
+  }
+  if (review.tag === "rejected") {
+    return "Remove or replace the rejected artifact before relying on it.";
+  }
+  return "Resolve or accept the reviewer comment before final export.";
 }
 
 function memoIssueIds(section: DraftMemoSection, workspace: MatterWorkspace) {
@@ -152,11 +205,46 @@ function memoIssueIds(section: DraftMemoSection, workspace: MatterWorkspace) {
     .map((issue) => issue.id);
 }
 
+function sourceEvidenceIdsForReview(
+  review: ReviewItem,
+  workspace: MatterWorkspace,
+) {
+  if (review.targetType === "evidence") return [review.targetId];
+
+  if (review.targetType === "claim") {
+    return (
+      workspace.issues.find((issue) => issue.id === review.targetId)
+        ?.evidenceIds ?? []
+    );
+  }
+
+  return (
+    workspace.memo.sections.find((section) => section.id === review.targetId)
+      ?.evidenceIds ?? []
+  );
+}
+
 export function deriveReviewStudioModel(
   workspace: MatterWorkspace,
   state: ReviewStudioState,
 ): ReviewStudioModel {
   const evidenceById = new Map(workspace.evidence.map((item) => [item.id, item]));
+  const unresolvedComments: ReviewStudioUnresolvedComment[] = workspace.reviews
+    .filter((review) => review.tag !== "accepted")
+    .map((review) => ({
+      id: review.id,
+      targetType: review.targetType,
+      targetId: review.targetId,
+      tag: review.tag,
+      comment: review.comment,
+      reviewer: review.reviewer,
+      createdAt: review.createdAt,
+      severity: reviewSeverity(review.tag),
+      sourceEvidenceIds: Array.from(
+        new Set(sourceEvidenceIdsForReview(review, workspace)),
+      ),
+      resolutionCue: reviewResolutionCue(review),
+    }));
   const issues: ReviewStudioIssue[] = workspace.issues.map((issue) => {
     const decisionValues = issue.evidenceIds.map(
       (id) => state.evidenceDecisions[id] ?? "pending",
@@ -255,6 +343,13 @@ export function deriveReviewStudioModel(
       issueIds,
       riskIds: issueIds.map((id) => `risk-${id}`),
       unsupported: (section.evidenceIds ?? []).length === 0,
+      unresolvedReviewIds: unresolvedComments
+        .filter(
+          (comment) =>
+            comment.targetType === "memo_section" &&
+            comment.targetId === section.id,
+        )
+        .map((comment) => comment.id),
     };
   });
 
@@ -308,6 +403,12 @@ export function deriveReviewStudioModel(
   const blockedIssues = issues.filter((issue) => issue.reviewState === "blocked");
   const gateReasons = [
     ...blockedIssues.map((issue) => `Review blocker on issue: ${issue.title}`),
+    ...unresolvedComments
+      .filter((comment) => comment.severity !== "low")
+      .map(
+        (comment) =>
+          `Unresolved review on ${comment.targetType} ${comment.targetId}: ${comment.resolutionCue}`,
+      ),
     ...memoLinks
       .filter(
         (link) =>
@@ -356,6 +457,7 @@ export function deriveReviewStudioModel(
     redFlags,
     openQuestions,
     memoLinks,
+    unresolvedComments,
     reviewLog,
     evalRecords,
     gate: {
