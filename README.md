@@ -125,6 +125,17 @@ This checks local privacy defaults, least-privilege tool boundaries,
 professional positioning copy, validation entrypoints, and reports the current
 worktree size without failing solely because changes are uncommitted.
 
+Run the local deployment doctor before giving an operator a private pilot build:
+
+```bash
+cd backend
+npm run check:aletheia:doctor
+```
+
+This verifies the runtime environment for local/private use: Node 22+,
+`node:sqlite`, local storage/auth defaults, writable `.data/aletheia`
+directories, retrieval settings, and semantic-index boundaries.
+
 The same validation posture is enforced on `main` and pull requests through
 `.github/workflows/aletheia-local-ci.yml`. The CI workflow installs backend and
 frontend dependencies, builds both apps, runs the local regression and retrieval

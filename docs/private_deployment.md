@@ -50,7 +50,8 @@ Operational notes:
 - Treat `exports/` as client-sensitive output.
 - Do not enable external web/model tools unless the deployment owner explicitly
   configures them.
-- Use `npm run test:aletheia:local` before demos or packaging.
+- Use `npm run check:aletheia:doctor` and `npm run test:aletheia:local`
+  before demos or packaging.
 - Use `npm run package:aletheia:local` after backend/frontend builds to create
   a local private package manifest, env template, and startup scripts.
 - Use `npm run test:aletheia:package` after backend/frontend builds when a
@@ -106,6 +107,7 @@ Before upgrading:
 - stop backend, frontend, and MCP processes;
 - back up `.data/aletheia`;
 - run `npm run build`;
+- run `npm run check:aletheia:doctor`;
 - run `npm run test:aletheia:local`;
 - run `npm run test:aletheia:package` after frontend build output exists;
 - start the backend and inspect `/health`;

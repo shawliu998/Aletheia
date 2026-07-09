@@ -57,6 +57,18 @@ ALET_HEIA_DATA_DIR=.data/aletheia
 
 ## Run
 
+Before starting a private local pilot, run the runtime doctor:
+
+```bash
+cd backend
+npm run check:aletheia:doctor
+```
+
+The doctor checks Node, `node:sqlite`, local storage/auth settings, writable
+data directories, retrieval defaults, and semantic-index boundaries. It reports
+cloud/external model keys as warnings so an operator can confirm whether any
+fallbacks were intentionally enabled.
+
 One-command local launcher:
 
 ```bash

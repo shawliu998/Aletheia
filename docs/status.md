@@ -13,15 +13,21 @@ It is not production-ready for the default Supabase path yet.
 
 A Codex heartbeat automation named
 `aletheia-continuous-professional-local-agent-loop` is active for this
-thread on an hourly cadence. Each wakeup should run the operator health check
-first, inspect the current worktree and docs, then choose the smallest useful
-implementation or documentation improvement before running the relevant
+thread on a five-minute cadence. Each wakeup should run the operator health
+check first, inspect the current worktree and docs, then choose the smallest
+useful implementation or documentation improvement before running the relevant
 validation commands.
 
 The fast operator health entrypoint is:
 
 ```bash
 cd backend && npm run check:aletheia:operator
+```
+
+The local deployment doctor entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:doctor
 ```
 
 Main branch pushes and pull requests are also covered by
@@ -68,6 +74,7 @@ Run before demos or packaging:
 
 ```bash
 cd backend && npm run build
+cd backend && npm run check:aletheia:doctor
 cd backend && npm run check:aletheia:operator
 cd backend && npm run test:aletheia:local
 cd backend && npm run test:aletheia:retrieval-eval
@@ -81,6 +88,7 @@ cd frontend && npm run build
 Current known result:
 
 - backend TypeScript build passes.
+- local deployment doctor passes for local/private runtime readiness.
 - fast operator health check passes, with a warning when the worktree contains
   uncommitted local changes that still need review/splitting.
 - GitHub Actions local CI is configured for `main` and pull requests.

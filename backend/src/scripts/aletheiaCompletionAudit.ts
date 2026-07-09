@@ -281,6 +281,7 @@ function main() {
       ],
       checks: [
         packageScript(root, "backend/package.json", "build"),
+        packageScript(root, "backend/package.json", "check:aletheia:doctor"),
         packageScript(root, "backend/package.json", "test:aletheia:local"),
         packageScript(
           root,
@@ -294,6 +295,7 @@ function main() {
         packageScript(root, "frontend/package.json", "test:aletheia:ui"),
         contains(root, ".github/workflows/aletheia-local-ci.yml", [
           "Aletheia Local CI",
+          "npm run check:aletheia:doctor",
           "npm run test:aletheia:local",
           "npm run test:aletheia:retrieval-eval",
           "npm run test:aletheia:package",
@@ -301,6 +303,7 @@ function main() {
           "npm run test:aletheia:ui",
         ]),
         contains(root, "docs/status.md", [
+          "npm run check:aletheia:doctor",
           "npm run test:aletheia:local",
           "npm run check:aletheia:operator",
           "npm run test:aletheia:retrieval-eval",
