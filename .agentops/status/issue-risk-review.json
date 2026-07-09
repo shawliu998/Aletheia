@@ -1,15 +1,21 @@
 {
   "agent": "issue-risk-review",
-  "updatedAt": "2026-07-09T15:46:05+08:00",
+  "updatedAt": "2026-07-09T19:59:27+08:00",
   "status": "done",
   "scope": [
     "frontend/src/aletheia/exports.ts",
     "frontend/src/aletheia/reviewStudio.ts",
     "frontend/src/aletheia/AletheiaWorkspace.tsx",
+    "frontend/src/app/lib/aletheiaApi.ts",
+    "backend/src/lib/aletheia/repository.ts",
+    "backend/src/lib/aletheia/localRepository.ts",
+    "backend/src/lib/aletheia/supabaseRepository.ts",
+    "backend/src/routes/aletheia.ts",
+    "backend/src/scripts/aletheiaReviewResolutionAudit.ts",
     "frontend/tests/reviewStudio.test.ts",
     "frontend/tests/review-studio-demo.spec.ts"
   ],
-  "summary": "Done-lane calibration confirmed the local P0 demo path for Evidence -> Issue/Risk -> Draft Memo -> Human Review -> Gate/Audit/Eval handoff remains intact. The workspace exposes deterministic issue/risk/obligation/red-flag/open-question registers, draft memo traceability, review actions, export gate state, review log, audit trail payloads, and eval-ready records.",
+  "summary": "Added a local-only durable review resolution path on top of the completed Review Studio demo flow. Review comments can now be resolved through the local repository/API with accepted, rejected, needs_material, or resolved status, write audit events, and persist review-derived eval cases for missing citation and wrong-risk paths.",
   "contractsChanged": [
     "ReviewStudioState local view model",
     "ReviewStudioModel deterministic handoff",
@@ -17,7 +23,10 @@
     "Review log to eval-ready record derivation",
     "Demo audit pack reviewStudioLog/reviewStudioAuditTrail/evalRecords payload",
     "Demo feedback dataset reviewStudioRecords payload",
-    "Review Studio Playwright demo path"
+    "Review Studio Playwright demo path",
+    "Local review resolution repository/API contract",
+    "Local aletheia_eval_cases persistence from review resolution",
+    "AletheiaReviewRecord resolution status API client fields"
   ],
   "testsRun": [
     "cd frontend && ../backend/node_modules/.bin/tsx --test tests/reviewStudio.test.ts",
@@ -25,13 +34,18 @@
     "cd frontend && npm run lint",
     "cd frontend && npx tsc --noEmit",
     "cd frontend && npx playwright test tests/review-studio-demo.spec.ts --config=playwright.config.ts --project=desktop-chromium",
+    "cd backend && npm run build",
+    "cd backend && npx tsx src/scripts/aletheiaReviewResolutionAudit.ts",
+    "cd frontend && npx tsc --noEmit",
     "node .agentops/scripts/check-agentops.mjs"
   ],
   "risks": [
-    "This slice is a local/demo Review Studio view model; persisted backend review/audit/gate rows remain owned by backend/gate/audit follow-up work.",
-    "The Playwright proof covers desktop Chromium; mobile layout is expected to render responsively but was not rerun for this new spec in this cycle."
+    "The new durable path is local-only SQLite/API state; Supabase remains explicitly unsupported for review resolution and review-derived eval persistence.",
+    "Review Studio UI still needs a follow-up wiring step to call the new resolution API directly from reviewer controls.",
+    "The Playwright proof covers desktop Chromium; mobile layout is expected to render responsively but was not rerun for this new backend/API slice."
   ],
   "needs": [
-    "Backend/gate/audit owners can now map reviewStudioLog, reviewStudioAuditTrail, evalRecords, and reviewStudioRecords into persisted rows when schema ownership is available."
+    "Frontend Review Studio can now consume resolveAletheiaReview and listAletheiaReviewDerivedEvalCases when UI ownership is available.",
+    "Backend/gate/audit owners should keep this local-only path separate from final export approval and Supabase schema parity until those contracts are explicitly accepted."
   ]
 }

@@ -79,6 +79,17 @@ function booleanQuery(value: unknown, fallback: boolean) {
   return fallback;
 }
 
+function reviewResolutionStatus(value: unknown) {
+  const status = text(value, 40);
+  return ["accepted", "rejected", "needs_material", "resolved"].includes(status)
+    ? status
+    : "";
+}
+
+function optionalBooleanPayload(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function stringQueryList(value: unknown, maxLength: number) {
   const values = Array.isArray(value)
     ? value
@@ -567,6 +578,67 @@ aletheiaRouter.post(
       if (!data)
         return void res.status(404).json({ detail: "Matter not found" });
       res.status(201).json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// POST /aletheia/matters/:matterId/reviews/:reviewId/resolution
+aletheiaRouter.post(
+  "/matters/:matterId/reviews/:reviewId/resolution",
+  requireAuth,
+  async (req, res) => {
+    const status = reviewResolutionStatus(req.body?.status);
+    if (!status) {
+      return void res.status(400).json({ detail: "status is invalid" });
+    }
+
+    try {
+      const data = await createAletheiaRepository().resolveReview(
+        userContext(res),
+        req.params.matterId,
+        req.params.reviewId,
+        {
+          status: status as
+            | "accepted"
+            | "rejected"
+            | "needs_material"
+            | "resolved",
+          comment: nullableText(req.body?.comment, 4000),
+          createEvalCase: optionalBooleanPayload(req.body?.createEvalCase),
+        },
+      );
+      if (!data) {
+        return void res
+          .status(404)
+          .json({ detail: "Matter or review comment not found" });
+      }
+      res.json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// GET /aletheia/matters/:matterId/eval-cases
+aletheiaRouter.get(
+  "/matters/:matterId/eval-cases",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().listReviewDerivedEvalCases(
+        userContext(res),
+        req.params.matterId,
+      );
+      if (!data)
+        return void res.status(404).json({ detail: "Matter not found" });
+      res.json({
+        schema_version: "aletheia-review-derived-eval-local-v0",
+        matter_id: req.params.matterId,
+        eval_cases: data,
+        local_only: true,
+      });
     } catch (error) {
       handleRouteError(res, error);
     }

@@ -324,6 +324,13 @@ export interface AletheiaEvidenceRecord {
   created_at: string;
 }
 
+export type AletheiaReviewResolutionStatus =
+  | "open"
+  | "accepted"
+  | "rejected"
+  | "needs_material"
+  | "resolved";
+
 export interface AletheiaReviewRecord {
   id: string;
   matter_id: string;
@@ -336,7 +343,31 @@ export interface AletheiaReviewRecord {
   comment: string;
   reviewer_user_id: string | null;
   reviewer_name: string | null;
+  resolution_status?: AletheiaReviewResolutionStatus;
+  resolution_comment?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
   created_at: string;
+}
+
+export interface AletheiaReviewDerivedEvalCaseRecord {
+  id: string;
+  matter_id: string;
+  user_id: string;
+  source_review_item_id: string;
+  source_audit_event_id: string | null;
+  failure_type:
+    | "unsupported_claim"
+    | "missing_citation"
+    | "wrong_risk_level"
+    | "expert_override";
+  status: "open" | "triaged" | "closed";
+  input_snapshot: Record<string, unknown>;
+  expected_behavior: string;
+  expert_feedback: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AletheiaAuditEventRecord {
@@ -510,6 +541,7 @@ export interface AletheiaMatterDetail {
   workProducts: AletheiaWorkProductRecord[];
   evidence: AletheiaEvidenceRecord[];
   reviews: AletheiaReviewRecord[];
+  evalCases?: AletheiaReviewDerivedEvalCaseRecord[];
   auditEvents: AletheiaAuditEventRecord[];
   agentRuns?: AletheiaAgentRunRecord[];
   matterMemory?: AletheiaMatterMemoryRecord[];
@@ -843,6 +875,40 @@ export async function addAletheiaReview(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function resolveAletheiaReview(
+  matterId: string,
+  reviewId: string,
+  payload: {
+    status: Exclude<AletheiaReviewResolutionStatus, "open">;
+    comment?: string | null;
+    createEvalCase?: boolean;
+  },
+): Promise<{
+  review: AletheiaReviewRecord;
+  auditEvent: AletheiaAuditEventRecord | null;
+  evalCase: AletheiaReviewDerivedEvalCaseRecord | null;
+}> {
+  return apiRequest(
+    `/aletheia/matters/${matterId}/reviews/${reviewId}/resolution`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function listAletheiaReviewDerivedEvalCases(
+  matterId: string,
+): Promise<{
+  schema_version: "aletheia-review-derived-eval-local-v0";
+  matter_id: string;
+  eval_cases: AletheiaReviewDerivedEvalCaseRecord[];
+  local_only: true;
+}> {
+  return apiRequest(`/aletheia/matters/${matterId}/eval-cases`);
 }
 
 export async function appendAletheiaAuditEvent(

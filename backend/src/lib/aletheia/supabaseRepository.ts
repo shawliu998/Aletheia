@@ -34,6 +34,7 @@ import type {
   ListV1SourceIndexInput,
   PersistGateSnapshotInput,
   ResumeAgentRunInput,
+  ResolveReviewInput,
   RequestApprovalInput,
   SearchMatterDocumentsInput,
   UploadMatterDocumentInput,
@@ -608,6 +609,26 @@ export class SupabaseAletheiaRepository implements AletheiaRepository {
       },
     });
     return data;
+  }
+
+  async resolveReview(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _reviewId: string,
+    _input: ResolveReviewInput,
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Durable review resolution is currently available only in local Aletheia storage mode.",
+    );
+  }
+
+  async listReviewDerivedEvalCases(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+  ): Promise<unknown[] | null> {
+    throw new CapabilityNotAvailableError(
+      "Review-derived eval case persistence is currently available only in local Aletheia storage mode.",
+    );
   }
 
   async appendAuditEvent(

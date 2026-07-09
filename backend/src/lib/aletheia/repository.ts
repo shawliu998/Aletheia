@@ -39,6 +39,18 @@ export type AddReviewInput = {
   reviewerName: string | null;
 };
 
+export type ReviewResolutionStatus =
+  | "accepted"
+  | "rejected"
+  | "needs_material"
+  | "resolved";
+
+export type ResolveReviewInput = {
+  status: ReviewResolutionStatus;
+  comment?: string | null;
+  createEvalCase?: boolean;
+};
+
 export type AppendAuditEventInput = {
   actor: "system" | "agent" | "human";
   action: string;
@@ -165,6 +177,16 @@ export interface AletheiaRepository {
     matterId: string,
     input: AddReviewInput,
   ): Promise<unknown | null>;
+  resolveReview(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    reviewId: string,
+    input: ResolveReviewInput,
+  ): Promise<unknown | null>;
+  listReviewDerivedEvalCases(
+    ctx: AletheiaUserContext,
+    matterId: string,
+  ): Promise<unknown[] | null>;
   appendAuditEvent(
     ctx: AletheiaUserContext,
     matterId: string,

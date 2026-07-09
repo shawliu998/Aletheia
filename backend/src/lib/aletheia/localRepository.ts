@@ -48,6 +48,8 @@ import type {
   ListV1SourceIndexInput,
   PersistGateSnapshotInput,
   ResumeAgentRunInput,
+  ResolveReviewInput,
+  ReviewResolutionStatus,
   RequestApprovalInput,
   SearchMatterDocumentsInput,
   UploadMatterDocumentInput,
@@ -429,6 +431,20 @@ function openDb() {
     "metrics",
     "text not null default '{}'",
   );
+  ensureColumn(
+    singletonDb,
+    "aletheia_review_items",
+    "resolution_status",
+    "text not null default 'open'",
+  );
+  ensureColumn(
+    singletonDb,
+    "aletheia_review_items",
+    "resolution_comment",
+    "text",
+  );
+  ensureColumn(singletonDb, "aletheia_review_items", "resolved_by", "text");
+  ensureColumn(singletonDb, "aletheia_review_items", "resolved_at", "text");
   return singletonDb;
 }
 
@@ -542,8 +558,31 @@ create table if not exists aletheia_review_items (
   comment text not null,
   reviewer_user_id text,
   reviewer_name text,
+  resolution_status text not null default 'open',
+  resolution_comment text,
+  resolved_by text,
+  resolved_at text,
   created_at text not null
 );
+
+create table if not exists aletheia_eval_cases (
+  id text primary key,
+  matter_id text not null references aletheia_matters(id) on delete cascade,
+  user_id text not null,
+  source_review_item_id text not null references aletheia_review_items(id) on delete cascade,
+  source_audit_event_id text,
+  failure_type text not null,
+  status text not null default 'open',
+  input_snapshot text not null default '{}',
+  expected_behavior text not null,
+  expert_feedback text not null,
+  metadata text not null default '{}',
+  created_at text not null,
+  updated_at text not null
+);
+
+create unique index if not exists idx_local_eval_cases_source_review
+  on aletheia_eval_cases(source_review_item_id);
 
 create table if not exists aletheia_audit_events (
   id text primary key,
@@ -765,6 +804,11 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         matterId,
         "created_at desc",
       ).map((row) => this.review(row)),
+      evalCases: this.all(
+        "aletheia_eval_cases",
+        matterId,
+        "created_at desc",
+      ).map((row) => this.evalCase(row)),
       auditEvents: this.all(
         "aletheia_audit_events",
         matterId,
@@ -1493,9 +1537,10 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         `
         insert into aletheia_review_items (
           id, matter_id, work_product_id, evidence_item_id, target_type,
-          target_id, tag, comment, reviewer_user_id, reviewer_name, created_at
+          target_id, tag, comment, reviewer_user_id, reviewer_name,
+          resolution_status, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -1509,6 +1554,7 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         input.comment,
         ctx.userId,
         input.reviewerName,
+        "open",
         timestamp,
       );
     await this.writeAuditEvent(ctx.userId, matterId, {
@@ -1527,6 +1573,104 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       this.db
         .prepare("select * from aletheia_review_items where id = ?")
         .get(id),
+      );
+  }
+
+  async resolveReview(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    reviewId: string,
+    input: ResolveReviewInput,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const existing = this.db
+      .prepare(
+        `
+        select * from aletheia_review_items
+        where id = ?
+          and matter_id = ?
+      `,
+      )
+      .get(reviewId, matterId);
+    if (!existing) return null;
+
+    const previousStatus = String(
+      (existing as { resolution_status?: unknown }).resolution_status ?? "open",
+    );
+    const timestamp = now();
+    this.db
+      .prepare(
+        `
+        update aletheia_review_items
+        set resolution_status = ?,
+            resolution_comment = ?,
+            resolved_by = ?,
+            resolved_at = ?
+        where id = ?
+          and matter_id = ?
+      `,
+      )
+      .run(
+        input.status,
+        input.comment ?? null,
+        ctx.userId,
+        timestamp,
+        reviewId,
+        matterId,
+      );
+
+    const updatedReview = this.review(
+      this.db
+        .prepare("select * from aletheia_review_items where id = ?")
+        .get(reviewId),
+    );
+    const auditEvent = (await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "human",
+      action: "review_resolution_recorded",
+      workflowVersion: "aletheia-review-resolution-v0",
+      model: null,
+      details: {
+        reviewId,
+        previousStatus,
+        status: input.status,
+        comment: input.comment ?? null,
+        targetType: updatedReview.target_type,
+        targetId: updatedReview.target_id,
+        tag: updatedReview.tag,
+        workProductId: updatedReview.work_product_id,
+        evidenceItemId: updatedReview.evidence_item_id,
+      },
+    })) as { id?: string } | null;
+
+    const shouldCreateEval =
+      input.createEvalCase ?? input.status !== "accepted";
+    const evalCase =
+      shouldCreateEval && input.status !== "accepted"
+        ? this.upsertReviewDerivedEvalCase({
+            ctx,
+            matterId,
+            review: updatedReview,
+            auditEventId: auditEvent?.id ?? null,
+          })
+        : null;
+
+    this.touchMatter(ctx.userId, matterId);
+    return {
+      review: updatedReview,
+      auditEvent,
+      evalCase,
+    };
+  }
+
+  async listReviewDerivedEvalCases(
+    ctx: AletheiaUserContext,
+    matterId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    return this.all("aletheia_eval_cases", matterId, "created_at asc").map(
+      (row) => this.evalCase(row),
     );
   }
 
@@ -2697,6 +2841,158 @@ export class LocalAletheiaRepository implements AletheiaRepository {
     });
   }
 
+  private reviewEvalFailureType(args: {
+    tag: string;
+    comment: string;
+    resolutionStatus: ReviewResolutionStatus | "open";
+  }) {
+    const normalized = `${args.tag} ${args.comment} ${args.resolutionStatus}`
+      .toLowerCase()
+      .replace(/[_-]+/g, " ");
+    if (
+      normalized.includes("citation") ||
+      normalized.includes("source") ||
+      normalized.includes("cite")
+    ) {
+      return "missing_citation";
+    }
+    if (
+      normalized.includes("risk") ||
+      normalized.includes("severity") ||
+      normalized.includes("level")
+    ) {
+      return "wrong_risk_level";
+    }
+    if (
+      normalized.includes("unsupported") ||
+      normalized.includes("overclaim") ||
+      normalized.includes("support")
+    ) {
+      return "unsupported_claim";
+    }
+    return "expert_override";
+  }
+
+  private expectedReviewEvalBehavior(failureType: string) {
+    if (failureType === "missing_citation") {
+      return "Future drafts must attach source-linked evidence before making this claim.";
+    }
+    if (failureType === "wrong_risk_level") {
+      return "Future risk registers must preserve the expert risk override and cite the supporting review decision.";
+    }
+    if (failureType === "unsupported_claim") {
+      return "Future drafts must remove, qualify, or support this claim before gate approval.";
+    }
+    return "Future runs must satisfy this expert review before gate approval or final export.";
+  }
+
+  private upsertReviewDerivedEvalCase(args: {
+    ctx: AletheiaUserContext;
+    matterId: string;
+    review: ReturnType<LocalAletheiaRepository["review"]>;
+    auditEventId: string | null;
+  }) {
+    const timestamp = now();
+    const failureType = this.reviewEvalFailureType({
+      tag: args.review.tag,
+      comment: args.review.comment,
+      resolutionStatus: args.review.resolution_status,
+    });
+    const existing = this.db
+      .prepare(
+        `
+        select * from aletheia_eval_cases
+        where matter_id = ?
+          and source_review_item_id = ?
+      `,
+      )
+      .get(args.matterId, args.review.id);
+    const inputSnapshot = {
+      review_comment_id: args.review.id,
+      source_audit_event_id: args.auditEventId,
+      artifact_id: args.review.work_product_id ?? args.review.target_id,
+      artifact_type: args.review.target_type,
+      target_type: args.review.target_type,
+      target_id: args.review.target_id,
+      evidence_item_id: args.review.evidence_item_id,
+      tag: args.review.tag,
+      resolution_status: args.review.resolution_status,
+      resolution_comment: args.review.resolution_comment,
+    };
+    const metadata = {
+      schema_version: "aletheia-review-derived-eval-local-v0",
+      local_only: true,
+      source: "review_resolution",
+      reviewer_user_id: args.review.reviewer_user_id,
+      reviewer_name: args.review.reviewer_name,
+      resolved_by: args.review.resolved_by,
+      resolved_at: args.review.resolved_at,
+    };
+    if (existing) {
+      this.db
+        .prepare(
+          `
+          update aletheia_eval_cases
+          set source_audit_event_id = ?,
+              failure_type = ?,
+              status = 'open',
+              input_snapshot = ?,
+              expected_behavior = ?,
+              expert_feedback = ?,
+              metadata = ?,
+              updated_at = ?
+          where id = ?
+        `,
+        )
+        .run(
+          args.auditEventId,
+          failureType,
+          json(inputSnapshot),
+          this.expectedReviewEvalBehavior(failureType),
+          args.review.resolution_comment || args.review.comment,
+          json(metadata),
+          timestamp,
+          (existing as { id: string }).id,
+        );
+      return this.evalCase(
+        this.db
+          .prepare("select * from aletheia_eval_cases where id = ?")
+          .get((existing as { id: string }).id),
+      );
+    }
+
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `
+        insert into aletheia_eval_cases (
+          id, matter_id, user_id, source_review_item_id,
+          source_audit_event_id, failure_type, status, input_snapshot,
+          expected_behavior, expert_feedback, metadata, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        id,
+        args.matterId,
+        args.ctx.userId,
+        args.review.id,
+        args.auditEventId,
+        failureType,
+        "open",
+        json(inputSnapshot),
+        this.expectedReviewEvalBehavior(failureType),
+        args.review.resolution_comment || args.review.comment,
+        json(metadata),
+        timestamp,
+        timestamp,
+      );
+    return this.evalCase(
+      this.db.prepare("select * from aletheia_eval_cases where id = ?").get(id),
+    );
+  }
+
   private createAgentRunTraceScaffold(args: {
     runId: string;
     matterId: string;
@@ -3176,6 +3472,19 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       evidence_item_id: row.evidence_item_id ?? null,
       reviewer_user_id: row.reviewer_user_id ?? null,
       reviewer_name: row.reviewer_name ?? null,
+      resolution_status: row.resolution_status ?? "open",
+      resolution_comment: row.resolution_comment ?? null,
+      resolved_by: row.resolved_by ?? null,
+      resolved_at: row.resolved_at ?? null,
+    };
+  }
+
+  private evalCase(row: any) {
+    return {
+      ...row,
+      source_audit_event_id: row.source_audit_event_id ?? null,
+      input_snapshot: parseObject(row.input_snapshot),
+      metadata: parseObject(row.metadata),
     };
   }
 
