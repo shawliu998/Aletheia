@@ -24,6 +24,8 @@ import type {
   AletheiaRepository,
   AletheiaUserContext,
   AppendAuditEventInput,
+  CreateDurableEvalExportInput,
+  CreateLocalExportPackageInput,
   CreateAgentRunInput,
   CreateEvidenceItemInput,
   CreateMatterInput,
@@ -962,6 +964,26 @@ export class SupabaseAletheiaRepository implements AletheiaRepository {
   ): Promise<unknown | null> {
     throw new CapabilityNotAvailableError(
       "V1 document/chunk/source listing is currently available only in local Aletheia storage mode; Supabase V1 document retrieval is not implemented yet.",
+    );
+  }
+
+  async createLocalExportPackage(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _input: CreateLocalExportPackageInput = {},
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Local backend export packages are available only in local Aletheia storage mode; Supabase export package persistence is not implemented yet.",
+    );
+  }
+
+  async createDurableEvalExport(
+    _ctx: AletheiaUserContext,
+    _matterId: string,
+    _input: CreateDurableEvalExportInput = {},
+  ): Promise<unknown | null> {
+    throw new CapabilityNotAvailableError(
+      "Durable eval export is available only in local Aletheia storage mode; Supabase eval export persistence is not implemented yet.",
     );
   }
 

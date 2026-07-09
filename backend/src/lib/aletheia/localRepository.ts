@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38,6 +38,8 @@ import type {
   AletheiaRepository,
   AletheiaUserContext,
   AppendAuditEventInput,
+  CreateDurableEvalExportInput,
+  CreateLocalExportPackageInput,
   CreateAgentRunInput,
   CreateEvidenceItemInput,
   CreateMatterInput,
@@ -92,6 +94,23 @@ function json(value: unknown) {
   return JSON.stringify(value ?? {});
 }
 
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+    .join(",")}}`;
+}
+
+function exportHash(value: unknown) {
+  return `sha256:${createHash("sha256").update(stableJson(value)).digest("hex")}`;
+}
+
 function parseObject(value: unknown): JsonObject {
   if (typeof value !== "string" || !value) return {};
   try {
@@ -142,7 +161,7 @@ function safeFilePart(value: string) {
 function localExportPath(args: {
   root: string;
   matterId: string;
-  workProductId: string;
+  exportId: string;
   kind: string;
   title: string;
 }) {
@@ -152,7 +171,7 @@ function localExportPath(args: {
   const title = safeFilePart(args.title) || args.kind;
   return path.join(
     matterDir,
-    `${timestamp}-${args.kind}-${title}-${args.workProductId}.json`,
+    `${timestamp}-${args.kind}-${title}-${args.exportId}.json`,
   );
 }
 
@@ -584,6 +603,25 @@ create table if not exists aletheia_eval_cases (
 create unique index if not exists idx_local_eval_cases_source_review
   on aletheia_eval_cases(source_review_item_id);
 
+create table if not exists aletheia_exports (
+  id text primary key,
+  matter_id text not null references aletheia_matters(id) on delete cascade,
+  user_id text not null,
+  export_type text not null,
+  schema_version text not null,
+  export_hash text not null,
+  export_path text not null,
+  approval_checkpoint_id text,
+  gate_authorization_status text not null,
+  source_index_manifest text not null default '{}',
+  audit_event_id text,
+  metadata text not null default '{}',
+  created_at text not null
+);
+
+create index if not exists idx_local_exports_matter_created
+  on aletheia_exports(matter_id, created_at desc);
+
 create table if not exists aletheia_audit_events (
   id text primary key,
   matter_id text not null references aletheia_matters(id) on delete cascade,
@@ -899,6 +937,240 @@ export class LocalAletheiaRepository implements AletheiaRepository {
     };
   }
 
+  async createLocalExportPackage(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    input: CreateLocalExportPackageInput = {},
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const approved = this.loadApprovedApprovalCheckpoint(
+      ctx,
+      matterId,
+      input.approvalCheckpointId ?? null,
+      "audit_pack_export",
+    );
+    if (!approved) {
+      throw new ApprovalRequiredError(
+        "Local audit/export package requires an approved audit_pack_export checkpoint.",
+      );
+    }
+
+    const exportedAt = now();
+    const detail = await this.getMatterDetail(ctx, matterId);
+    const sourceIndex = await this.listV1SourceIndex(ctx, matterId, {
+      includeChunks: input.includeChunks ?? true,
+      includeEvidenceLinks: true,
+      chunkLimit: input.chunkLimit ?? 1000,
+    });
+    if (!detail || !sourceIndex) return null;
+
+    const sourceIndexManifest = this.sourceIndexManifest(sourceIndex);
+    const packageWithoutHash = {
+      schema_version: "aletheia-local-export-package-v1",
+      local_only: true,
+      storage_driver: "local",
+      exported_at: exportedAt,
+      matter_id: matterId,
+      gate_authorization: {
+        status: "approved",
+        action: "audit_pack_export",
+        approval_checkpoint_id: approved.id,
+        decided_by: approved.decided_by,
+        decided_at: approved.decided_at,
+      },
+      source_index_manifest: sourceIndexManifest,
+      audit_pack: {
+        schema_version: "aletheia-local-audit-pack-v1",
+        matter: (detail as any).matter,
+        documents: (detail as any).documents ?? [],
+        work_products: (detail as any).workProducts ?? [],
+        evidence: (detail as any).evidence ?? [],
+        reviews: (detail as any).reviews ?? [],
+        audit_events: (detail as any).auditEvents ?? [],
+        agent_runs: (detail as any).agentRuns ?? [],
+        eval_cases: (detail as any).evalCases ?? [],
+      },
+      limitations: [
+        "Local V1 export package is durable on the local filesystem and SQLite metadata store.",
+        "Supabase and production export parity are outside this local-only route.",
+      ],
+    };
+    const hash = exportHash(packageWithoutHash);
+    const exportId = randomUUID();
+    const exportPath = localExportPath({
+      root: dataDir(),
+      matterId,
+      exportId,
+      kind: "audit_export_package",
+      title: matter.title,
+    });
+    const payload = {
+      ...packageWithoutHash,
+      export_id: exportId,
+      export_hash: hash,
+    };
+    writeFileSync(exportPath, JSON.stringify(payload, null, 2), "utf8");
+
+    this.insertExportRecord({
+      id: exportId,
+      matterId,
+      userId: ctx.userId,
+      exportType: "audit_export_package",
+      schemaVersion: payload.schema_version,
+      exportHash: hash,
+      exportPath,
+      approvalCheckpointId: approved.id,
+      gateAuthorizationStatus: "approved",
+      sourceIndexManifest,
+      metadata: {
+        local_only: true,
+        document_count: sourceIndexManifest.counts.documents,
+        evidence_link_count: sourceIndexManifest.counts.source_links,
+      },
+      createdAt: exportedAt,
+    });
+
+    const auditEvent = (await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "system",
+      action: "local_export_package_created",
+      workflowVersion: payload.schema_version,
+      model: null,
+      details: {
+        exportId,
+        exportType: "audit_export_package",
+        exportPath,
+        exportHash: hash,
+        approvalCheckpointId: approved.id,
+        gateAuthorizationStatus: "approved",
+        sourceIndexManifest,
+      },
+    })) as { id?: string } | null;
+    this.attachExportAuditEvent(exportId, auditEvent?.id ?? null);
+    this.touchMatter(ctx.userId, matterId);
+
+    return {
+      ...payload,
+      export_path: exportPath,
+      audit_event_id: auditEvent?.id ?? null,
+      metadata_persisted: true,
+    };
+  }
+
+  async createDurableEvalExport(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    input: CreateDurableEvalExportInput = {},
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const approved = this.loadApprovedApprovalCheckpoint(
+      ctx,
+      matterId,
+      input.approvalCheckpointId ?? null,
+      "feedback_dataset_export",
+    );
+    if (!approved) {
+      throw new ApprovalRequiredError(
+        "Durable eval export requires an approved feedback_dataset_export checkpoint.",
+      );
+    }
+
+    const exportedAt = now();
+    const cases = (await this.listReviewDerivedEvalCases(ctx, matterId)) ?? [];
+    const evalCases = input.includeClosed
+      ? cases
+      : cases.filter((item: any) => item.status !== "closed");
+    const sourceIndex = await this.listV1SourceIndex(ctx, matterId, {
+      includeChunks: false,
+      includeEvidenceLinks: true,
+      chunkLimit: 0,
+    });
+    if (!sourceIndex) return null;
+    const sourceIndexManifest = this.sourceIndexManifest(sourceIndex);
+    const payloadWithoutHash = {
+      schema_version: "aletheia-durable-eval-export-local-v1",
+      local_only: true,
+      storage_driver: "local",
+      exported_at: exportedAt,
+      matter_id: matterId,
+      gate_authorization: {
+        status: "approved",
+        action: "feedback_dataset_export",
+        approval_checkpoint_id: approved.id,
+        decided_by: approved.decided_by,
+        decided_at: approved.decided_at,
+      },
+      source_index_manifest: sourceIndexManifest,
+      source: "local_review_derived_eval_cases",
+      eval_cases: evalCases,
+      limitations: [
+        "Eval export contains local review-derived eval cases only.",
+        "It is durable local input for regression and skills-loop review, not autonomous professional advice.",
+      ],
+    };
+    const hash = exportHash(payloadWithoutHash);
+    const exportId = randomUUID();
+    const exportPath = localExportPath({
+      root: dataDir(),
+      matterId,
+      exportId,
+      kind: "durable_eval_export",
+      title: matter.title,
+    });
+    const payload = {
+      ...payloadWithoutHash,
+      export_id: exportId,
+      export_hash: hash,
+    };
+    writeFileSync(exportPath, JSON.stringify(payload, null, 2), "utf8");
+
+    this.insertExportRecord({
+      id: exportId,
+      matterId,
+      userId: ctx.userId,
+      exportType: "durable_eval_export",
+      schemaVersion: payload.schema_version,
+      exportHash: hash,
+      exportPath,
+      approvalCheckpointId: approved.id,
+      gateAuthorizationStatus: "approved",
+      sourceIndexManifest,
+      metadata: {
+        local_only: true,
+        eval_case_count: evalCases.length,
+        include_closed: input.includeClosed ?? false,
+      },
+      createdAt: exportedAt,
+    });
+
+    const auditEvent = (await this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "system",
+      action: "durable_eval_export_created",
+      workflowVersion: payload.schema_version,
+      model: null,
+      details: {
+        exportId,
+        exportType: "durable_eval_export",
+        exportPath,
+        exportHash: hash,
+        approvalCheckpointId: approved.id,
+        gateAuthorizationStatus: "approved",
+        evalCaseCount: evalCases.length,
+        sourceIndexManifest,
+      },
+    })) as { id?: string } | null;
+    this.attachExportAuditEvent(exportId, auditEvent?.id ?? null);
+    this.touchMatter(ctx.userId, matterId);
+
+    return {
+      ...payload,
+      export_path: exportPath,
+      audit_event_id: auditEvent?.id ?? null,
+      metadata_persisted: true,
+    };
+  }
+
   async createWorkProduct(
     ctx: AletheiaUserContext,
     matterId: string,
@@ -978,7 +1250,7 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       ? localExportPath({
           root: dataDir(),
           matterId,
-          workProductId: id,
+          exportId: id,
           kind: input.kind,
           title: input.title,
         })
@@ -3259,6 +3531,97 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         "update aletheia_matters set updated_at = ? where id = ? and user_id = ?",
       )
       .run(now(), matterId, userId);
+  }
+
+  private sourceIndexManifest(sourceIndex: unknown) {
+    const index = sourceIndex as {
+      schema_version?: string;
+      storage_driver?: string;
+      generated_at?: string;
+      documents?: Array<{ id?: string; name?: string; content_hash?: string }>;
+      chunks?: unknown[];
+      source_links?: Array<{
+        evidence_id?: string;
+        document_id?: string;
+        source_chunk_id?: string;
+      }>;
+    };
+    const documents = Array.isArray(index.documents) ? index.documents : [];
+    const chunks = Array.isArray(index.chunks) ? index.chunks : [];
+    const sourceLinks = Array.isArray(index.source_links)
+      ? index.source_links
+      : [];
+
+    return {
+      schema_version: "aletheia-source-index-manifest-local-v1",
+      source_index_schema_version: index.schema_version ?? null,
+      storage_driver: index.storage_driver ?? "local",
+      generated_at: index.generated_at ?? now(),
+      counts: {
+        documents: documents.length,
+        chunks: chunks.length,
+        source_links: sourceLinks.length,
+      },
+      document_refs: documents.map((document) => ({
+        id: document.id ?? null,
+        name: document.name ?? null,
+        content_hash: document.content_hash ?? null,
+      })),
+      source_link_refs: sourceLinks.map((link) => ({
+        evidence_id: link.evidence_id ?? null,
+        document_id: link.document_id ?? null,
+        source_chunk_id: link.source_chunk_id ?? null,
+      })),
+      source_index_hash: exportHash(sourceIndex),
+    };
+  }
+
+  private insertExportRecord(args: {
+    id: string;
+    matterId: string;
+    userId: string;
+    exportType: string;
+    schemaVersion: string;
+    exportHash: string;
+    exportPath: string;
+    approvalCheckpointId: string | null;
+    gateAuthorizationStatus: string;
+    sourceIndexManifest: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }) {
+    this.db
+      .prepare(
+        `
+        insert into aletheia_exports (
+          id, matter_id, user_id, export_type, schema_version, export_hash,
+          export_path, approval_checkpoint_id, gate_authorization_status,
+          source_index_manifest, audit_event_id, metadata, created_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        args.id,
+        args.matterId,
+        args.userId,
+        args.exportType,
+        args.schemaVersion,
+        args.exportHash,
+        args.exportPath,
+        args.approvalCheckpointId,
+        args.gateAuthorizationStatus,
+        json(args.sourceIndexManifest),
+        null,
+        json(args.metadata),
+        args.createdAt,
+      );
+  }
+
+  private attachExportAuditEvent(exportId: string, auditEventId: string | null) {
+    this.db
+      .prepare("update aletheia_exports set audit_event_id = ? where id = ?")
+      .run(auditEventId, exportId);
   }
 
   private all(table: string, matterId: string, order = "created_at asc") {

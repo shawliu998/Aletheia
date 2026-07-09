@@ -1,6 +1,6 @@
 {
   "agent": "audit-eval-export",
-  "updatedAt": "2026-07-09T19:59:27+08:00",
+  "updatedAt": "2026-07-09T20:22:00+08:00",
   "status": "done",
   "scope": [
     "frontend/src/aletheia/agentops/exportPackage.ts",
@@ -16,7 +16,7 @@
     "frontend/tests/agentops/exportPackage.test.ts",
     "frontend/tests/agentops/adapters.test.ts"
   ],
-  "summary": "Audit/Eval export remains complete for the local-first MVP boundary, and now has a durable local input path from review resolution. Local review comments can produce persisted review-derived eval cases with source review and audit-event provenance before later export packaging consumes them.",
+  "summary": "Audit/Eval export is complete for local-only V1. Local review comments produce persisted review-derived eval cases, audit package and durable eval exports are exposed through approval-gated local API routes, and each export writes a local JSON file, SQLite export metadata, source-index manifest, export hash, and audit event.",
   "contractsChanged": [
     "AgentOps AuditPack export schema aletheia-audit-pack-v1",
     "AgentOps EvalCaseExport schema aletheia-eval-case-export-v1",
@@ -33,7 +33,12 @@
     "Remote matter audit_pack content now includes matterProfile, documentList, evidenceMatrix, issueMap, riskRegister, draftMemo, finalMemo, reviewComments, gateResults, agentRunTrace, toolCallLog, humanApprovalLog, auditEvents, evalCases, workProducts, and exportHash",
     "Remote feedback_export content now includes canonical eval failure types and derived evalCases",
     "Local review-derived eval case persistence schema aletheia-review-derived-eval-local-v0",
-    "Review resolution to eval case path for missing_citation and wrong_risk_level"
+    "Review resolution to eval case path for missing_citation and wrong_risk_level",
+    "Local export metadata schema aletheia_exports",
+    "POST /aletheia/matters/:matterId/v1/export-package",
+    "POST /aletheia/matters/:matterId/eval-cases/export",
+    "Local audit export package schema aletheia-local-export-package-v1",
+    "Durable eval export schema aletheia-durable-eval-export-local-v1"
   ],
   "testsRun": [
     "cd frontend && npx tsc --noEmit --pretty false",
@@ -41,20 +46,19 @@
     "cd frontend && rm -rf /tmp/aletheia-adapter-tests && npx tsc -p tests/agentops/tsconfig.adapter.json && node --test /tmp/aletheia-adapter-tests/tests/agentops/exportPackage.test.js (11 tests passed)",
     "cd backend && npm run build",
     "cd backend && npx tsx src/scripts/aletheiaReviewResolutionAudit.ts",
+    "cd backend && npm run check:aletheia:local-export-routes",
     "cd frontend && npx tsc --noEmit",
     "node .agentops/scripts/check-agentops.mjs"
   ],
   "risks": [
     "ExportPackage is a local/view-layer schema and must remain behind persisted approval gates for high-risk audit and feedback exports.",
-    "Remote export content is still generated from existing matter detail records; this update adds only a local backend persistence contract for review-derived eval inputs.",
-    "The worktree contains many parallel uncommitted changes from other agents, including backend/domain, review studio, scheduler, and UI files.",
+    "Remote export content is still generated from existing matter detail records; local backend routes now persist audit/eval export packages for local-only V1.",
     "ToolCall audit events are export-scoped records anchored to their AgentRun because the shared ArtifactType vocabulary does not yet include a first-class tool_call artifact.",
     "ReviewComment and GateResult audit events are export-scoped derived records; they do not replace first-class persisted backend audit rows.",
-    "Backend export schema parity and first-class persisted export audit rows remain future route/repository owner work, not part of this local-first MVP export helper lane.",
-    "Supabase review-derived eval persistence is explicitly unsupported in this slice."
+    "Supabase review-derived eval and export persistence are explicitly unsupported in local-only V1."
   ],
   "needs": [
-    "Future export packaging can read local evalCases from matter detail or /eval-cases once UI/API ownership chooses the visible flow.",
-    "Future backend export schema parity can be considered after route/repository owners confirm persistence boundaries."
+    "Production/SaaS export parity remains outside the local-only V1 scope.",
+    "Installer and enterprise deployment packaging remain outside this lane."
   ]
 }

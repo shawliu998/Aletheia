@@ -1108,6 +1108,61 @@ aletheiaRouter.get(
   },
 );
 
+// POST /aletheia/matters/:matterId/v1/export-package
+aletheiaRouter.post(
+  "/matters/:matterId/v1/export-package",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().createLocalExportPackage(
+        userContext(res),
+        req.params.matterId,
+        {
+          approvalCheckpointId: nullableText(
+            req.body?.approvalCheckpointId,
+            120,
+          ),
+          includeChunks: optionalBooleanPayload(req.body?.includeChunks),
+          chunkLimit: positiveNumber(req.body?.chunkLimit),
+        },
+      );
+      if (!data) {
+        return void res.status(404).json({ detail: "Matter not found" });
+      }
+      res.status(201).json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
+// POST /aletheia/matters/:matterId/eval-cases/export
+aletheiaRouter.post(
+  "/matters/:matterId/eval-cases/export",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const data = await createAletheiaRepository().createDurableEvalExport(
+        userContext(res),
+        req.params.matterId,
+        {
+          approvalCheckpointId: nullableText(
+            req.body?.approvalCheckpointId,
+            120,
+          ),
+          includeClosed: optionalBooleanPayload(req.body?.includeClosed),
+        },
+      );
+      if (!data) {
+        return void res.status(404).json({ detail: "Matter not found" });
+      }
+      res.status(201).json(data);
+    } catch (error) {
+      handleRouteError(res, error);
+    }
+  },
+);
+
 // POST /aletheia/matters/:matterId/documents
 aletheiaRouter.post(
   "/matters/:matterId/documents",

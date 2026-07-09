@@ -157,6 +157,17 @@ export type ListV1SourceIndexInput = {
   documentIds?: string[];
 };
 
+export type CreateLocalExportPackageInput = {
+  approvalCheckpointId?: string | null;
+  includeChunks?: boolean;
+  chunkLimit?: number;
+};
+
+export type CreateDurableEvalExportInput = {
+  approvalCheckpointId?: string | null;
+  includeClosed?: boolean;
+};
+
 export interface AletheiaRepository {
   listMatters(ctx: AletheiaUserContext): Promise<unknown[]>;
   createMatter(
@@ -275,6 +286,16 @@ export interface AletheiaRepository {
     ctx: AletheiaUserContext,
     matterId: string,
     input?: ListV1SourceIndexInput,
+  ): Promise<unknown | null>;
+  createLocalExportPackage(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    input?: CreateLocalExportPackageInput,
+  ): Promise<unknown | null>;
+  createDurableEvalExport(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    input?: CreateDurableEvalExportInput,
   ): Promise<unknown | null>;
 }
 
