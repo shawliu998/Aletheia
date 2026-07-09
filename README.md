@@ -200,6 +200,28 @@ local fallback mode.
 
 ## How To Run
 
+### Docker local install
+
+For a reviewer or private-pilot user, the fastest local install path is Docker:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:3000/aletheia
+```
+
+This starts the frontend, backend, and a persistent local Docker volume for
+Aletheia data. Supabase is not required for the V1 local-only workflow. See
+`docs/install_local.md` for details, private-token mode, health checks, and
+data reset commands.
+
+### Manual development
+
 ```bash
 cd frontend
 npm install

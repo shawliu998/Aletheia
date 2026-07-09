@@ -57,6 +57,22 @@ ALET_HEIA_DATA_DIR=.data/aletheia
 
 ## Run
 
+Docker one-command local install:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Open:
+
+```text
+http://localhost:3000/aletheia
+```
+
+See `docs/install_local.md` for Docker volume layout, health checks, local
+private-token mode, and reset commands.
+
 Before packaging or handing off a private local pilot, run the full private
 preflight:
 

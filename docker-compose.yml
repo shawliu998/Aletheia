@@ -1,0 +1,52 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    image: aletheia-backend:local
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      DOWNLOAD_SIGNING_SECRET: ${DOWNLOAD_SIGNING_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      ALETHEIA_STORAGE_DRIVER: local
+      ALETHEIA_AUTH_MODE: ${ALETHEIA_AUTH_MODE:-single_user}
+      ALETHEIA_PRIVATE_AUTH_TOKEN: ${ALETHEIA_PRIVATE_AUTH_TOKEN:-}
+      ALETHEIA_DATA_DIR: /data/aletheia
+      ALETHEIA_LOCAL_USER_ID: ${ALETHEIA_LOCAL_USER_ID:-local-user}
+      ALETHEIA_LOCAL_USER_EMAIL: ${ALETHEIA_LOCAL_USER_EMAIL:-local@aletheia.internal}
+      ALETHEIA_RETRIEVAL_MODE: keyword
+      ALETHEIA_SEMANTIC_INDEX_ENABLED: "false"
+      ALETHEIA_SEMANTIC_INDEX_DRIVER: disabled
+      ALETHEIA_SEMANTIC_INDEX_DIR: /data/aletheia/index/semantic-local
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    volumes:
+      - aletheia-data:/data/aletheia
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}
+        NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN: ${NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN:-}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://127.0.0.1:54321}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY:-demo-anon-key}
+    image: aletheia-frontend:local
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}
+      NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN: ${NEXT_PUBLIC_ALETHEIA_PRIVATE_AUTH_TOKEN:-}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://127.0.0.1:54321}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY:-demo-anon-key}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  aletheia-data:
