@@ -66,6 +66,9 @@ Operational notes:
 - Run `npm run check:aletheia:approval-policy` before private handoff. It
   verifies high-risk exports require approved checkpoints, playbook updates
   remain human-approved, and external-source use stays controlled.
+- Run `npm run check:aletheia:matter-isolation` before changing retrieval,
+  memory, or playbook behavior. It verifies matter/user scoped access, per-matter
+  indexes, and cross-matter retrieval isolation.
 - Treat `exports/` as client-sensitive output.
 - Do not enable external web/model tools unless the deployment owner explicitly
   configures them.
@@ -135,6 +138,7 @@ Before upgrading:
 - run `npm run check:aletheia:privacy`;
 - run `npm run check:aletheia:tool-policy`;
 - run `npm run check:aletheia:approval-policy`;
+- run `npm run check:aletheia:matter-isolation`;
 - run `ALETHEIA_AUDIT_SOURCE_DIR=.data/aletheia npm run check:aletheia:audit-integrity`;
 - run `npm run test:aletheia:local`;
 - run `npm run test:aletheia:restore-drill`;

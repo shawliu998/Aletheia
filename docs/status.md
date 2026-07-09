@@ -60,6 +60,12 @@ The high-risk approval policy audit entrypoint is:
 cd backend && npm run check:aletheia:approval-policy
 ```
 
+The matter isolation audit entrypoint is:
+
+```bash
+cd backend && npm run check:aletheia:matter-isolation
+```
+
 The release evidence manifest entrypoint is:
 
 ```bash
@@ -128,6 +134,7 @@ cd backend && npm run check:aletheia:restore
 cd backend && npm run check:aletheia:privacy
 cd backend && npm run check:aletheia:tool-policy
 cd backend && npm run check:aletheia:approval-policy
+cd backend && npm run check:aletheia:matter-isolation
 cd backend && npm run check:aletheia:evidence
 cd backend && npm run check:aletheia:audit-integrity
 cd backend && npm run check:aletheia:operator
@@ -159,6 +166,10 @@ Current known result:
 - approval policy audit passes and verifies high-risk exports require approved
   human checkpoints, playbook updates stay human-approved, external-source use
   remains controlled, and regression/audit checks cover those gates.
+- matter isolation audit passes and verifies matter/user-scoped repository
+  access, SQLite FTS5 matter filters, per-matter semantic index files,
+  matter-scoped memory/playbooks, cross-matter retrieval eval coverage, and
+  documentation against cross-matter contamination.
 - release evidence manifest passes and records the current git commit,
   validation commands, screenshot hashes, deployment/attribution docs, privacy
   defaults, and approval posture.

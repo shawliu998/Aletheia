@@ -203,6 +203,17 @@ This verifies that high-risk exports require approved human checkpoints,
 playbook updates stay human-approved, external-source use remains controlled,
 and regression/audit checks still cover those gates.
 
+Run the matter isolation audit before changing retrieval or memory behavior:
+
+```bash
+cd backend
+npm run check:aletheia:matter-isolation
+```
+
+This verifies matter/user-scoped repository access, SQLite FTS5 matter filters,
+per-matter semantic index files, matter-scoped memory/playbooks, cross-matter
+retrieval eval coverage, and documentation against cross-matter contamination.
+
 Generate the release evidence manifest before handoff:
 
 ```bash
@@ -231,8 +242,8 @@ The same validation posture is enforced on `main` and pull requests through
 `.github/workflows/aletheia-local-ci.yml`. The CI workflow installs backend and
 frontend dependencies, builds both apps, runs the local regression, restore
 drill, and retrieval eval, executes privacy, tool-policy, approval-policy,
-package, evidence, integrity, and completion checks, then runs frontend lint and
-the Aletheia UI smoke suite.
+matter-isolation, package, evidence, integrity, and completion checks, then runs
+frontend lint and the Aletheia UI smoke suite.
 
 Create a screenshot-ready local UI smoke matter:
 

@@ -227,6 +227,12 @@ async function main() {
     failed: failed.length,
     failClosedPassed,
     semanticDriver: "local-json",
+    coverage: [
+      "fail-closed semantic policy",
+      "matter-scoped search",
+      "cross-matter isolation",
+      "retrieval diagnostics",
+    ],
     matters: {
       alpha: alpha.matter.id,
       beta: beta.matter.id,
