@@ -76,7 +76,9 @@ export function AletheiaReviewRegistry() {
       setReviews([]);
       setSaveMessage("");
       try {
-        const matters = await listAletheiaMatters();
+        const matters = (await listAletheiaMatters()).filter(
+          (matter) => matter.template === "civil_litigation",
+        );
         const details = await Promise.all(
           matters.map((matter) => getAletheiaMatter(matter.id)),
         );

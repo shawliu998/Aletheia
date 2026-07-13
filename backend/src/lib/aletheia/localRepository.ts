@@ -1574,6 +1574,7 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         `select id, title, client_or_project, objective, status, updated_at
            from aletheia_matters
           where user_id = ?
+            and template = 'civil_litigation'
             and (lower(title) like lower(?) escape '\\'
               or lower(coalesce(client_or_project, '')) like lower(?) escape '\\'
               or lower(objective) like lower(?) escape '\\')`,
@@ -1611,7 +1612,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 d.updated_at, m.title as matter_title
            from aletheia_matter_documents d
            join aletheia_matters m
-             on m.id = d.matter_id and m.user_id = d.user_id
+             on m.id = d.matter_id
+            and m.user_id = d.user_id
+            and m.template = 'civil_litigation'
           where d.user_id = ?
             and lower(d.name) like lower(?) escape '\\'`,
       )
@@ -1641,7 +1644,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 f.updated_at, m.title as matter_title
            from aletheia_litigation_facts f
            join aletheia_matters m
-             on m.id = f.matter_id and m.user_id = f.user_id
+             on m.id = f.matter_id
+            and m.user_id = f.user_id
+            and m.template = 'civil_litigation'
           where f.user_id = ?
             and lower(f.statement) like lower(?) escape '\\'`,
       )
@@ -1671,7 +1676,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 c.kind, c.status, c.updated_at, m.title as matter_title
            from aletheia_litigation_claims c
            join aletheia_matters m
-             on m.id = c.matter_id and m.user_id = c.user_id
+             on m.id = c.matter_id
+            and m.user_id = c.user_id
+            and m.template = 'civil_litigation'
           where c.user_id = ?
             and (lower(c.title) like lower(?) escape '\\'
               or lower(coalesce(c.legal_basis, '')) like lower(?) escape '\\'
@@ -1713,7 +1720,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 d.due_at, d.status, d.updated_at, m.title as matter_title
            from aletheia_litigation_deadlines d
            join aletheia_matters m
-             on m.id = d.matter_id and m.user_id = d.user_id
+             on m.id = d.matter_id
+            and m.user_id = d.user_id
+            and m.template = 'civil_litigation'
           where d.user_id = ?
             and (lower(d.title) like lower(?) escape '\\'
               or lower(d.rule_label) like lower(?) escape '\\'
@@ -1766,7 +1775,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
               and d.matter_id = c.matter_id
               and d.user_id = c.user_id
              join aletheia_matters m
-               on m.id = c.matter_id and m.user_id = c.user_id
+               on m.id = c.matter_id
+              and m.user_id = c.user_id
+              and m.template = 'civil_litigation'
             where aletheia_document_chunks_fts match ?
               and c.user_id = ?
             order by fts_score asc`,
@@ -1798,7 +1809,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 m.title as matter_title
            from aletheia_tasks t
            join aletheia_matters m
-             on m.id = t.matter_id and m.user_id = t.user_id
+             on m.id = t.matter_id
+            and m.user_id = t.user_id
+            and m.template = 'civil_litigation'
           where t.user_id = ?
             and lower(t.title) like lower(?) escape '\\'`,
       )
@@ -1828,7 +1841,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 m.title as matter_title
            from aletheia_work_products w
            join aletheia_matters m
-             on m.id = w.matter_id and m.user_id = w.user_id
+             on m.id = w.matter_id
+            and m.user_id = w.user_id
+            and m.template = 'civil_litigation'
           where w.user_id = ?
             and lower(w.title) like lower(?) escape '\\'`,
       )
@@ -11421,7 +11436,10 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         .prepare(
           `select t.*, m.title as matter_title
              from aletheia_tasks t
-             join aletheia_matters m on m.id = t.matter_id and m.user_id = t.user_id
+             join aletheia_matters m
+               on m.id = t.matter_id
+              and m.user_id = t.user_id
+              and m.template = 'civil_litigation'
             where t.user_id = ? and t.status = 'open'
               and t.invalidated_at is null and t.due_at <= ?
             order by t.due_at asc, t.id asc limit 25`,
@@ -11602,7 +11620,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
                 t.status, t.priority, t.note, t.created_at, t.updated_at
            from aletheia_tasks t
            join aletheia_matters m
-             on m.id = t.matter_id and m.user_id = t.user_id
+             on m.id = t.matter_id
+            and m.user_id = t.user_id
+            and m.template = 'civil_litigation'
           where t.user_id = ? and t.invalidated_at is null ${statusClause}
           order by t.due_at asc, t.created_at asc, t.id asc`,
       )

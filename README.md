@@ -1,18 +1,18 @@
 # Vera
 
-**Vera is not a legal chatbot.** It is a local-first MVP and private
-pilot candidate for a sensitive-work agent harness: a local vault plus bounded
-agent loops for expert-led professional document work.
+**Vera is not a legal chatbot.** It is a local-first civil-litigation workspace
+for lawyer-led matter work, from intake and evidence review through procedure,
+legal research, drafting, approval, and audited export.
 
-Vera turns confidential source documents and bounded agent runs into typed,
-evidence-linked, reviewed, gated, audited, and eval-ready deliverables. The
-first public/private-pilot domain pack is **Private Contract / Due Diligence
-Review**. Compliance, audit, regulatory response, and litigation chronology are
-better described as Domain Packs on the same Kernel, not as separate product
-categories.
+Vera turns confidential case files and bounded agent runs into typed,
+evidence-linked, reviewed, gated, audited, and eval-ready litigation work
+products. V1 exposes only the **Civil Litigation** domain. Earlier contract,
+compliance, diligence, and generic Agent Workspace experiments remain isolated
+from navigation, settings, demo seeding, and matter routing until they are
+reintroduced as separately validated products.
 
-In V1, the user-facing shape is an Agent Workspace for local/private-pilot
-document review, not a chat-first or mock-first product surface.
+In V1, the user-facing shape is a civil-litigation matter workbench, not a
+chat-first, template-marketplace, or mock-first product surface.
 
 Core analogy:
 
@@ -51,11 +51,11 @@ Open:
 http://localhost:3000/aletheia
 ```
 
-On the first empty local workspace, Docker seeds a local-only **Private
-Contract Review Demo** matter so reviewers can inspect the V1 loop immediately:
+When no civil-litigation matter exists, Docker seeds a local-only **Civil
+Litigation Demo** matter so reviewers can inspect the V1 loop immediately:
 
 ```text
-ingestion -> retrieval -> evidence -> memo -> review -> gates -> audit/export -> eval -> approved skill activation
+intake -> documents -> facts/evidence -> claims/defenses -> procedure/deadlines -> drafting -> review -> audit/export
 ```
 
 Set `ALETHEIA_DEMO_SEED_ENABLED=false` in `.env` before starting Docker for a
@@ -126,29 +126,22 @@ Unavailable or partial V1 scope:
 - High-risk exports are blocked until citation and human approval gates pass.
 - Expert review feedback becomes structured eval material instead of getting
   lost in comments.
-- The Kernel generalizes beyond the first contract/diligence pack into
-  compliance obligation, audit evidence, regulatory response, and litigation
-  chronology packs without weakening expert review.
+- The reusable Kernel remains available for future domains, but V1 product
+  navigation and routing are restricted to civil-litigation matters.
 
 ## Demo Flow
 
 1. Open `/aletheia`.
-2. Open the seeded **Private Contract Review Demo** matter from the Matter
+2. Open the seeded **Civil Litigation Demo** matter from the Matter
    Queue, or create a local matter with uploaded source files.
-3. Inspect the sample Private Contract / Due Diligence Review source record.
-4. Show the Matter Command Center: document registry, agent plan, run trace,
-   issue map, evidence matrix, work products, review queue, gate state, and
-   audit log.
-5. Use the Evidence Agent flow to map source chunks into evidence items.
-6. Use the Issue/Risk flow to generate the Issue Map and Red Flag Register.
-7. Use the Memo flow to draft a Red Flag Memo or contract review memo.
-8. Show the Review Agent flagging unsupported or weakly supported claims.
-9. Show the Gate Engine blocking final export until citation and human approval
-   gates pass.
-10. Approve or edit as the expert reviewer.
-11. Export the Audit Pack JSON and Feedback Eval Dataset from the workspace.
-12. Open the Compliance Obligation and Audit Evidence pack previews as adjacent
-    workflows on the same Kernel.
+3. Import pleadings, contracts, payment records, correspondence, and court
+   notices into the matter-local source index.
+4. Confirm source-bound facts and map them to claims, defenses, and elements.
+5. Review legal authorities and research conclusions with exact excerpts.
+6. Confirm procedural events and calculated deadlines before task projection.
+7. Generate pleadings, evidence catalogs, hearing plans, or hearing bundles.
+8. Complete human review and approval gates, then export the work product and
+   audit package.
 
 See `docs/product_kernel.md`,
 `docs/domain_packs/private_contract_due_diligence_review.md`,
@@ -172,18 +165,11 @@ Kernel capabilities:
 - Eval Replay;
 - Human-approved Skills.
 
-Domain Packs configure the Kernel for specific sensitive professional
-workflows:
-
-- Private Contract / Due Diligence Review: first public/private-pilot pack with
-  matter intake, chronology, issue map, evidence matrix, red flag memo,
-  diligence questions, human review, audit trail, and feedback summary.
-- Compliance Obligation Pack: source-linked obligation/control evidence,
-  Compliance Register, human review, and audit trail.
-- Audit Evidence Pack: workpaper/control evidence, source support review, gate
-  checks, and audit packet preparation.
-- Regulatory Response Pack and Litigation Chronology Pack: future pack framing
-  for the same local-first harness.
+The only active V1 domain is Civil Litigation. It configures intake, source
+documents, facts and evidence, claims and defenses, legal research, procedure
+and deadlines, drafting, hearing preparation, review, and audit export. Other
+domain implementations are retained as legacy code only and are not product
+entry points.
 
 ## Architecture
 
@@ -204,11 +190,10 @@ Local Matter Vault
   -> Feedback / Eval Export
 ```
 
-Deterministic fallback fixtures are centralized in `frontend/src/aletheia`.
-They keep the workspace usable when a local backend is not running, while the
-local-first path supports real document upload, parsing, retrieval, evidence
-mapping, review, and audited exports. The demo workspace can also export two
-local JSON artifacts:
+The installed product does not substitute fallback matters when the local
+backend is unavailable. Its matter list is API-backed and restricted to
+`civil_litigation`; older non-litigation records remain stored but isolated.
+The demo workspace can export two local JSON artifacts:
 
 - Audit Pack: matter profile, document registry, workflow artifacts, review log, audit log, and validation status.
 - Feedback Eval Dataset: expert review tags mapped back to their target claim, evidence, memo section, and supporting citations.
@@ -229,10 +214,9 @@ events, and agent runs. Local mode also
 stores uploaded documents on disk, extracts text, chunks documents, and indexes
 chunks with SQLite FTS5 keyword search.
 
-The Matter Queue now uses a hybrid data model: it renders deterministic
-fallback matters immediately, then attempts to load persisted matters from the
-Aletheia API. When the backend or auth is not configured, the UI stays usable in
-local fallback mode.
+The Matter Queue reads persisted local records from the Aletheia API. When the
+backend or auth is unavailable, it fails explicitly and does not inject demo or
+fallback records.
 
 ## How To Run
 
@@ -534,8 +518,10 @@ for clients that should start the stdio wrapper.
 
 ## Local Pilot Mode
 
-Current MVP uses deterministic fallback data for stable offline and screenshot
-behavior:
+The current pilot is API-backed and limited to `civil_litigation`. It does not
+inject fallback matters when the local service is unavailable. The following
+modules are retained only as implementation utilities or isolated compatibility
+code; they are not alternate product domains:
 
 - `frontend/src/aletheia/mockData.ts`
 - `frontend/src/aletheia/workflow.ts`

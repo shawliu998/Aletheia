@@ -43,13 +43,9 @@ export type LocalClientSettings = {
   reasoning: "Off" | "Low" | "Medium" | "High";
   fastMode: boolean;
   notifications: boolean;
-  defaultLanding: "Matters" | "Agent Console" | "Last opened matter";
+  defaultLanding: "Matters" | "Last opened matter";
   showCitationsInline: boolean;
-  defaultTemplate:
-    | "Legal Matter Review"
-    | "Compliance Impact Review"
-    | "Deal Due Diligence";
-  demoDataEnabled: boolean;
+  defaultTemplate: "Civil Litigation";
   contextBudgetTokens: number | null;
   evidenceIndex: "Keyword" | "Hybrid" | "Semantic";
   contextCompression: "Off" | "Manual" | "Auto";
@@ -97,8 +93,7 @@ const DEFAULT_SETTINGS: LocalClientSettings = {
   notifications: true,
   defaultLanding: "Matters",
   showCitationsInline: true,
-  defaultTemplate: "Legal Matter Review",
-  demoDataEnabled: false,
+  defaultTemplate: "Civil Litigation",
   contextBudgetTokens: null,
   evidenceIndex: "Keyword",
   contextCompression: "Off",
@@ -180,6 +175,9 @@ function settingsFromRow(row: SettingsRow): LocalClientSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...(raw as Partial<LocalClientSettings>),
+    // V1 is intentionally a single-domain civil-litigation product. Migrate
+    // earlier persisted template choices to the only supported product path.
+    defaultTemplate: "Civil Litigation",
     defaultModel:
       typeof raw.defaultModel === "string" ? raw.defaultModel : null,
     litigationModelId:
@@ -1350,7 +1348,6 @@ export function normalizeSettingsPatch(
     "defaultLanding",
     "showCitationsInline",
     "defaultTemplate",
-    "demoDataEnabled",
     "contextBudgetTokens",
     "evidenceIndex",
     "contextCompression",
@@ -1398,15 +1395,10 @@ export function normalizeSettingsPatch(
   next.defaultLanding =
     enumValue("defaultLanding", [
       "Matters",
-      "Agent Console",
       "Last opened matter",
     ]) ?? next.defaultLanding;
   next.defaultTemplate =
-    enumValue("defaultTemplate", [
-      "Legal Matter Review",
-      "Compliance Impact Review",
-      "Deal Due Diligence",
-    ]) ?? next.defaultTemplate;
+    enumValue("defaultTemplate", ["Civil Litigation"]) ?? next.defaultTemplate;
   next.reasoning =
     enumValue("reasoning", ["Off", "Low", "Medium", "High"]) ?? next.reasoning;
   if (Object.hasOwn(input, "fastMode")) {
@@ -1429,7 +1421,7 @@ export function normalizeSettingsPatch(
     }
     next.notifications = input.notifications;
   }
-  for (const key of ["showCitationsInline", "demoDataEnabled"] as const) {
+  for (const key of ["showCitationsInline"] as const) {
     if (!Object.hasOwn(input, key)) continue;
     if (typeof input[key] !== "boolean") {
       throw new LocalControlError(
@@ -1647,7 +1639,6 @@ export function buildRuntimeConfig(
       defaultLanding: { status: "available", consumer: "aletheia_ui" },
       showCitationsInline: { status: "available", consumer: "aletheia_ui" },
       defaultTemplate: { status: "available", consumer: "aletheia_ui" },
-      demoDataEnabled: { status: "available", consumer: "aletheia_ui" },
       contextBudgetTokens: {
         status: models.length ? "available" : "unavailable",
         consumer: "local_model_scheduler.contextWindowTokens",

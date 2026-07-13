@@ -8,16 +8,11 @@ export const ALETHEIA_SETTINGS_EVENT = "aletheia-settings-change";
 export type AletheiaTheme = "System" | "Light" | "Dark";
 export type AletheiaDensity = "Comfortable" | "Compact";
 export type AletheiaSidebarMode = "Standard" | "Narrow";
-export type AletheiaLanding =
-  "Matters" | "Agent Console" | "Last opened matter";
+export type AletheiaLanding = "Matters" | "Last opened matter";
 export type AletheiaReasoning = "Off" | "Low" | "Medium" | "High";
 export type AletheiaEvidenceIndex = "Keyword" | "Hybrid" | "Semantic";
 export type AletheiaContextCompression = "Off" | "Manual" | "Auto";
-export type AletheiaMatterTemplate =
-  | "Civil Litigation"
-  | "Legal Matter Review"
-  | "Compliance Impact Review"
-  | "Deal Due Diligence";
+export type AletheiaMatterTemplate = "Civil Litigation";
 
 /**
  * Client settings with a concrete frontend consumer. Backend-owned safety,
@@ -39,7 +34,6 @@ export interface AletheiaClientSettings {
   sidebar: AletheiaSidebarMode;
   documentFontSize: "Small" | "Medium" | "Large";
   defaultTemplate: AletheiaMatterTemplate;
-  demoDataEnabled: boolean;
   defaultLanding: AletheiaLanding;
   showCitationsInline: boolean;
 }
@@ -60,7 +54,6 @@ export const DEFAULT_ALETHEIA_SETTINGS: AletheiaClientSettings = {
   sidebar: "Standard",
   documentFontSize: "Medium",
   defaultTemplate: "Civil Litigation",
-  demoDataEnabled: false,
   defaultLanding: "Matters",
   showCitationsInline: true,
 };
@@ -154,21 +147,12 @@ export function normalizeAletheiaSettings(
     ),
     defaultTemplate: member(
       raw.defaultTemplate,
-      [
-        "Civil Litigation",
-        "Legal Matter Review",
-        "Compliance Impact Review",
-        "Deal Due Diligence",
-      ],
+      ["Civil Litigation"],
       DEFAULT_ALETHEIA_SETTINGS.defaultTemplate,
-    ),
-    demoDataEnabled: asBoolean(
-      raw.demoDataEnabled,
-      DEFAULT_ALETHEIA_SETTINGS.demoDataEnabled,
     ),
     defaultLanding: member(
       raw.defaultLanding,
-      ["Matters", "Agent Console", "Last opened matter"],
+      ["Matters", "Last opened matter"],
       DEFAULT_ALETHEIA_SETTINGS.defaultLanding,
     ),
     showCitationsInline: asBoolean(
@@ -246,15 +230,11 @@ export function exportAletheiaSettings(settings: AletheiaClientSettings) {
 }
 
 export function matterTemplateId(template: AletheiaMatterTemplate) {
-  if (template === "Civil Litigation") return "civil_litigation" as const;
-  if (template === "Compliance Impact Review")
-    return "compliance_impact_review" as const;
-  if (template === "Deal Due Diligence") return "deal_due_diligence" as const;
-  return "legal_matter_review" as const;
+  void template;
+  return "civil_litigation" as const;
 }
 
 export function landingPath(settings: AletheiaClientSettings) {
-  if (settings.defaultLanding === "Agent Console") return "/aletheia/agentops";
   if (
     settings.defaultLanding === "Last opened matter" &&
     typeof window !== "undefined"

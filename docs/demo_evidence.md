@@ -1,6 +1,6 @@
 # Demo Evidence
 
-This file records the current local Aletheia demo evidence.
+This file records the current local Vera civil-litigation demo evidence.
 
 ## Screenshots
 
@@ -55,14 +55,15 @@ defaults, and high-risk approval posture.
 
 4. Open the seeded matter URL and capture:
 
-   - Matter Queue;
-   - Local Matter Workspace;
+   - civil-litigation Matter Queue;
+   - Litigation Workspace;
    - Agent Run Trace;
-   - Mobile Workspace.
+   - Mobile Litigation Workspace.
 
 ## Verified Signals
 
-- Page title: `Aletheia 明证 - Agent Workspace`.
+- The visible matter is a `civil_litigation` matter; legacy domain records do
+  not appear in the queue, global search, work queue, or registries.
 - Matter title renders.
 - Run Trace renders with steps, tool calls, and human checkpoints.
 - Matter Memory and approved Matter Playbook render.
@@ -77,8 +78,7 @@ defaults, and high-risk approval posture.
 - Audit Workbench renders live local audit events, matter readiness, approval
   gate counts, review burden, and work products for the smoke matter with
   audit-action filtering, filtered JSON export, and a persisted audit snapshot.
-- Compliance Impact Review and Deal Due Diligence template pages present local
-  workflow previews aligned with the source-linked Compliance Register and Red
-  Flag Memo backend paths.
+- The Facts & Evidence, Claims & Defenses, Procedure, and Artifacts views share
+  one canonical civil-litigation matter route.
 - Browser console had no warning or error logs during capture.
 - Mobile viewport renders the matter workspace without framework overlay.

@@ -1,10 +1,5 @@
-import { AletheiaShell } from "@/aletheia/AletheiaShell";
-import { MatterCommandCenter } from "@/components/agentops/MatterCommandCenter";
+import { redirect } from "next/navigation";
 
 export default function AletheiaAgentOpsPage() {
-  return (
-    <AletheiaShell>
-      <MatterCommandCenter />
-    </AletheiaShell>
-  );
+  redirect("/aletheia/matters");
 }

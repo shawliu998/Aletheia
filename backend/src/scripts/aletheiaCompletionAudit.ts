@@ -129,37 +129,41 @@ function main() {
       ],
     }),
     item({
-      id: "professional-templates",
+      id: "civil-litigation-workflow",
       requirement:
-        "Legal, compliance, and diligence matters produce template-specific source-linked work products.",
+        "The active domain workflow covers civil-litigation intake, evidence, claims, procedure, deadlines, drafting, review, and audit export.",
       evidence: [
-        "backend/src/lib/aletheia/domain.ts",
-        "backend/src/scripts/aletheiaLocalRegression.ts",
-        "frontend/src/aletheia/TemplatePreviewPage.tsx",
+        "backend/src/lib/aletheia/litigationStore.ts",
+        "backend/src/scripts/aletheiaCivilCaseWorkflowAudit.ts",
+        "frontend/src/aletheia/litigation/LitigationWorkspace.tsx",
+        "frontend/src/aletheia/NewMatterButton.tsx",
       ],
       checks: [
-        contains(root, "backend/src/lib/aletheia/domain.ts", [
-          "compliance_register",
-          "red_flag_memo",
-          "professionalDraftProfileForTemplate",
+        contains(root, "backend/src/lib/aletheia/litigationStore.ts", [
+          "civil_litigation",
+          "createFact",
+          "createClaim",
+          "createProceduralEvent",
+          "createDeadline",
         ]),
-        contains(root, "backend/src/scripts/aletheiaLocalRegression.ts", [
-          "compliance_impact_review",
-          "deal_due_diligence",
-          "compliance_register",
-          "red_flag_memo",
+        contains(root, "backend/src/scripts/aletheiaCivilCaseWorkflowAudit.ts", [
+          "civil_litigation",
+          "documents/batch",
+          "createLitigationFact",
+          "createLitigationClaim",
+          "createLitigationDeadline",
+          "generateLitigationArtifact",
         ]),
-        contains(root, "frontend/src/aletheia/TemplatePreviewPage.tsx", [
-          "local workflow preview",
-          "Template Work Products",
+        contains(root, "frontend/src/aletheia/litigation/LitigationWorkspace.tsx", [
+          'label: "事实与证据"',
+          'label: "请求权与抗辩"',
+          'label: "程序与期限"',
+          'label: "文书与庭审"',
         ]),
-        contains(root, "frontend/src/app/aletheia/templates/page.tsx", [
-          "local MVP",
-          "local pilot",
-        ]),
-        doesNotContain(root, "frontend/src/app/aletheia/templates/page.tsx", [
-          ': "mock"',
-          ">mock<",
+        contains(root, "frontend/src/aletheia/NewMatterButton.tsx", [
+          'template: "civil_litigation"',
+          "representationRole",
+          "procedureStage",
         ]),
       ],
     }),
@@ -220,52 +224,39 @@ function main() {
       ],
     }),
     item({
-      id: "audit-workbench-registries",
+      id: "civil-litigation-product-boundary",
       requirement:
-        "Audit Workbench, Evidence Registry, and Review Registry expose filterable local records, JSON exports, persisted registry snapshots, and UI smoke coverage.",
+        "The primary product is restricted to civil-litigation matters while earlier domain packs remain isolated from navigation and matter routing.",
       evidence: [
-        "frontend/src/aletheia/AletheiaAuditWorkbench.tsx",
-        "frontend/src/aletheia/AletheiaEvidenceRegistry.tsx",
-        "frontend/src/aletheia/AletheiaReviewRegistry.tsx",
-        "frontend/tests/aletheia-ui-smoke.spec.ts",
+        "backend/src/lib/aletheia/demoSeed.ts",
+        "backend/src/lib/aletheia/localControlRepository.ts",
+        "frontend/src/aletheia/AletheiaMatterDashboard.tsx",
+        "frontend/src/aletheia/settingsModel.ts",
+        "frontend/src/app/aletheia/templates/page.tsx",
+        "frontend/src/app/aletheia/agentops/page.tsx",
       ],
       checks: [
-        contains(root, "frontend/src/aletheia/AletheiaAuditWorkbench.tsx", [
-          "aletheia-audit-workbench",
-          "audit-filter-query",
-          "audit-filter-action",
-          "export-filtered-audit",
-          "save-audit-snapshot",
-          "aletheia-audit-workbench-snapshot-v0",
-          "audit-matter-packets",
+        contains(root, "backend/src/lib/aletheia/demoSeed.ts", [
+          'template: "civil_litigation"',
+          "Civil Litigation Demo",
         ]),
-        contains(root, "frontend/src/aletheia/AletheiaEvidenceRegistry.tsx", [
-          "aletheia-evidence-registry",
-          "export-filtered-evidence",
-          "save-evidence-snapshot",
-          "aletheia-evidence-registry-snapshot-v0",
+        contains(root, "backend/src/lib/aletheia/localControlRepository.ts", [
+          'defaultTemplate: "Civil Litigation"',
+          'enumValue("defaultTemplate", ["Civil Litigation"])',
         ]),
-        contains(root, "frontend/src/aletheia/AletheiaReviewRegistry.tsx", [
-          "aletheia-review-registry",
-          "export-filtered-reviews",
-          "save-review-snapshot",
-          "aletheia-review-registry-snapshot-v0",
+        contains(root, "frontend/src/aletheia/AletheiaMatterDashboard.tsx", [
+          'matter.template === "civil_litigation"',
+          "isolatedLegacyCount",
         ]),
-        contains(root, "frontend/tests/aletheia-ui-smoke.spec.ts", [
-          "export-filtered-evidence",
-          "save-evidence-snapshot",
-          "export-filtered-reviews",
-          "save-review-snapshot",
-          "export-filtered-audit",
-          "save-audit-snapshot",
+        contains(root, "frontend/src/aletheia/settingsModel.ts", [
+          'AletheiaMatterTemplate = "Civil Litigation"',
+          'return "civil_litigation"',
         ]),
-        contains(root, "backend/src/lib/aletheia/localRepository.ts", [
-          "registry_snapshot",
-          "exportPath",
-          "auditActionForWorkProduct(input.kind)",
+        contains(root, "frontend/src/app/aletheia/templates/page.tsx", [
+          'redirect("/aletheia/matters")',
         ]),
-        contains(root, "docs/status.md", [
-          "npm run check:aletheia:audit-workbench",
+        contains(root, "frontend/src/app/aletheia/agentops/page.tsx", [
+          'redirect("/aletheia/matters")',
         ]),
       ],
     }),
@@ -631,8 +622,9 @@ function main() {
         ]),
         contains(root, "README.md", [
           "Local Pilot Mode",
-          "deterministic fallback",
-          "real document upload",
+          "civil_litigation",
+          "does not\ninject fallback matters",
+          "source document upload",
         ]),
         doesNotContain(root, "README.md", ["## Mock Mode"]),
         contains(root, "docs/license_attribution.md", ["AGPL"]),

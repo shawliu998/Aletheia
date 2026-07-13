@@ -1,8 +1,8 @@
 import { createAletheiaRepository } from ".";
 import type { AletheiaRepository, AletheiaUserContext } from "./repository";
 
-const DEFAULT_DEMO_SEED_ID = "aletheia-local-demo-seed-v1";
-const DEFAULT_DEMO_TITLE = "Private Contract Review Demo";
+const DEFAULT_DEMO_SEED_ID = "vera-civil-litigation-demo-v2";
+const DEFAULT_DEMO_TITLE = "Civil Litigation Demo";
 
 type SeedDecision = {
   shouldSeed: boolean;
@@ -67,7 +67,10 @@ async function seedDecision(
   if (mode === "always") {
     return { shouldSeed: true, reason: "always" };
   }
-  if (mode === "empty" && matters.length === 0) {
+  if (
+    mode === "empty" &&
+    !matters.some((matter: any) => matter?.template === "civil_litigation")
+  ) {
     return { shouldSeed: true, reason: "empty-workspace" };
   }
   return { shouldSeed: false, reason: `mode-${mode}-with-existing-data` };
@@ -106,11 +109,11 @@ export async function seedAletheiaDemoMatter(
   const matter: any = await repo.createMatter(ctx, {
     title,
     objective:
-      "Show the local V1 professional loop from ingestion and retrieval through evidence, memo, review, gates, audit export, eval export, and approved skill activation.",
-    template: "legal_matter_review",
+      "Review the civil dispute from intake and source evidence through claims, procedure, legal research, drafting, approval, and audited export.",
+    template: "civil_litigation",
     status: "in_progress",
     riskLevel: "high",
-    clientOrProject: "Aletheia local demo",
+    clientOrProject: "Vera civil litigation demo",
     sourceProjectId: null,
     sharedWith: [],
     metadata: {
@@ -122,60 +125,191 @@ export async function seedAletheiaDemoMatter(
   });
 
   const sourceText = [
-    "Aletheia local demo source record.",
-    "The agreement requires thirty days written notice before termination for convenience.",
-    "The indemnity covenant survives closing and applies to third-party claims.",
-    "Board approval is required before any transfer of a material contract.",
-    "The renewal clause is ambiguous because the notice window is not defined.",
-    "Schedule 4.2 is missing and should block final reliance until a reviewer confirms the gap.",
+    "杭州市中级人民法院开庭通知",
+    "本院定于2026年8月10日上午9时就华信制造有限公司与兰亭贸易有限公司买卖合同纠纷一案开庭审理。",
+    "被告应于2026年8月3日前完成证据材料内部复核，并按法院要求提交证据目录。",
+    "付款记录显示，争议款项约定付款日为2026年9月1日。",
+    "原告主张被告已经逾期付款；被告主张起诉时付款期限尚未届满。",
   ].join("\n");
 
   const document: any = await repo.uploadMatterDocument(ctx, matter.id, {
-    filename: "private-contract-review-demo.txt",
+    filename: "hearing-notice-and-payment-record.txt",
     mimeType: "text/plain",
     sizeBytes: Buffer.byteLength(sourceText, "utf8"),
     buffer: Buffer.from(sourceText, "utf8"),
   });
 
-  const searchResults: any[] | null = await repo.searchMatterDocuments(
-    ctx,
-    matter.id,
-    {
-      query: "termination written notice board approval missing schedule",
-      limit: 5,
-    },
+  const sourceIndex: any = await repo.listV1SourceIndex(ctx, matter.id, {
+    includeChunks: true,
+    includeEvidenceLinks: true,
+    chunkLimit: 100,
+  });
+  const chunks = (sourceIndex?.chunks ?? []) as Array<Record<string, any>>;
+  const hearingQuote = "2026年8月10日上午9时";
+  const paymentQuote = "争议款项约定付款日为2026年9月1日";
+  const hearingChunk = chunks.find((item) =>
+    String(item.text).includes(hearingQuote),
   );
-  if (!searchResults?.length) {
-    throw new Error("Demo seed document did not produce searchable chunks");
+  const paymentChunk = chunks.find((item) =>
+    String(item.text).includes(paymentQuote),
+  );
+  if (!hearingChunk || !paymentChunk) {
+    throw new Error("Civil litigation demo source anchors were not indexed");
   }
-
+  const hearingStart = String(hearingChunk.text).indexOf(hearingQuote);
+  const paymentStart = String(paymentChunk.text).indexOf(paymentQuote);
   const evidenceItems = [];
-  for (const result of searchResults.slice(0, 3)) {
+  const evidenceChunks = new Map(
+    [hearingChunk, paymentChunk].map((chunk) => [String(chunk.id), chunk]),
+  );
+  for (const chunk of evidenceChunks.values()) {
     const evidence: any = await repo.createEvidenceItem(ctx, matter.id, {
-      sourceChunkId: result.chunk_id,
+      sourceChunkId: String(chunk.id),
       relevance: "direct",
       supportStatus: "supports",
       confidence: "high",
       metadata: {
         seededBy: "aletheiaDemoSeed",
         demoSeedId: seedId,
-        query: "termination written notice board approval missing schedule",
+        domain: "civil_litigation",
       },
     });
     if (evidence) evidenceItems.push(evidence);
   }
 
-  const issueMap: any = await repo.generateIssueMap(ctx, matter.id);
-  const matrix: any = await repo.generateEvidenceMatrix(ctx, matter.id);
-  const draftMemo: any = await repo.generateDraftMemo(ctx, matter.id);
+  const hearingFact: any = await repo.createLitigationFact(ctx, matter.id, {
+    statement: "法院定于2026年8月10日上午9时开庭审理本案。",
+    occurredAt: "2026-08-10T09:00:00+08:00",
+    datePrecision: "day",
+    sourceRelation: "supports",
+    helpfulness: "neutral",
+    confidence: "high",
+    createdBy: "agent",
+    source: {
+      sourceChunkId: String(hearingChunk.id),
+      quoteStart: hearingStart,
+      quoteEnd: hearingStart + hearingQuote.length,
+    },
+  });
+  await repo.decideLitigationFact(ctx, matter.id, hearingFact.id, {
+    decision: "confirmed",
+    comment: "已与法院开庭通知逐字核对。",
+  });
+  const paymentFact: any = await repo.createLitigationFact(ctx, matter.id, {
+    statement: "争议款项的合同约定付款日为2026年9月1日。",
+    occurredAt: "2026-09-01T00:00:00+08:00",
+    datePrecision: "day",
+    sourceRelation: "supports",
+    helpfulness: "helpful",
+    confidence: "high",
+    createdBy: "agent",
+    source: {
+      sourceChunkId: String(paymentChunk.id),
+      quoteStart: paymentStart,
+      quoteEnd: paymentStart + paymentQuote.length,
+    },
+  });
+  await repo.decideLitigationFact(ctx, matter.id, paymentFact.id, {
+    decision: "confirmed",
+    comment: "已与付款记录逐字核对。",
+  });
+  const defense: any = await repo.createLitigationClaim(ctx, matter.id, {
+    kind: "defense",
+    title: "起诉时付款义务尚未届期",
+    legalBasis: "合同履行期限及债务未届期抗辩",
+    confidence: "medium",
+    uncertainty: "仍需核实起诉日期及合同是否存在加速到期条款。",
+    sourceRelation: "supports",
+    source: {
+      sourceChunkId: String(paymentChunk.id),
+      quoteStart: paymentStart,
+      quoteEnd: paymentStart + paymentQuote.length,
+    },
+    createdBy: "agent",
+  });
+  const element: any = await repo.createLitigationElement(
+    ctx,
+    matter.id,
+    defense.id,
+    {
+      title: "约定付款期限",
+      sequence: 1,
+      description: "合同约定的付款日在起诉日之后。",
+      createdBy: "agent",
+    },
+  );
+  await repo.linkLitigationElementFact(ctx, matter.id, element.id, {
+    factId: paymentFact.id,
+    relation: "supports",
+  });
+  const proceduralEvent: any = await repo.createLitigationProceduralEvent(
+    ctx,
+    matter.id,
+    {
+      eventType: "hearing_notice",
+      title: "收到法院开庭通知",
+      occurredAt: timestamp,
+      createdBy: "agent",
+      source: {
+        sourceChunkId: String(hearingChunk.id),
+        quoteStart: hearingStart,
+        quoteEnd: hearingStart + hearingQuote.length,
+      },
+    },
+  );
+  const deadline: any = await repo.createLitigationDeadline(ctx, matter.id, {
+    title: "完成证据材料内部复核",
+    dueAt: "2026-08-03T18:00:00+08:00",
+    triggeringEventId: proceduralEvent.id,
+    ruleLabel: "法院开庭通知及内部复核安排",
+    ruleVersion: "demo-2026-01",
+    calculation: "按法院通知载明日期完成内部证据复核。",
+    createdBy: "agent",
+    source: {
+      sourceChunkId: String(hearingChunk.id),
+      quoteStart: hearingStart,
+      quoteEnd: hearingStart + hearingQuote.length,
+    },
+  });
+  await repo.decideLitigationDeadline(ctx, matter.id, deadline.id, {
+    decision: "confirmed",
+    comment: "已与法院通知核对并由律师确认。",
+  });
+  const taskResult: any = await repo.createTaskFromLitigationDeadline(
+    ctx,
+    matter.id,
+    deadline.id,
+    { title: "完成证据材料内部复核", priority: "high" },
+  );
+
+  const evidenceCatalog: any = await repo.generateLitigationArtifact(
+    ctx,
+    matter.id,
+    "evidence_catalog",
+  );
+  const claimDefenseMatrix: any = await repo.generateLitigationArtifact(
+    ctx,
+    matter.id,
+    "claim_defense_matrix",
+  );
+  const proceduralClock: any = await repo.generateLitigationArtifact(
+    ctx,
+    matter.id,
+    "procedural_clock",
+  );
+  const litigationBrief: any = await repo.generateLitigationArtifact(
+    ctx,
+    matter.id,
+    "litigation_brief",
+  );
 
   const review: any = await repo.addReview(ctx, matter.id, {
     targetType: "work_product",
-    targetId: draftMemo.id,
+    targetId: litigationBrief.id,
     tag: "missing_material",
     comment:
-      "Schedule 4.2 is missing; keep final reliance blocked until the material gap is confirmed or resolved.",
-    workProductId: draftMemo.id,
+      "起诉日期及加速到期条款仍待核实，诉讼意见不得将未届期抗辩表述为确定结论。",
+    workProductId: litigationBrief.id,
     evidenceItemId: evidenceItems[0]?.id ?? null,
     reviewerName: "Local demo reviewer",
   });
@@ -189,25 +323,25 @@ export async function seedAletheiaDemoMatter(
 
   const memory = await repo.addMatterMemory(ctx, matter.id, {
     category: "missing_material",
-    title: "Missing schedule blocks final reliance",
-    body: "Schedule 4.2 must be obtained or explicitly waived before a final memo can be treated as review-ready.",
+    title: "未届期抗辩须核实起诉日期",
+    body: "在确认起诉日期和加速到期条款前，不得将付款义务未届期作为确定性结论。",
     source: "review",
     metadata: { demoSeedId: seedId, reviewId: review?.id ?? null },
   });
 
   const playbook: any = await repo.createPlaybook(ctx, matter.id, {
-    name: "Contract Review Demo Playbook",
+    name: "Civil Litigation Demo Playbook",
     description:
-      "Local-only reviewer-approved workflow for source-bound contract review demos.",
+      "Local-only reviewer-approved workflow for source-bound civil litigation demos.",
     version: "v0.1",
     content: {
       format: "markdown",
       body: [
         "1. Ingest local sources and preserve source anchors.",
-        "2. Convert retrieval hits into evidence items.",
-        "3. Draft memo sections only from source-linked evidence.",
-        "4. Convert reviewer blockers into eval cases.",
-        "5. Require explicit approval before audit or eval export.",
+        "2. Confirm source-bound facts before relying on them.",
+        "3. Map claims, defenses, elements, facts, and procedural events.",
+        "4. Confirm every deadline before creating a task.",
+        "5. Require explicit approval before litigation exports.",
       ].join("\n"),
       controls: {
         localOnly: true,
@@ -220,8 +354,8 @@ export async function seedAletheiaDemoMatter(
   await repo.approvePlaybook(ctx, matter.id, playbook.id);
 
   const run: any = await repo.createAgentRun(ctx, matter.id, {
-    workflow: "legal_matter_review",
-    goal: "Seed the local V1 demo workflow",
+    workflow: "civil_litigation",
+    goal: "Seed the local civil litigation demo workflow",
     status: "queued",
     metadata: { seededBy: "aletheiaDemoSeed", demoSeedId: seedId },
   });
@@ -253,16 +387,21 @@ export async function seedAletheiaDemoMatter(
 
   const auditPack: any = await repo.createWorkProduct(ctx, matter.id, {
     kind: "audit_pack",
-    title: "Private Contract Review Demo Audit Pack",
+    title: "Civil Litigation Demo Audit Pack",
     status: "generated",
     schemaVersion: "aletheia-audit-pack-v0",
     content: {
       matterId: matter.id,
       documentId: document.id,
       evidenceIds: evidenceItems.map((item: any) => item.id),
-      issueMapId: issueMap?.id ?? null,
-      evidenceMatrixId: matrix?.id ?? null,
-      draftMemoId: draftMemo?.id ?? null,
+      evidenceCatalogId: evidenceCatalog?.id ?? null,
+      claimDefenseMatrixId: claimDefenseMatrix?.id ?? null,
+      proceduralClockId: proceduralClock?.id ?? null,
+      litigationBriefId: litigationBrief?.id ?? null,
+      factIds: [hearingFact.id, paymentFact.id],
+      defenseId: defense.id,
+      deadlineId: deadline.id,
+      taskId: taskResult?.task?.id ?? null,
       memoryId: (memory as any)?.id ?? null,
       playbookId: playbook.id,
       runId: run?.id ?? null,
@@ -287,14 +426,14 @@ export async function seedAletheiaDemoMatter(
 
   await repo.createWorkProduct(ctx, matter.id, {
     kind: "final_memo",
-    title: "Private Contract Review Demo Final Memo",
+    title: "Civil Litigation Demo Final Memorandum",
     status: "approved",
     schemaVersion: "aletheia-final-memo-v0",
     content: {
       summary:
         "Demo final memo approved for local workflow inspection only; it is not legal advice.",
-      sourceDraftMemoId: draftMemo?.id ?? null,
-      unresolvedLimitations: ["Schedule 4.2 remains a demo blocker."],
+      sourceLitigationBriefId: litigationBrief?.id ?? null,
+      unresolvedLimitations: ["起诉日期及加速到期条款仍待核实。"],
       gateResults: [
         {
           id: "demo-citation-gate",
@@ -302,7 +441,10 @@ export async function seedAletheiaDemoMatter(
           gate_type: "citation",
           status: "passed",
           reason: "Demo memo claims are linked to local source evidence.",
-          affected_artifact_ids: [draftMemo?.id, evidenceItems[0]?.id].filter(
+          affected_artifact_ids: [
+            litigationBrief?.id,
+            evidenceItems[0]?.id,
+          ].filter(
             Boolean,
           ),
         },
@@ -312,9 +454,10 @@ export async function seedAletheiaDemoMatter(
           gate_type: "human_approval",
           status: "passed",
           reason: "Demo final memo export was approved by the local reviewer.",
-          affected_artifact_ids: [draftMemo?.id, finalMemoApproval.id].filter(
-            Boolean,
-          ),
+          affected_artifact_ids: [
+            litigationBrief?.id,
+            finalMemoApproval.id,
+          ].filter(Boolean),
         },
         {
           id: "demo-export-gate",
@@ -322,9 +465,10 @@ export async function seedAletheiaDemoMatter(
           gate_type: "export",
           status: "passed",
           reason: "Demo final memo export is authorized for local inspection.",
-          affected_artifact_ids: [draftMemo?.id, finalMemoApproval.id].filter(
-            Boolean,
-          ),
+          affected_artifact_ids: [
+            litigationBrief?.id,
+            finalMemoApproval.id,
+          ].filter(Boolean),
         },
       ],
       gateProvenance: [
@@ -374,7 +518,7 @@ export async function seedAletheiaDemoMatter(
       ],
       demoSeedId: seedId,
     },
-    validationErrors: ["Schedule 4.2 remains a demo blocker."],
+    validationErrors: ["起诉日期及加速到期条款仍待核实。"],
     generatedBy: "system",
     model: null,
     approvalCheckpointId: finalMemoApproval.id,
@@ -385,9 +529,14 @@ export async function seedAletheiaDemoMatter(
     matterTitle: title,
     documentId: document.id,
     evidenceCount: evidenceItems.length,
-    issueMapId: issueMap?.id ?? null,
-    evidenceMatrixId: matrix?.id ?? null,
-    draftMemoId: draftMemo?.id ?? null,
+    evidenceCatalogId: evidenceCatalog?.id ?? null,
+    claimDefenseMatrixId: claimDefenseMatrix?.id ?? null,
+    proceduralClockId: proceduralClock?.id ?? null,
+    litigationBriefId: litigationBrief?.id ?? null,
+    factIds: [hearingFact.id, paymentFact.id],
+    defenseId: defense.id,
+    deadlineId: deadline.id,
+    taskId: taskResult?.task?.id ?? null,
     reviewId: review?.id ?? null,
     auditPackId: auditPack?.id ?? null,
     localExportId: localExportPackage?.export_id ?? null,

@@ -42,9 +42,7 @@ test("normalization retains only settings with concrete frontend consumers", () 
 });
 
 test("default matter template maps to the create-matter API value", () => {
-    assert.equal(matterTemplateId("Legal Matter Review"), "legal_matter_review");
-    assert.equal(matterTemplateId("Compliance Impact Review"), "compliance_impact_review");
-    assert.equal(matterTemplateId("Deal Due Diligence"), "deal_due_diligence");
+    assert.equal(matterTemplateId("Civil Litigation"), "civil_litigation");
 });
 
 test("settings transport sends a minimal conditional patch and reads response metadata", async () => {

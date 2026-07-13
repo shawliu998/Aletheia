@@ -88,6 +88,7 @@ export function AletheiaMatterDashboard({
 }) {
   const [apiMatters, setApiMatters] = useState<MatterQueueItem[]>([]);
   const [openTasks, setOpenTasks] = useState<AletheiaMatterTaskRecord[]>([]);
+  const [isolatedLegacyCount, setIsolatedLegacyCount] = useState(0);
   const [apiState, setApiState] = useState<
     "checking" | "connected" | "unavailable"
   >("checking");
@@ -105,8 +106,13 @@ export function AletheiaMatterDashboard({
           listAletheiaTasks("open"),
         ]);
         if (cancelled) return;
-        setApiMatters(records.map(remoteToQueueItem));
-        setOpenTasks(tasks);
+        const civilMatters = records.filter(
+          (matter) => matter.template === "civil_litigation",
+        );
+        const civilMatterIds = new Set(civilMatters.map((matter) => matter.id));
+        setApiMatters(civilMatters.map(remoteToQueueItem));
+        setOpenTasks(tasks.filter((task) => civilMatterIds.has(task.matter_id)));
+        setIsolatedLegacyCount(records.length - civilMatters.length);
         setApiState("connected");
       } catch {
         if (!cancelled) setApiState("unavailable");
@@ -210,6 +216,17 @@ export function AletheiaMatterDashboard({
             All Matters
           </span>
           </div>
+        </div>
+      )}
+
+      {connected && isolatedLegacyCount > 0 && (
+        <div
+          data-testid="isolated-legacy-matters"
+          className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-900 md:px-8"
+        >
+          {isolatedLegacyCount} legacy non-litigation matter
+          {isolatedLegacyCount === 1 ? " is" : "s are"} isolated from the
+          civil-litigation workspace.
         </div>
       )}
 

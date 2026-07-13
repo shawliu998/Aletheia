@@ -135,7 +135,8 @@ async function main() {
     const initial = await api(base, "GET", "/aletheia/client-settings");
     assert.equal(initial.status, 200);
     assert.equal(initial.body.schemaVersion, "aletheia-client-settings-v1");
-    assert.equal(initial.body.settings.demoDataEnabled, false);
+    assert.equal(initial.body.settings.defaultTemplate, "Civil Litigation");
+    assert.equal(initial.body.runtimeConfig.fields.demoDataEnabled, undefined);
     assert.equal(
       initial.body.runtimeConfig.fields.reasoning.status,
       "available",
@@ -248,7 +249,7 @@ async function main() {
     );
     assert.equal(reset.status, 200);
     assert.equal(reset.body.settings.theme, "System");
-    assert.equal(reset.body.settings.demoDataEnabled, false);
+    assert.equal(reset.body.settings.defaultTemplate, "Civil Litigation");
     const resetEtag = reset.headers.get("etag");
     assert(resetEtag);
     const restoredForPersistence = await api(
@@ -267,7 +268,6 @@ async function main() {
     );
     assert.equal(restoredForPersistence.status, 200);
 
-    const providerSecret = "provider-secret-audit-value-1234";
     const providerRejected = await api(
       base,
       "PUT",
@@ -284,7 +284,16 @@ async function main() {
     assert.equal(providerTestRejected.status, 422);
     const providerList = await api(base, "GET", "/aletheia/providers");
     assert.equal(providerList.status, 200);
-    assert.deepEqual(providerList.body.providers, []);
+    assert.deepEqual(
+      providerList.body.providers.map((provider: any) => provider.provider),
+      ["pkulaw", "wolters"],
+    );
+    assert.equal(
+      providerList.body.providers.every(
+        (provider: any) => provider.hasSecret === false,
+      ),
+      true,
+    );
 
     const bearer = "mcp-bearer-audit-secret";
     const headerSecret = "mcp-header-audit-secret";

@@ -84,8 +84,14 @@ export function AletheiaTaskQueue() {
         listAletheiaTasks(status),
         listAletheiaMatters(),
       ]);
-      setTasks(taskRecords);
-      setMatters(matterRecords);
+      const civilMatters = matterRecords.filter(
+        (matter) => matter.template === "civil_litigation",
+      );
+      const civilMatterIds = new Set(civilMatters.map((matter) => matter.id));
+      setTasks(
+        taskRecords.filter((task) => civilMatterIds.has(task.matter_id)),
+      );
+      setMatters(civilMatters);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Unable to load work queue",

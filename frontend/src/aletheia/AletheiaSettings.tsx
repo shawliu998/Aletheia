@@ -1619,29 +1619,9 @@ export function AletheiaSettings() {
             </div>
           </SettingRow>
           <SettingRow label="Default matter template">
-            <FieldSelect
-              value={settings.defaultTemplate}
-              disabled={settingsBusy}
-              onChange={(value) => void updateSetting("defaultTemplate", value)}
-              options={
-                [
-                  "Civil Litigation",
-                  "Legal Matter Review",
-                  "Compliance Impact Review",
-                  "Deal Due Diligence",
-                ] as const
-              }
-            />
-          </SettingRow>
-          <SettingRow
-            label="Demo records"
-            detail="Controls whether fallback demo matters are mixed into the local matter list."
-          >
-            <Toggle
-              checked={settings.demoDataEnabled}
-              disabled={settingsBusy}
-              onChange={(value) => void updateSetting("demoDataEnabled", value)}
-            />
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              {settings.defaultTemplate}
+            </div>
           </SettingRow>
           <SettingRow
             label="Evidence index"
@@ -1830,8 +1810,8 @@ export function AletheiaSettings() {
       return (
         <>
           <SectionHeader
-            title="Chat"
-            detail="Composer behavior for local matter sessions."
+            title="Workspace"
+            detail="Navigation and review behavior for civil-litigation matters."
           />
           <SettingRow label="Default landing">
             <FieldSelect
@@ -1839,7 +1819,7 @@ export function AletheiaSettings() {
               disabled={settingsBusy}
               onChange={(value) => void updateSetting("defaultLanding", value)}
               options={
-                ["Matters", "Agent Console", "Last opened matter"] as const
+                ["Matters", "Last opened matter"] as const
               }
             />
           </SettingRow>

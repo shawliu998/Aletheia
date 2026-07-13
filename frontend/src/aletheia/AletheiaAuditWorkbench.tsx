@@ -170,7 +170,9 @@ export function AletheiaAuditWorkbench() {
       setWorkProducts([]);
       setSaveMessage("");
       try {
-        const overviews = await listAletheiaMatters();
+        const overviews = (await listAletheiaMatters()).filter(
+          (matter) => matter.template === "civil_litigation",
+        );
         const details = await Promise.all(
           overviews.map((matter) => getAletheiaMatter(matter.id)),
         );

@@ -5663,7 +5663,9 @@ export class LocalLitigationStore {
           `select t.*
              from aletheia_tasks t
              join aletheia_matters m
-               on m.id = t.matter_id and m.user_id = t.user_id
+               on m.id = t.matter_id
+              and m.user_id = t.user_id
+              and m.template = 'civil_litigation'
             where t.user_id = ? ${statusClause}
             order by case t.priority when 'high' then 0 when 'normal' then 1 else 2 end,
                      t.due_at asc, t.created_at asc`,

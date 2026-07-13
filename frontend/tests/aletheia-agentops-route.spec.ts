@@ -335,9 +335,13 @@ test("matter-scoped AgentOps route renders adapter-backed artifacts", async ({
 
   await page.getByRole("link", { name: "Matter workspace" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/aletheia/matters/${projectState.matterId}$`),
+    new RegExp(
+      `/aletheia/matters/${projectState.matterId}/litigation\\?view=overview$`,
+    ),
   );
-  await expect(page.getByTestId("aletheia-matter-workspace")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: projectState.matterTitle }),
+  ).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
 });

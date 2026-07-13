@@ -65,12 +65,13 @@ async function main() {
       owner: typeof ctx,
       title: string,
       objective: string,
+      template = "civil_litigation",
     ) =>
       asRecord(
         await repo.createMatter(owner, {
           title,
           objective,
-          template: "civil_litigation",
+          template,
           status: "in_progress",
           riskLevel: "high",
           clientOrProject: "Orion Client",
@@ -186,6 +187,35 @@ async function main() {
         ruleVersion: "court-notice-v1",
         calculation: "按法院通知书载明日期记录。",
         createdBy: "human",
+      }),
+    );
+
+    const legacyMatter = await createMatter(
+      ctx,
+      "Orion legacy legal review",
+      "Compatibility data must remain outside the civil litigation product.",
+      "legal_matter_review",
+    );
+    const legacyDocument = asRecord(
+      await repo.uploadMatterDocument(ctx, legacyMatter.id, {
+        filename: "Orion Legacy Review.txt",
+        mimeType: "text/plain",
+        sizeBytes: 64,
+        buffer: Buffer.from(
+          "The meridian legacy review belongs to an isolated product domain.",
+        ),
+      }),
+    );
+    const legacyWorkProduct = asRecord(
+      await repo.createWorkProduct(ctx, legacyMatter.id, {
+        kind: "issue_map",
+        title: "Orion legacy review work product",
+        status: "generated",
+        schemaVersion: "global-search-audit-v1",
+        content: {},
+        validationErrors: [],
+        generatedBy: "human",
+        model: null,
       }),
     );
 
@@ -366,6 +396,9 @@ async function main() {
     assert.ok(!ids.has(foreignFact.id));
     assert.ok(!ids.has(foreignPosition.id));
     assert.ok(!ids.has(foreignDeadline.id));
+    assert.ok(!ids.has(legacyMatter.id));
+    assert.ok(!ids.has(legacyDocument.id));
+    assert.ok(!ids.has(legacyWorkProduct.id));
 
     const expectedResultKeys = [
       "href",
@@ -403,6 +436,11 @@ async function main() {
     assert.ok(
       !ftsPayload.results.some(
         (result: RecordValue) => result.id === foreignDocument.id,
+      ),
+    );
+    assert.ok(
+      !ftsPayload.results.some(
+        (result: RecordValue) => result.id === legacyDocument.id,
       ),
     );
 
@@ -489,7 +527,7 @@ async function main() {
     }
 
     console.log(
-      "Aletheia global search audit passed: authenticated cross-matter search covers all entity kinds, Chinese names, safe FTS, user isolation, limits, deduplication, snippets, and path hygiene.",
+      "Aletheia global search audit passed: authenticated civil-litigation search covers all entity kinds, Chinese names, safe FTS, legacy-domain and user isolation, limits, deduplication, snippets, and path hygiene.",
     );
   } finally {
     if (server) await closeServer(server);

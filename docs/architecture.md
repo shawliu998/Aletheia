@@ -1,14 +1,13 @@
 # Architecture
 
-Aletheia 明证 is a local-first agent harness for sensitive professional
-document work. Architecturally, it is an Aletheia Kernel on top of existing
-document, model, storage, and auth foundations, with Domain Packs configured
-above the Kernel.
+Vera is a local-first civil-litigation workspace. Architecturally, a reusable
+Kernel provides document, model, storage, permission, review, and audit
+foundations, while V1 exposes only the Civil Litigation domain.
 
 ```text
 +--------------------------------------------------------------+
-| Domain Packs                                                |
-| Contract diligence | Compliance | Audit | Regulatory         |
+| Active Domain: Civil Litigation                              |
+| Intake | Evidence | Claims | Research | Procedure | Drafting |
 +-----------------------------+--------------------------------+
 | Aletheia Kernel                                             |
 | Local Vault | Agent Loop | Typed Artifacts | Review Gates     |
@@ -44,12 +43,11 @@ The Matter Queue, Template Registry, Evidence Registry, Human Review Queue,
 Audit Timeline, and matter-level workspace are current UI surfaces for the
 Kernel.
 
-### Domain Packs
+### Active Domain
 
-Domain Packs configure the Kernel for specific workflows. The first
-public/private-pilot pack is Private Contract / Due Diligence Review. Adjacent
-pack framing includes Compliance Obligation, Audit Evidence, Regulatory
-Response, and Litigation Chronology.
+V1 configures the Kernel only for Civil Litigation. Earlier contract,
+compliance, diligence, and generic workspace implementations are compatibility
+code, not active product surfaces.
 
 ### Agent Loop Runtime
 
@@ -64,7 +62,8 @@ runReviewer(memo, evidence)
 createAuditEvent(...)
 ```
 
-The current demo uses seed data and validation helpers in `frontend/src/aletheia`.
+The current demo is a persisted `civil_litigation` matter created by the local
+backend. Frontend fallback matters are not used in the installed product.
 
 The backend now has an agent runtime skeleton:
 
@@ -105,10 +104,9 @@ The frontend client lives in `frontend/src/app/lib/aletheiaApi.ts`. The demo
 matter remains deterministic, while newly created matters use the API-backed
 route and database schema.
 
-`/aletheia` uses a hybrid queue: deterministic demo matters render immediately,
-and API-backed matters are merged into the queue when `GET /aletheia/matters`
-succeeds. This keeps local demos stable while making the persistence boundary
-visible and testable.
+`/aletheia` redirects to an API-backed matter queue. The queue shows only
+`civil_litigation` records and explicitly reports backend unavailability;
+non-litigation and fallback matters are not merged into the active product.
 
 `POST /aletheia/matters/:matterId/work-products` is the persistence boundary for
 structured artifacts. It accepts agent plans, issue maps, evidence matrices,

@@ -3,34 +3,26 @@ import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
-type ImportFixture = {
-  matterId: string;
-  matterUrl: string;
-  matterTitle: string;
-};
-
 type LitigationFixture = {
   matterId: string;
   matterUrl: string;
   matterTitle: string;
+  backendPort: number;
 };
-
-function fixture(projectName: string) {
-  const state = JSON.parse(
-    readFileSync(path.join(process.cwd(), ".next-ui-smoke-state.json"), "utf8"),
-  ) as { projects: Record<string, { import?: ImportFixture }> };
-  const result = state.projects[projectName]?.import;
-  if (!result) throw new Error(`Missing import fixture for ${projectName}`);
-  return result;
-}
 
 function litigationFixture(projectName: string) {
   const state = JSON.parse(
     readFileSync(path.join(process.cwd(), ".next-ui-smoke-state.json"), "utf8"),
-  ) as { projects: Record<string, { litigation?: LitigationFixture }> };
+  ) as {
+    backendPort?: number;
+    projects: Record<
+      string,
+      { litigation?: Omit<LitigationFixture, "backendPort"> }
+    >;
+  };
   const result = state.projects[projectName]?.litigation;
   if (!result) throw new Error(`Missing litigation fixture for ${projectName}`);
-  return result;
+  return { ...result, backendPort: state.backendPort ?? 3411 };
 }
 
 function buildMultiPagePdf(labels: string[]) {
@@ -126,11 +118,12 @@ async function expectViewerGeometry(page: import("@playwright/test").Page) {
 test("case file importer batches files and updates the source index", async ({
   page,
 }, testInfo) => {
-  const state = fixture(testInfo.project.name);
+  const state = litigationFixture(testInfo.project.name);
   await page.goto(`/aletheia/matters/${state.matterId}`);
   await expect(
     page.getByRole("heading", { name: state.matterTitle }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "事实与证据" }).click();
 
   const folderInput = page.getByTestId("matter-document-folder-input");
   await expect(folderInput).toHaveAttribute("webkitdirectory", "");
@@ -168,11 +161,18 @@ test("case file importer batches files and updates the source index", async ({
     page.getByText("payment-record.md", { exact: true }).last(),
   ).toBeVisible();
 
-  await page.getByTestId("document-search-input").fill("purchase price");
-  await page.getByTestId("document-search-submit").click();
-  await expect(page.getByTestId("document-search-results")).toContainText(
-    "complaint.txt",
+  const sourceIndexResponse = await page.request.get(
+    `http://127.0.0.1:${state.backendPort}/aletheia/matters/${state.matterId}/v1/source-index?includeChunks=true`,
   );
+  expect(sourceIndexResponse.ok()).toBe(true);
+  const sourceIndex = (await sourceIndexResponse.json()) as {
+    documents?: Array<{ filename?: string; title?: string }>;
+  };
+  expect(
+    sourceIndex.documents?.map(
+      (document) => document.filename ?? document.title,
+    ),
+  ).toEqual(expect.arrayContaining(["complaint.txt", "payment-record.md"]));
 
   await page.getByTestId("matter-document-files-input").setInputFiles({
     name: "empty-notes.txt",
@@ -183,9 +183,9 @@ test("case file importer batches files and updates the source index", async ({
     page.getByText("1 needs attention", { exact: true }),
   ).toBeVisible();
   const failedDocument = page
-    .getByTestId("source-map-document-row")
+    .getByTestId("matter-document-status-row")
     .filter({ hasText: "empty-notes.txt" });
-  await expect(failedDocument).toContainText("failed");
+  await expect(failedDocument).toContainText("Extraction failed");
   await failedDocument
     .getByRole("button", { name: "Retry extraction" })
     .click();
@@ -244,7 +244,7 @@ test("case file status discloses native OCR provenance and low confidence", asyn
     },
   );
   await page.goto(state.matterUrl);
-  await page.getByRole("button", { name: "Facts & Evidence" }).click();
+  await page.getByRole("button", { name: "事实与证据" }).click();
   const row = page
     .getByTestId("matter-document-status-row")
     .filter({ hasText: "scanned-contract.pdf" });
@@ -266,7 +266,7 @@ test("owner can download a stored original through the authenticated browser fal
 }, testInfo) => {
   const state = litigationFixture(testInfo.project.name);
   await page.goto(state.matterUrl);
-  await page.getByRole("button", { name: "Facts & Evidence" }).click();
+  await page.getByRole("button", { name: "事实与证据" }).click();
 
   const row = page.getByTestId("matter-document-status-row").first();
   const command = row.getByRole("button", {
@@ -319,7 +319,7 @@ test("desktop original command distinguishes busy, canceled, opened, open failur
     });
   });
   await page.goto(state.matterUrl);
-  await page.getByRole("button", { name: "Facts & Evidence" }).click();
+  await page.getByRole("button", { name: "事实与证据" }).click();
   const row = page.getByTestId("matter-document-status-row").first();
   const command = row.getByRole("button", {
     name: /Save and open original/,
@@ -381,7 +381,7 @@ test("PDF original inspector renders, navigates, zooms, closes, fails closed, an
   mkdirSync(screenshotDir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(state.matterUrl);
-  await page.getByRole("button", { name: "Facts & Evidence" }).click();
+  await page.getByRole("button", { name: "事实与证据" }).click();
   await page.getByTestId("matter-document-files-input").setInputFiles({
     name: "three-page-evidence.pdf",
     mimeType: "application/pdf",
@@ -461,7 +461,7 @@ test("PDF original inspector renders, navigates, zooms, closes, fails closed, an
 
   await page.setViewportSize({ width: 393, height: 852 });
   await page.reload();
-  await page.getByRole("button", { name: "Facts & Evidence" }).click();
+  await page.getByRole("button", { name: "事实与证据" }).click();
   const mobileInspect = page
     .getByTestId("matter-document-status-row")
     .filter({ hasText: "three-page-evidence.pdf" })

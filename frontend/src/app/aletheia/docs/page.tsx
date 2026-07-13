@@ -3,17 +3,17 @@ import {
   ArrowLeft,
   BookOpen,
   FileText,
-  GraduationCap,
+  Scale,
   Workflow,
 } from "lucide-react";
 
 const docs = [
   {
-    title: "Product Thesis",
-    file: "docs/product_thesis.md",
+    title: "Civil Litigation Domain",
+    file: "docs/domain_packs/civil_litigation.md",
     description:
-      "Why high-risk professional services need an agent workspace instead of a chatbot.",
-    icon: BookOpen,
+      "The active matter model, litigation workflow, boundaries, and legal safeguards.",
+    icon: Scale,
   },
   {
     title: "Architecture",
@@ -23,17 +23,17 @@ const docs = [
     icon: Workflow,
   },
   {
-    title: "Demo Script",
-    file: "docs/demo_script.md",
-    description: "A 90-second walkthrough for the Legal Matter Review demo.",
-    icon: FileText,
+    title: "Feature Map",
+    file: "docs/feature_map.md",
+    description:
+      "The current civil litigation product surface and isolated compatibility areas.",
+    icon: BookOpen,
   },
   {
-    title: "Professional Skills Loop",
-    file: "docs/agentops/professional-skills-loop.md",
-    description:
-      "How expert feedback becomes eval cases, candidate skills, and human-approved playbook updates.",
-    icon: GraduationCap,
+    title: "Litigation Demo",
+    file: "docs/litigation_demo_script.md",
+    description: "A focused walkthrough of the civil litigation matter workflow.",
+    icon: FileText,
   },
 ];
 
@@ -54,8 +54,8 @@ export default function AletheiaDocsPage() {
           </h1>
           <p className="mt-3 max-w-3xl text-base leading-7 text-[#6b7280]">
             These files live in the repository under `docs/` and explain the
-            product thesis, architecture, workflow templates, attribution, and
-            demo script.
+            active civil litigation scope, architecture, feature boundary, and
+            demo workflow.
           </p>
           <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {docs.map((doc) => (
