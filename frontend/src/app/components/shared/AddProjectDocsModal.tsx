@@ -1,31 +1,30 @@
 "use client";
 
+// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
+// frontend/src/app/components/modals/AddProjectDocsModal.tsx
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Search, Upload, X } from "lucide-react";
-import { getProject, uploadProjectDocument } from "@/app/lib/aletheiaApi";
-import type { Document } from "./types";
-import { DocFileIcon } from "./FileDirectory";
-import { VersionChip } from "./VersionChip";
+import { Loader2, Upload } from "lucide-react";
+import { useI18n } from "@/app/i18n";
+import {
+    attachVeraProjectDocument,
+    listVeraStandaloneDocuments,
+    uploadVeraDocument,
+} from "@/app/lib/veraApi";
+import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
+import { FileDirectory } from "./FileDirectory";
 import { Modal } from "./Modal";
+
+const ACCEPTED_DOCUMENTS =
+    ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt,.txt,.md";
 
 interface Props {
     open: boolean;
     onClose: () => void;
-    onSelect: (documents: Document[]) => void;
+    onSelect: (documents: VeraDocumentWire[]) => void;
     breadcrumb: string[];
     projectId: string;
-    /** Docs already in the target list — rendered checked + disabled. */
     excludeDocIds?: Set<string>;
     allowMultiple?: boolean;
-}
-
-function formatDate(iso: string | null) {
-    if (!iso) return null;
-    return new Date(iso).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-    });
 }
 
 export function AddProjectDocsModal({
@@ -37,87 +36,111 @@ export function AddProjectDocsModal({
     excludeDocIds,
     allowMultiple = true,
 }: Props) {
-    const [docs, setDocs] = useState<Document[]>([]);
+    const { t, errorMessage } = useI18n();
+    const [documents, setDocuments] = useState<VeraDocumentWire[]>([]);
     const [loading, setLoading] = useState(false);
-    const [search, setSearch] = useState("");
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [uploading, setUploading] = useState(false);
+    const [attaching, setAttaching] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const attachingRef = useRef(false);
+    const uploadingRef = useRef(false);
 
     useEffect(() => {
         if (!open) return;
-        setSearch("");
-        setSelectedIds(new Set());
-        let cancelled = false;
-        setLoading(true);
-        getProject(projectId)
-            .then((p) => {
-                if (!cancelled) setDocs(p.documents ?? []);
+        const controller = new AbortController();
+        queueMicrotask(() => {
+            if (controller.signal.aborted) return;
+            setSelectedIds(new Set());
+            setError(null);
+            setLoading(true);
+        });
+        listVeraStandaloneDocuments({}, controller.signal)
+            .then((loaded) => {
+                if (controller.signal.aborted) return;
+                setDocuments(
+                    loaded.filter((document) => !excludeDocIds?.has(document.id)),
+                );
             })
-            .catch(() => {
-                if (!cancelled) setDocs([]);
+            .catch((reason: unknown) => {
+                if (!controller.signal.aborted) {
+                    setDocuments([]);
+                    setError(errorMessage(reason as Error));
+                }
             })
             .finally(() => {
-                if (!cancelled) setLoading(false);
+                if (!controller.signal.aborted) setLoading(false);
             });
-        return () => {
-            cancelled = true;
-        };
-    }, [open, projectId]);
+        return () => controller.abort();
+    }, [errorMessage, excludeDocIds, open]);
 
-    if (!open) return null;
+    const handleAttach = async () => {
+        if (selectedIds.size === 0 || attachingRef.current) return;
+        attachingRef.current = true;
+        setAttaching(true);
+        setError(null);
+        const selected = documents.filter((document) =>
+            selectedIds.has(document.id),
+        );
+        const settled = await Promise.allSettled(
+            selected.map((document) =>
+                attachVeraProjectDocument(projectId, document.id),
+            ),
+        );
+        const attached = settled.flatMap((result) =>
+            result.status === "fulfilled" ? [result.value] : [],
+        );
+        if (attached.length > 0) onSelect(attached);
+        const failedIds = new Set(
+            selected
+                .filter((_, index) => settled[index]?.status === "rejected")
+                .map((document) => document.id),
+        );
+        setSelectedIds(failedIds);
+        setDocuments((current) =>
+            current.filter(
+                (document) =>
+                    !attached.some((item) => item.id === document.id),
+            ),
+        );
+        const failure = settled.find(
+            (result): result is PromiseRejectedResult =>
+                result.status === "rejected",
+        );
+        if (failure) setError(errorMessage(failure.reason as Error));
+        attachingRef.current = false;
+        setAttaching(false);
+        if (!failure) onClose();
+    };
 
-    const q = search.toLowerCase().trim();
-    const filtered = q
-        ? docs.filter((d) => d.filename.toLowerCase().includes(q))
-        : docs;
-
-    const isExcluded = (id: string) => !!excludeDocIds?.has(id);
-
-    function toggle(id: string) {
-        if (isExcluded(id)) return;
-        if (!allowMultiple) {
-            setSelectedIds(new Set([id]));
-            return;
-        }
-        setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) {
-                next.delete(id);
-            } else {
-                next.add(id);
-            }
-            return next;
-        });
-    }
-
-    function handleConfirm() {
-        const selected = docs.filter((d) => selectedIds.has(d.id));
-        onSelect(selected);
-        onClose();
-    }
-
-    async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-        const files = Array.from(e.target.files || []);
-        if (!files.length) return;
+    const handleUpload = async (
+        event: React.ChangeEvent<HTMLInputElement>,
+    ) => {
+        const files = Array.from(event.target.files ?? []);
+        if (files.length === 0 || uploadingRef.current) return;
+        uploadingRef.current = true;
         setUploading(true);
-        try {
-            const uploaded = await Promise.all(
-                files.map((f) => uploadProjectDocument(projectId, f)),
-            );
-            setDocs((prev) => [...uploaded, ...prev]);
-            setSelectedIds((prev) => {
-                const next = new Set(prev);
-                uploaded.forEach((d) => next.add(d.id));
-                return next;
-            });
-        } catch (err) {
-            console.error("Upload failed:", err);
-        } finally {
-            setUploading(false);
-            if (fileInputRef.current) fileInputRef.current.value = "";
-        }
-    }
+        setError(null);
+        const settled = await Promise.allSettled(
+            files.map((file) =>
+                uploadVeraDocument({ file, projectId, folderId: null }),
+            ),
+        );
+        const uploaded = settled.flatMap((result) =>
+            result.status === "fulfilled" ? [result.value.document] : [],
+        );
+        if (uploaded.length > 0) onSelect(uploaded);
+        const failure = settled.find(
+            (result): result is PromiseRejectedResult =>
+                result.status === "rejected",
+        );
+        if (failure) setError(errorMessage(failure.reason as Error));
+        uploadingRef.current = false;
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        if (!failure) onClose();
+    };
 
     return (
         <Modal
@@ -125,141 +148,56 @@ export function AddProjectDocsModal({
             onClose={onClose}
             breadcrumbs={breadcrumb}
             secondaryAction={{
-                label: uploading ? "Uploading…" : "Upload",
+                label: uploading
+                    ? t("common.status.processing")
+                    : t("common.actions.upload"),
                 icon: uploading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                     <Upload className="h-3.5 w-3.5" />
                 ),
                 onClick: () => fileInputRef.current?.click(),
-                disabled: uploading,
+                disabled: uploading || attaching,
             }}
-            footerStatus={
-                selectedIds.size > 0 ? (
-                    <span className="text-xs text-gray-400">
-                        {selectedIds.size} selected
-                    </span>
-                ) : null
-            }
+            cancelAction={{
+                label: t("common.actions.cancel"),
+                onClick: onClose,
+                disabled: uploading || attaching,
+            }}
             primaryAction={{
-                label: "Confirm",
-                onClick: handleConfirm,
-                disabled: selectedIds.size === 0 || uploading,
+                label: t("documents.addToProject"),
+                onClick: () => void handleAttach(),
+                disabled:
+                    selectedIds.size === 0 || uploading || attaching,
+                icon: attaching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : undefined,
             }}
         >
             <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.docx,.doc"
-                multiple
+                accept={ACCEPTED_DOCUMENTS}
+                multiple={allowMultiple}
                 className="hidden"
-                onChange={handleUpload}
+                onChange={(event) => void handleUpload(event)}
             />
-            {/* Search */}
-            <div className="pt-1 pb-2">
-                <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                    <Search className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                    <input
-                        type="text"
-                        placeholder="Search…"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="flex-1 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 outline-none"
-                        autoFocus
-                    />
-                    {search && (
-                        <button
-                            onClick={() => setSearch("")}
-                            className="text-gray-400 hover:text-gray-600"
-                        >
-                            <X className="h-3.5 w-3.5" />
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* File list */}
-            {loading ? (
-                <div className="rounded-sm border border-gray-100 overflow-hidden">
-                    {[60, 45, 75, 55, 40].map((w, i) => (
-                        <div
-                            key={i}
-                            className="flex items-center gap-2 px-2 py-2"
-                        >
-                            <div className="h-3.5 w-3.5 rounded border border-gray-200 shrink-0" />
-                            <div className="h-3.5 w-3.5 rounded bg-gray-200 animate-pulse shrink-0" />
-                            <div
-                                className="h-3 rounded bg-gray-200 animate-pulse"
-                                style={{ width: `${w}%` }}
-                            />
-                        </div>
-                    ))}
-                </div>
-            ) : filtered.length === 0 ? (
-                <p className="text-center text-sm text-gray-400 py-8">
-                    {q ? "No matches found" : "No documents in this project"}
+            {error && (
+                <p role="alert" className="mb-3 text-xs text-red-600">
+                    {error}
                 </p>
-            ) : (
-                <div className="rounded-sm border border-gray-100 overflow-hidden">
-                    {filtered.map((doc) => {
-                        const excluded = isExcluded(doc.id);
-                        const checked = excluded || selectedIds.has(doc.id);
-                        return (
-                            <button
-                                type="button"
-                                key={doc.id}
-                                disabled={excluded}
-                                onClick={() => toggle(doc.id)}
-                                className={`w-full flex items-center gap-2 px-2 py-2 text-xs text-left transition-colors ${
-                                    excluded
-                                        ? "opacity-50 cursor-not-allowed"
-                                        : checked
-                                          ? "bg-gray-100"
-                                          : "hover:bg-gray-50"
-                                }`}
-                            >
-                                <span
-                                    className={`shrink-0 h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                                        checked
-                                            ? "bg-gray-900 border-gray-900"
-                                            : "border-gray-300"
-                                    }`}
-                                >
-                                    {checked && (
-                                        <Check className="h-2.5 w-2.5 text-white" />
-                                    )}
-                                </span>
-                                <DocFileIcon fileType={doc.file_type} />
-                                <span
-                                    className={`flex-1 truncate ${
-                                        checked
-                                            ? "text-gray-900"
-                                            : "text-gray-700"
-                                    }`}
-                                >
-                                    {doc.filename}
-                                </span>
-                                {excluded && (
-                                    <span className="text-[10px] text-gray-400 shrink-0">
-                                        Already added
-                                    </span>
-                                )}
-                                <VersionChip
-                                    n={
-                                        doc.active_version_number ??
-                                        doc.latest_version_number
-                                    }
-                                />
-                                {doc.created_at && (
-                                    <span className="shrink-0 text-gray-300">
-                                        {formatDate(doc.created_at)}
-                                    </span>
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
             )}
+            <FileDirectory
+                standaloneDocs={documents}
+                directoryProjects={[]}
+                loading={loading}
+                selectedIds={selectedIds}
+                onChange={setSelectedIds}
+                allowMultiple={allowMultiple}
+                searchable
+                searchAutoFocus
+                showProjectTabs={false}
+            />
         </Modal>
     );
 }

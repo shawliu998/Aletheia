@@ -1,14 +1,23 @@
 "use client";
 
+// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
+// frontend/src/app/components/shared/useDirectoryData.ts
 import { useEffect, useState } from "react";
-import { getProject, listProjects, listStandaloneDocuments } from "@/app/lib/aletheiaApi";
-import type { Document, Project } from "./types";
+import {
+    getVeraProject,
+    listVeraProjects,
+    listVeraStandaloneDocuments,
+} from "@/app/lib/veraApi";
+import type {
+    VeraDocumentWire,
+    VeraProjectWire,
+} from "@/app/lib/veraWireTypes";
 
 const CACHE_TTL_MS = 30_000;
 
 interface DirectoryCache {
-    standaloneDocuments: Document[];
-    projects: Project[];
+    standaloneDocuments: VeraDocumentWire[];
+    projects: VeraProjectWire[];
     fetchedAt: number;
 }
 
@@ -19,61 +28,74 @@ export function invalidateDirectoryCache() {
 }
 
 export function useDirectoryData(enabled: boolean) {
-    const [loading, setLoading] = useState(true);
-    const [standaloneDocuments, setStandaloneDocuments] = useState<Document[]>([]);
-    const [projects, setProjects] = useState<Project[]>([]);
+    const [loading, setLoading] = useState(enabled);
+    const [error, setError] = useState<unknown>(null);
+    const [standaloneDocuments, setStandaloneDocuments] = useState<
+        VeraDocumentWire[]
+    >([]);
+    const [projects, setProjects] = useState<VeraProjectWire[]>([]);
 
     useEffect(() => {
-        if (!enabled) return;
-        let cancelled = false;
+        if (!enabled) {
+            return;
+        }
 
-        const now = Date.now();
-        if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-            const cached = cache;
+        const controller = new AbortController();
+        const cached = cache;
+        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
             queueMicrotask(() => {
-                if (cancelled) return;
+                if (controller.signal.aborted) return;
                 setStandaloneDocuments(cached.standaloneDocuments);
                 setProjects(cached.projects);
+                setError(null);
                 setLoading(false);
             });
-            return () => {
-                cancelled = true;
-            };
+            return () => controller.abort();
         }
 
         queueMicrotask(() => {
-            if (!cancelled) setLoading(true);
+            if (!controller.signal.aborted) setLoading(true);
         });
-        Promise.all([listProjects(), listStandaloneDocuments()])
-            .then(([ps, ds]) => {
-                const sorted = [...ds].sort((a, b) =>
+        Promise.all([
+            listVeraProjects(controller.signal),
+            listVeraStandaloneDocuments({}, controller.signal),
+        ])
+            .then(async ([projectRows, documentRows]) => {
+                const fullProjects = await Promise.all(
+                    projectRows.map((project) =>
+                        getVeraProject(project.id, controller.signal),
+                    ),
+                );
+                if (controller.signal.aborted) return;
+                const sortedDocuments = [...documentRows].sort((a, b) =>
                     (b.created_at ?? "").localeCompare(a.created_at ?? ""),
                 );
-                return Promise.all(ps.map((p) => getProject(p.id))).then(
-                    (fullProjects) => {
-                        if (cancelled) return;
-                        cache = {
-                            standaloneDocuments: sorted,
-                            projects: fullProjects,
-                            fetchedAt: Date.now(),
-                        };
-                        setStandaloneDocuments(sorted);
-                        setProjects(fullProjects);
-                    },
-                );
+                cache = {
+                    standaloneDocuments: sortedDocuments,
+                    projects: fullProjects,
+                    fetchedAt: Date.now(),
+                };
+                setStandaloneDocuments(sortedDocuments);
+                setProjects(fullProjects);
+                setError(null);
             })
-            .catch(() => {
-                if (cancelled) return;
+            .catch((reason: unknown) => {
+                if (controller.signal.aborted) return;
                 setStandaloneDocuments([]);
                 setProjects([]);
+                setError(reason);
             })
             .finally(() => {
-                if (!cancelled) setLoading(false);
+                if (!controller.signal.aborted) setLoading(false);
             });
-        return () => {
-            cancelled = true;
-        };
+
+        return () => controller.abort();
     }, [enabled]);
 
-    return { loading, standaloneDocuments, projects };
+    return {
+        loading: enabled && loading,
+        error,
+        standaloneDocuments,
+        projects,
+    };
 }

@@ -320,6 +320,26 @@ test("API errors parse top-level and nested contracts without reflecting raw bod
 test("typed document APIs follow the project/catalog routes and binary display contract", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: URL; init?: RequestInit }> = [];
+  const documentWire = {
+    id: otherId,
+    user_id: "00000000-0000-4000-8000-000000000001",
+    project_id: id,
+    folder_id: null,
+    filename: "renamed.pdf",
+    owner_email: null,
+    owner_display_name: "Local User",
+    file_type: "pdf",
+    storage_path: null,
+    pdf_storage_path: null,
+    size_bytes: 2,
+    page_count: 1,
+    structure_tree: null,
+    status: "ready",
+    created_at: "2026-07-14T00:00:00.000Z",
+    updated_at: "2026-07-14T00:00:00.000Z",
+    active_version_number: 1,
+    latest_version_number: 1,
+  };
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     calls.push({ url, init });
@@ -329,6 +349,14 @@ test("typed document APIs follow the project/catalog routes and binary display c
           "Content-Type": "application/pdf",
           "Content-Disposition": 'inline; filename="preview.pdf"',
         },
+      });
+    }
+    if (
+      url.pathname === `/api/v1/projects/${id}/documents/${otherId}` ||
+      url.pathname === `/api/v1/projects/${id}/documents/${otherId}/folder`
+    ) {
+      return new Response(JSON.stringify(documentWire), {
+        headers: { "Content-Type": "application/json" },
       });
     }
     return new Response(JSON.stringify([]), {

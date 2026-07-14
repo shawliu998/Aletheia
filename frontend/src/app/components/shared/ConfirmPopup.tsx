@@ -14,6 +14,7 @@ interface ConfirmPopupProps {
     confirmLabel?: ReactNode;
     confirmStatus?: ConfirmStatus;
     cancelLabel?: ReactNode;
+    cancelDisabled?: boolean;
     onConfirm: () => void;
     onCancel: () => void;
     confirmDisabled?: boolean;
@@ -27,6 +28,7 @@ export function ConfirmPopup({
     confirmLabel = "Confirm",
     confirmStatus = "idle",
     cancelLabel = "Cancel",
+    cancelDisabled = false,
     onConfirm,
     onCancel,
     confirmDisabled = false,
@@ -79,7 +81,8 @@ export function ConfirmPopup({
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:text-gray-950"
+                        disabled={cancelDisabled}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-700"
                     >
                         {cancelLabel}
                     </button>

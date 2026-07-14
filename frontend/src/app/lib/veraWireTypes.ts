@@ -54,6 +54,8 @@ export interface VeraProjectWire {
   id: string;
   user_id: string;
   name: string;
+  /** Vera local extension: Project is the generic workspace container. */
+  description: string | null;
   cm_number: string | null;
   practice: string | null;
   shared_with: string[];
@@ -67,6 +69,10 @@ export interface VeraProjectWire {
   document_count: number;
   chat_count: number;
   review_count: number;
+  workflow_count: number;
+  status: "active" | "archived" | "deleted";
+  archived_at: string | null;
+  default_model_profile_id: string | null;
 }
 
 export interface VeraDocumentVersionWire {
@@ -85,6 +91,33 @@ export interface VeraDocumentVersionWire {
 export interface VeraDocumentVersionsWire {
   current_version_id: string | null;
   versions: VeraDocumentVersionWire[];
+}
+
+export type VeraJobStatusWire =
+  "queued" | "running" | "complete" | "failed" | "cancelled" | "interrupted";
+
+/** Safe public projection of a document parse job. */
+export interface VeraDocumentJobWire {
+  id: string;
+  type: "document_parse";
+  status: VeraJobStatusWire;
+  attempt: number;
+  max_attempts: number;
+  retryable: boolean;
+  created_at: string;
+  scheduled_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface VeraDocumentMutationWire {
+  document: VeraDocumentWire;
+  version: VeraDocumentVersionWire;
+  job: VeraDocumentJobWire;
+}
+
+export interface VeraDocumentRetryWire {
+  job: VeraDocumentJobWire;
 }
 
 export interface VeraDocumentReadWire {
@@ -381,6 +414,7 @@ export interface VeraApiErrorWire {
 
 export interface VeraProjectCreateWire {
   name: string;
+  description?: string | null;
   cm_number?: string | null;
   practice?: string | null;
   shared_with?: string[];
@@ -388,6 +422,7 @@ export interface VeraProjectCreateWire {
 
 export interface VeraProjectUpdateWire {
   name?: string;
+  description?: string | null;
   cm_number?: string | null;
   practice?: string | null;
 }

@@ -1,46 +1,42 @@
 "use client";
 
-import { useState } from "react";
+// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
+// frontend/src/app/components/shared/FileDirectory.tsx
+import { useId, useMemo, useState } from "react";
 import {
     Check,
     ChevronDown,
     ChevronRight,
-    File,
-    FileText,
     Folder,
-    Trash2,
+    FolderOpen,
     Loader2,
+    Search,
+    X,
 } from "lucide-react";
-import type { Document, Project } from "./types";
+import { useI18n } from "@/app/i18n";
+import type {
+    VeraDocumentWire,
+    VeraProjectWire,
+} from "@/app/lib/veraWireTypes";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { VersionChip } from "./VersionChip";
 
-function formatDate(iso: string | null) {
-    if (!iso) return null;
-    return new Date(iso).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-    });
-}
-
 export function DocFileIcon({ fileType }: { fileType: string | null }) {
-    if (fileType === "pdf")
-        return <FileText className="h-3.5 w-3.5 text-red-500 shrink-0" />;
-    return <File className="h-3.5 w-3.5 text-blue-500 shrink-0" />;
+    return <FileTypeIcon fileType={fileType} className="h-3.5 w-3.5" />;
 }
 
 interface FileDirectoryProps {
-    standaloneDocs: Document[];
-    directoryProjects: Project[];
+    standaloneDocs: VeraDocumentWire[];
+    directoryProjects: VeraProjectWire[];
     loading: boolean;
     selectedIds: Set<string>;
     onChange: (ids: Set<string>) => void;
     allowMultiple?: boolean;
     forceExpanded?: boolean;
-    emptyMessage?: string;
-    heading?: string;
-    onDelete?: (ids: string[]) => void | Promise<void>;
     uploadingFilenames?: string[];
+    searchable?: boolean;
+    searchAutoFocus?: boolean;
+    showProjectTabs?: boolean;
 }
 
 export function FileDirectory({
@@ -51,323 +47,307 @@ export function FileDirectory({
     onChange,
     allowMultiple = true,
     forceExpanded = false,
-    emptyMessage = "No documents yet",
-    heading = "Documents",
-    onDelete,
     uploadingFilenames = [],
+    searchable = false,
+    searchAutoFocus = false,
+    showProjectTabs,
 }: FileDirectoryProps) {
+    const { t, formatDate } = useI18n();
+    const searchId = useId();
     const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
         new Set(),
     );
-    const [deleting, setDeleting] = useState(false);
+    const [selectedTab, setSelectedTab] = useState<"files" | "projects">(
+        "files",
+    );
+    const [search, setSearch] = useState("");
+    const query = search.trim().toLocaleLowerCase();
+    const showTabs = showProjectTabs ?? directoryProjects.length > 0;
+    const activeTab = showTabs ? selectedTab : "files";
 
-    const selectedCount = selectedIds.size;
+    const visibleStandaloneDocs = useMemo(
+        () =>
+            query
+                ? standaloneDocs.filter((document) =>
+                      document.filename.toLocaleLowerCase().includes(query),
+                  )
+                : standaloneDocs,
+        [query, standaloneDocs],
+    );
+    const visibleProjects = useMemo(
+        () =>
+            query
+                ? directoryProjects
+                      .map((project) => ({
+                          ...project,
+                          documents: project.documents.filter(
+                              (document) =>
+                                  project.name
+                                      .toLocaleLowerCase()
+                                      .includes(query) ||
+                                  document.filename
+                                      .toLocaleLowerCase()
+                                      .includes(query),
+                          ),
+                      }))
+                      .filter(
+                          (project) =>
+                              project.name
+                                  .toLocaleLowerCase()
+                                  .includes(query) ||
+                              project.documents.length > 0,
+                      )
+                : directoryProjects,
+        [directoryProjects, query],
+    );
+    const visibleUploading = query
+        ? uploadingFilenames.filter((filename) =>
+              filename.toLocaleLowerCase().includes(query),
+          )
+        : uploadingFilenames;
 
-    async function handleDelete() {
-        if (!onDelete || selectedCount === 0 || deleting) return;
-        const ids = Array.from(selectedIds);
-        setDeleting(true);
-        try {
-            await onDelete(ids);
-            const next = new Set(selectedIds);
-            ids.forEach((id) => next.delete(id));
-            onChange(next);
-        } finally {
-            setDeleting(false);
-        }
-    }
-
-    const allDocs = [
-        ...standaloneDocs,
-        ...directoryProjects.flatMap((p) => p.documents ?? []),
-    ];
-
-    const allStandaloneSelected =
-        standaloneDocs.length > 0 &&
-        standaloneDocs.every((d) => selectedIds.has(d.id));
-
-    function toggle(docId: string) {
+    const toggle = (documentId: string) => {
         if (!allowMultiple) {
-            onChange(new Set([docId]));
+            onChange(new Set([documentId]));
             return;
         }
         const next = new Set(selectedIds);
-        if (next.has(docId)) {
-            next.delete(docId);
-        } else {
-            next.add(docId);
-        }
+        if (next.has(documentId)) next.delete(documentId);
+        else next.add(documentId);
         onChange(next);
-    }
+    };
 
-    function toggleAll() {
-        if (allStandaloneSelected) {
-            const next = new Set(selectedIds);
-            standaloneDocs.forEach((d) => next.delete(d.id));
-            onChange(next);
-        } else {
-            const next = new Set(selectedIds);
-            standaloneDocs.forEach((d) => next.add(d.id));
-            onChange(next);
-        }
-    }
-
-    function toggleFolder(projectId: string) {
+    const toggleProject = (projectId: string) => {
         if (forceExpanded) return;
-        setExpandedProjects((prev) => {
-            const next = new Set(prev);
-            if (next.has(projectId)) {
-                next.delete(projectId);
-            } else {
-                next.add(projectId);
-            }
+        setExpandedProjects((current) => {
+            const next = new Set(current);
+            if (next.has(projectId)) next.delete(projectId);
+            else next.add(projectId);
             return next;
         });
-    }
-
-    if (loading) {
-        return (
-            <div className="rounded-sm border border-gray-100 overflow-hidden">
-                {/* Documents header skeleton */}
-                <div className="flex items-center justify-between px-2 py-2">
-                    <div className="h-3 w-20 rounded bg-gray-200 animate-pulse" />
-                    <div className="h-3 w-12 rounded bg-gray-200 animate-pulse" />
-                </div>
-                {/* File rows skeleton */}
-                <div>
-                    {[60, 45, 75, 55, 40].map((w, i) => (
-                        <div
-                            key={i}
-                            className="flex items-center gap-2 px-2 py-2"
-                        >
-                            <div className="h-3.5 w-3.5 rounded border border-gray-200 shrink-0" />
-                            <div className="h-3.5 w-3.5 rounded bg-gray-200 animate-pulse shrink-0" />
-                            <div
-                                className="h-3 rounded bg-gray-200 animate-pulse"
-                                style={{ width: `${w}%` }}
-                            />
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
-    }
-
-    if (
-        allDocs.length === 0 &&
-        directoryProjects.length === 0 &&
-        uploadingFilenames.length === 0
-    ) {
-        return (
-            <p className="text-center text-sm text-gray-400 py-8">
-                {emptyMessage}
-            </p>
-        );
-    }
+    };
 
     return (
-        <div className="rounded-sm border border-gray-100 overflow-hidden">
-            <div>
-                {(standaloneDocs.length > 0 ||
-                    uploadingFilenames.length > 0 ||
-                    (onDelete && selectedCount > 0)) && (
-                    <div className="flex items-center justify-between px-2 py-2">
-                        <p className="text-xs font-medium text-gray-400">
-                            {heading}
-                        </p>
-                        <div className="flex items-center gap-3">
-                            {onDelete && selectedCount > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={handleDelete}
-                                    disabled={deleting}
-                                    className="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 transition-colors disabled:opacity-50"
-                                >
-                                    <Trash2 className="h-3 w-3" />
-                                    Delete
-                                </button>
-                            )}
-                            {standaloneDocs.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={toggleAll}
-                                    className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                                >
-                                    {allStandaloneSelected
-                                        ? "Deselect all"
-                                        : "Select all"}
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                )}
-                {uploadingFilenames.map((filename) => (
-                    <div
-                        key={`uploading-${filename}`}
-                        className="w-full flex items-center gap-2 px-2 py-2 text-xs text-left"
-                    >
-                        <span className="shrink-0 h-3.5 w-3.5 rounded border border-gray-300" />
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 shrink-0" />
-                        <span className="flex-1 truncate text-gray-400">
-                            {filename}
-                        </span>
-                        <span className="shrink-0 text-gray-300">
-                            Uploading
-                        </span>
-                    </div>
-                ))}
-                {standaloneDocs.map((doc) => {
-                    const selected = selectedIds.has(doc.id);
-                    return (
+        <div className="flex min-h-0 flex-1 flex-col space-y-2 rounded-sm">
+            {searchable && (
+                <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
+                    <label htmlFor={searchId} className="sr-only">
+                        {t("common.actions.search")}
+                    </label>
+                    <input
+                        id={searchId}
+                        type="search"
+                        value={search}
+                        autoFocus={searchAutoFocus}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder={t("common.actions.search")}
+                        className="min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400"
+                    />
+                    {search && (
                         <button
                             type="button"
-                            key={doc.id}
-                            onClick={() => toggle(doc.id)}
-                            className={`w-full flex items-center gap-2 px-2 py-2 text-xs transition-colors text-left  ${
-                                selected ? "bg-gray-100" : "hover:bg-gray-50"
+                            onClick={() => setSearch("")}
+                            aria-label={t("common.actions.close")}
+                            className="text-gray-400 hover:text-gray-600"
+                        >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {showTabs && (
+                <div className="flex self-start rounded-lg bg-gray-100 p-0.5">
+                    {([
+                        ["files", t("documents.title")],
+                        ["projects", t("projects.title")],
+                    ] as const).map(([value, label]) => (
+                        <button
+                            key={value}
+                            type="button"
+                            onClick={() => setSelectedTab(value)}
+                            aria-pressed={activeTab === value}
+                            className={`rounded-md px-3 py-1 text-xs transition-colors ${
+                                activeTab === value
+                                    ? "bg-white text-gray-900 shadow-sm"
+                                    : "text-gray-500 hover:text-gray-800"
                             }`}
                         >
-                            <span
-                                className={`shrink-0 h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                                    selected
-                                        ? "bg-gray-900 border-gray-900"
-                                        : "border-gray-300"
-                                }`}
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+                {loading ? (
+                    [60, 45, 75, 55, 40].map((width) => (
+                        <div
+                            key={width}
+                            className="flex items-center gap-2 rounded-md px-2 py-2"
+                            aria-label={t("common.status.loading")}
+                        >
+                            <div className="h-3.5 w-3.5 shrink-0 rounded border border-gray-200" />
+                            <div className="h-3.5 w-3.5 shrink-0 animate-pulse rounded bg-gray-100" />
+                            <div
+                                className="h-3 animate-pulse rounded bg-gray-100"
+                                style={{ width: `${width}%` }}
+                            />
+                        </div>
+                    ))
+                ) : activeTab === "files" ? (
+                    <>
+                        {visibleUploading.map((filename) => (
+                            <div
+                                key={filename}
+                                className="flex w-full items-center gap-2 px-2 py-2 text-left text-xs"
                             >
-                                {selected && (
-                                    <Check className="h-2.5 w-2.5 text-white" />
-                                )}
-                            </span>
-                            <DocFileIcon fileType={doc.file_type} />
-                            <span
-                                className={`flex-1 truncate ${
-                                    selected ? "text-gray-900" : "text-gray-700"
-                                }`}
-                            >
-                                {doc.filename}
-                            </span>
-                            <VersionChip
-                                n={
-                                    doc.active_version_number ??
-                                    doc.latest_version_number
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-400" />
+                                <span className="min-w-0 flex-1 truncate text-gray-500">
+                                    {filename}
+                                </span>
+                                <span className="text-gray-300">
+                                    {t("common.status.processing")}
+                                </span>
+                            </div>
+                        ))}
+                        {visibleStandaloneDocs.map((document) => (
+                            <DocumentChoice
+                                key={document.id}
+                                document={document}
+                                selected={selectedIds.has(document.id)}
+                                onClick={() => toggle(document.id)}
+                                formattedDate={
+                                    document.created_at
+                                        ? formatDate(document.created_at)
+                                        : null
                                 }
                             />
-                            {doc.created_at && (
-                                <span className="shrink-0 text-gray-300">
-                                    {formatDate(doc.created_at)}
-                                </span>
+                        ))}
+                        {visibleStandaloneDocs.length === 0 &&
+                            visibleUploading.length === 0 && (
+                                <EmptyDirectory />
                             )}
-                        </button>
-                    );
-                })}
-
-                {standaloneDocs.length > 0 && directoryProjects.length > 0 && (
-                    <div className="border-t border-gray-100 py-2 px-2">
-                        <p className="text-xs font-medium text-gray-400">
-                            Projects
-                        </p>
-                    </div>
-                )}
-
-                {directoryProjects.map((project) => {
-                    const isExpanded =
-                        forceExpanded || expandedProjects.has(project.id);
-                    const docs = project.documents ?? [];
-                    return (
-                        <div key={project.id}>
-                            <button
-                                type="button"
-                                onClick={() => toggleFolder(project.id)}
-                                className="w-full flex items-center gap-2 px-2 py-2 text-xs hover:bg-gray-50 transition-colors text-left"
-                            >
-                                {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-gray-400 shrink-0" />
-                                ) : (
-                                    <ChevronRight className="h-3 w-3 text-gray-400 shrink-0" />
-                                )}
-                                <Folder className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                <span className="flex-1 truncate font-medium text-gray-700">
-                                    {project.name}
-                                    {project.cm_number && (
-                                        <span className="ml-1 font-normal text-gray-400">
-                                            (#{project.cm_number})
-                                        </span>
-                                    )}
-                                </span>
-                                <span className="text-xs text-gray-400 shrink-0">
-                                    {docs.length}
-                                </span>
-                            </button>
-                            {isExpanded && (
-                                <div>
-                                    {docs.length === 0 ? (
-                                        <p className="pl-7 py-1 text-xs text-gray-400">
-                                            Empty
-                                        </p>
+                    </>
+                ) : visibleProjects.length === 0 ? (
+                    <EmptyDirectory />
+                ) : (
+                    visibleProjects.map((project) => {
+                        const expanded =
+                            forceExpanded ||
+                            Boolean(query) ||
+                            expandedProjects.has(project.id);
+                        return (
+                            <div key={project.id}>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleProject(project.id)}
+                                    aria-expanded={expanded}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-all hover:bg-gray-100/70"
+                                >
+                                    {expanded ? (
+                                        <ChevronDown className="h-3 w-3 shrink-0 text-gray-400" />
                                     ) : (
-                                        docs.map((doc) => {
-                                            const selected = selectedIds.has(
-                                                doc.id,
-                                            );
-                                            return (
-                                                <button
-                                                    type="button"
-                                                    key={doc.id}
-                                                    onClick={() =>
-                                                        toggle(doc.id)
-                                                    }
-                                                    className={`w-full flex items-center gap-2 pl-7 pr-2 py-2 text-xs transition-colors text-left  ${
-                                                        selected
-                                                            ? "bg-gray-100"
-                                                            : "hover:bg-gray-50"
-                                                    }`}
-                                                >
-                                                    <span
-                                                        className={`shrink-0 h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                                                            selected
-                                                                ? "bg-gray-900 border-gray-900"
-                                                                : "border-gray-300"
-                                                        }`}
-                                                    >
-                                                        {selected && (
-                                                            <Check className="h-2.5 w-2.5 text-white" />
-                                                        )}
-                                                    </span>
-                                                    <DocFileIcon
-                                                        fileType={doc.file_type}
-                                                    />
-                                                    <span
-                                                        className={`flex-1 truncate min-w-0 ${
-                                                            selected
-                                                                ? "text-gray-900 font-medium"
-                                                                : "text-gray-700"
-                                                        }`}
-                                                    >
-                                                        {doc.filename}
-                                                    </span>
-                                                    <VersionChip
-                                                        n={
-                                                            doc.active_version_number ??
-                                                            doc.latest_version_number
-                                                        }
-                                                    />
-                                                    {doc.created_at && (
-                                                        <span className="shrink-0 text-gray-300">
-                                                            {formatDate(
-                                                                doc.created_at,
-                                                            )}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            );
-                                        })
+                                        <ChevronRight className="h-3 w-3 shrink-0 text-gray-400" />
                                     )}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
+                                    {expanded ? (
+                                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                    ) : (
+                                        <Folder className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                    )}
+                                    <span className="min-w-0 flex-1 truncate font-medium text-gray-700">
+                                        {project.name}
+                                    </span>
+                                    <span className="shrink-0 text-gray-400">
+                                        {project.documents.length}
+                                    </span>
+                                </button>
+                                {expanded &&
+                                    (project.documents.length === 0 ? (
+                                        <EmptyDirectory inset />
+                                    ) : (
+                                        project.documents.map((document) => (
+                                            <DocumentChoice
+                                                key={document.id}
+                                                document={document}
+                                                selected={selectedIds.has(document.id)}
+                                                onClick={() => toggle(document.id)}
+                                                inset
+                                                formattedDate={
+                                                    document.created_at
+                                                        ? formatDate(document.created_at)
+                                                        : null
+                                                }
+                                            />
+                                        ))
+                                    ))}
+                            </div>
+                        );
+                    })
+                )}
             </div>
         </div>
+    );
+}
+
+function DocumentChoice({
+    document,
+    selected,
+    onClick,
+    inset = false,
+    formattedDate,
+}: {
+    document: VeraDocumentWire;
+    selected: boolean;
+    onClick: () => void;
+    inset?: boolean;
+    formattedDate: string | null;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            aria-pressed={selected}
+            className={`flex w-full items-center gap-2 rounded-md py-2 pr-2 text-left text-xs transition-all ${
+                inset ? "pl-7" : "pl-2"
+            } ${selected ? "bg-gray-100" : "hover:bg-gray-100/70"}`}
+        >
+            <span
+                className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                    selected
+                        ? "border-gray-900 bg-gray-900"
+                        : "border-gray-300"
+                }`}
+            >
+                {selected && <Check className="h-2.5 w-2.5 text-white" />}
+            </span>
+            <DocFileIcon fileType={document.file_type} />
+            <span className="min-w-0 flex-1 truncate text-gray-700">
+                {document.filename}
+            </span>
+            <VersionChip
+                n={
+                    document.active_version_number ??
+                    document.latest_version_number
+                }
+            />
+            {formattedDate && (
+                <span className="shrink-0 text-gray-300">{formattedDate}</span>
+            )}
+        </button>
+    );
+}
+
+function EmptyDirectory({ inset = false }: { inset?: boolean }) {
+    const { t } = useI18n();
+    return (
+        <p
+            className={`py-8 text-center text-sm text-gray-400 ${
+                inset ? "pl-7 text-left" : ""
+            }`}
+        >
+            {t("common.status.empty")}
+        </p>
     );
 }
