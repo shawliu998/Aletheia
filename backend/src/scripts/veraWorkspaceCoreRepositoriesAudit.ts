@@ -307,7 +307,13 @@ try {
       .prepare("SELECT id FROM document_chunks WHERE version_id=?")
       .get(sameProjectSource.versionId)?.id,
   );
-  chatService.addSource(firstMessage.id, { ...sameProjectSource, chunkId });
+  chatService.addSource(firstMessage.id, {
+    ...sameProjectSource,
+    chunkId,
+    quote: "chunk",
+    startOffset: 0,
+    endOffset: 5,
+  });
   assert.equal(chatService.sources(firstMessage.id).length, 1);
   const globalChat = chatService.create({ modelProfileId: profile.id });
   const globalMessage = chatService.addMessage(globalChat.id, "user", {
@@ -318,7 +324,12 @@ try {
     /standalone document/,
   );
   const standaloneSource = insertDocumentVersion(database, null);
-  chatService.addSource(globalMessage.id, standaloneSource);
+  chatService.addSource(globalMessage.id, {
+    ...standaloneSource,
+    quote: "chunk",
+    startOffset: 0,
+    endOffset: 5,
+  });
   assert.equal(chatService.sources(globalMessage.id).length, 1);
   const crossProjectSource = insertDocumentVersion(
     database,

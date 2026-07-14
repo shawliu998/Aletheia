@@ -44,6 +44,9 @@ import {
 const PROJECT = "10000000-0000-4000-8000-000000000001";
 const OTHER_PROJECT = "10000000-0000-4000-8000-000000000002";
 const MODEL = "20000000-0000-4000-8000-000000000001";
+const PRE_V6_MIGRATIONS = WORKSPACE_MIGRATIONS.filter(
+  (migration) => migration.version < 6,
+);
 let serial = 1;
 function nextUuid() {
   const suffix = (serial++).toString(16).padStart(12, "0");
@@ -226,7 +229,7 @@ async function auditRouter(
 function auditV6Upgrade(root: string) {
   const databasePath = path.join(root, "workflow-v6-upgrade.sqlite");
   const database = new WorkspaceDatabase(databasePath, {
-    migrations: WORKSPACE_MIGRATIONS,
+    migrations: PRE_V6_MIGRATIONS,
   });
   try {
     seed(database);
@@ -411,7 +414,7 @@ async function run() {
   try {
     auditV6Upgrade(root);
     database = new WorkspaceDatabase(databasePath, {
-      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+      migrations: WORKSPACE_MIGRATIONS,
     });
     seed(database);
     const jobsRepository = new WorkspaceJobsRepository(database);
@@ -1023,7 +1026,7 @@ async function run() {
     );
     database.close();
     database = new WorkspaceDatabase(databasePath, {
-      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+      migrations: WORKSPACE_MIGRATIONS,
     });
     assert.equal(
       new WorkflowsRepository(database).requireExecutionSnapshot(

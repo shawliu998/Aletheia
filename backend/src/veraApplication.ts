@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import express, {
+  Router,
   type ErrorRequestHandler,
   type Express,
   type NextFunction,
@@ -41,6 +42,10 @@ import {
   type WorkspaceV1RuntimePort,
 } from "./routes/workspaceV1";
 import {
+  createWorkspaceWorkflowsV1Router,
+  type WorkspaceWorkflowsV1Port,
+} from "./routes/workspaceWorkflowsV1";
+import {
   createWorkspaceRuntime,
   type WorkspaceRuntimeHealth,
 } from "./lib/workspace/runtime";
@@ -63,6 +68,7 @@ type Closable = {
 };
 
 export interface VeraWorkspaceRuntime extends WorkspaceV1RuntimePort {
+  readonly workflowCrud: WorkspaceWorkflowsV1Port;
   start(): Promise<void>;
   stop(): Promise<void>;
   health(): WorkspaceRuntimeHealth;
@@ -347,13 +353,22 @@ export function createVeraApplication(
   app.use("/aletheia", createLocalVoiceRouter());
   app.use("/aletheia", createAletheiaLocalControlRouter());
 
-  app.use(
-    "/api/v1",
-    mutationGuard,
-    createWorkspaceAuthMiddleware(env),
-    applyWorkspaceUploadLimit,
+  // Workspace API composition is intentionally singular: authenticate before
+  // the audit mutation guard, then place the fixed Mike workflow namespace
+  // before the broader v1 router.  This prevents a generic :id route from
+  // ever consuming /workflows while keeping one /api/v1 security boundary.
+  const workspaceApi = Router();
+  workspaceApi.use(createWorkspaceAuthMiddleware(env));
+  workspaceApi.use(mutationGuard);
+  workspaceApi.use(applyWorkspaceUploadLimit);
+  workspaceApi.use(
+    "/workflows",
+    createWorkspaceWorkflowsV1Router(options.runtime.workflowCrud),
+  );
+  workspaceApi.use(
     createWorkspaceV1Router(options.runtime, { requireAuthentication: true }),
   );
+  app.use("/api/v1", workspaceApi);
 
   app.get("/health", (_request, response) => {
     try {

@@ -60,9 +60,16 @@ import {
   WorkspaceJobAbortRegistry,
   WorkspaceJobsService,
 } from "./services/jobs";
+import { WorkspaceJobEnqueuerAdapter } from "./services/jobEnqueuer";
 import { ProjectsService } from "./services/projects";
+import { WorkflowsService } from "./services/workflows";
 import type { ProjectLifecycleCleanupRecord } from "./services/projects";
 import type { Document, ProjectFolder } from "./types";
+import { WorkflowsRepository } from "./repositories/workflows";
+import {
+  MikeWorkflowCrudPortAdapter,
+  seedPinnedMikeSystemWorkflows,
+} from "./workflowCompatibility";
 
 type CleanupRecorder = ConstructorParameters<
   typeof WorkspaceDocumentsService
@@ -120,12 +127,18 @@ export type WorkspaceRuntimeDependencies = {
   documents?: WorkspaceDocumentCatalogService;
   documentService?: WorkspaceDocumentsService;
   documentRepository?: WorkspaceDocumentsRepository;
+  workflows?: WorkflowsService;
+  workflowCrud?: MikeWorkflowCrudPortAdapter;
+  seedWorkflows?: (workflows: WorkflowsService) => readonly unknown[];
   /** Read-only authority for derived blob metadata.  This is injectable solely
    * for runtime integration tests; production shares the repository instance. */
   blobRecords?: WorkspaceBlobRecordsRepository;
   runMigrations?: (database: WorkspaceDatabase) => void;
-  replayCleanup?: () => void;
-  reconcileBlobs?: () => void;
+  /** Test seams for the existing startup-recovery coordinator. Production
+   * always uses the durable cleanup replay followed by reconciliation. */
+  cleanupReplay?: Pick<WorkspaceBlobCleanupReplay, "replayPending">;
+  blobReconciliation?: Pick<WorkspaceBlobReconciliation, "reconcile">;
+  startupRecovery?: Pick<WorkspaceBlobStartupRecovery, "recover">;
 };
 
 function defaultDataDir() {
@@ -178,12 +191,17 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
   readonly pump: Pick<WorkspaceJobPump, "start" | "stop" | "snapshot">;
   readonly projects: ProjectsService;
   readonly documents: WorkspaceDocumentCatalogService;
+  readonly workflows: WorkflowsService;
+  readonly workflowCrud: MikeWorkflowCrudPortAdapter;
   private readonly documentService: WorkspaceDocumentsService;
   private readonly documentRepository: WorkspaceDocumentsRepository;
   private readonly blobRecords: WorkspaceBlobRecordsRepository;
   private readonly startMigrations: () => void;
-  private readonly replayCleanup: () => void;
-  private readonly reconcileBlobs: () => void;
+  private readonly startupRecovery: Pick<
+    WorkspaceBlobStartupRecovery,
+    "recover"
+  >;
+  private readonly seedWorkflows: () => void;
   private started = false;
   private draining = false;
   private closed = false;
@@ -226,6 +244,15 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
       new WorkspaceJobsService(jobsRepository, {
         abortRegistry: this.abortRegistry,
       });
+    this.workflows =
+      dependencies.workflows ??
+      new WorkflowsService(
+        new WorkflowsRepository(this.database),
+        new WorkspaceJobEnqueuerAdapter(this.jobs),
+      );
+    this.workflowCrud =
+      dependencies.workflowCrud ??
+      new MikeWorkflowCrudPortAdapter(this.workflows);
     const cleanupRecorder: CleanupRecorder = {
       record: (input) => cleanupLedger.record(input),
     };
@@ -296,24 +323,33 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
         abortRegistry: this.abortRegistry,
         handlers: { document_parse: (context) => parser.handleJob(context) },
       });
-    const recovery = new WorkspaceBlobStartupRecovery(
-      new WorkspaceBlobCleanupReplay(cleanupLedger, blobRecords, this.blobs),
+    const cleanupReplay =
+      dependencies.cleanupReplay ??
+      new WorkspaceBlobCleanupReplay(cleanupLedger, blobRecords, this.blobs);
+    const blobReconciliation =
+      dependencies.blobReconciliation ??
       new WorkspaceBlobReconciliation(
         blobRecords,
         this.blobs,
         this.documentRepository,
-      ),
-    );
+      );
     this.startMigrations = () => {
       if (dependencies.runMigrations) dependencies.runMigrations(this.database);
       else runWorkspaceMigrations(this.database, WORKSPACE_MIGRATIONS);
     };
-    this.replayCleanup =
-      dependencies.replayCleanup ??
-      (() => {
-        recovery.recover();
-      });
-    this.reconcileBlobs = dependencies.reconcileBlobs ?? (() => undefined);
+    this.startupRecovery =
+      dependencies.startupRecovery ??
+      new WorkspaceBlobStartupRecovery(cleanupReplay, blobReconciliation);
+    this.seedWorkflows = () => {
+      const seeded = dependencies.seedWorkflows
+        ? dependencies.seedWorkflows(this.workflows)
+        : seedPinnedMikeSystemWorkflows(this.workflows);
+      if (seeded.length !== 21) {
+        throw new Error(
+          "Pinned Mike workflow seeding did not produce 21 templates.",
+        );
+      }
+    };
   }
 
   async start() {
@@ -321,8 +357,8 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     if (this.closed) throw new Error("Workspace runtime is closed.");
     try {
       this.startMigrations();
-      this.replayCleanup();
-      this.reconcileBlobs();
+      this.seedWorkflows();
+      this.startupRecovery.recover();
       await this.pump.start();
       this.started = true;
     } catch (error) {
@@ -371,7 +407,8 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
 
   async listProjects(context: WorkspaceV1Context, page: WorkspaceV1Page) {
     this.requireAccess(context);
-    const explicitlyPaged = page.cursor !== undefined || page.limit !== undefined;
+    const explicitlyPaged =
+      page.cursor !== undefined || page.limit !== undefined;
     if (explicitlyPaged) {
       const result = this.projects.list({
         cursor: page.cursor ?? null,
@@ -399,7 +436,9 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     do {
       const result = this.projects.list({ cursor, limit: 100 });
       if (Array.isArray(result)) {
-        items.push(...result.map((project) => this.projectSummaryWire(project)));
+        items.push(
+          ...result.map((project) => this.projectSummaryWire(project)),
+        );
         cursor = null;
         continue;
       }

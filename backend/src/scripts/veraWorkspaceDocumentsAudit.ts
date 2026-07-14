@@ -756,8 +756,8 @@ async function runAudit() {
       Buffer.from("tabular running"),
     );
 
-    const assistantBlocked = await reopenedService.upload({ filename: "assistant-blocked.txt", mimetype: "text/plain", buffer: Buffer.from("assistant blocked") });
-    database.prepare("UPDATE jobs SET status = 'failed', retryable = 0, completed_at = ? WHERE id = ?").run(new Date().toISOString(), assistantBlocked.job.id);
+    const assistantUnrelated = await reopenedService.upload({ filename: "assistant-unrelated.txt", mimetype: "text/plain", buffer: Buffer.from("assistant unrelated") });
+    database.prepare("UPDATE jobs SET status = 'failed', retryable = 0, completed_at = ? WHERE id = ?").run(new Date().toISOString(), assistantUnrelated.job.id);
     const assistantChatId = randomUUID();
     const assistantJobId = randomUUID();
     const assistantAt = new Date().toISOString();
@@ -766,12 +766,19 @@ async function runAudit() {
       `INSERT INTO jobs (id,type,status,resource_type,resource_id,payload_json,scheduled_at,created_at,updated_at)
        VALUES (?,'assistant_generate','queued','chat',?,'{}',?,?,?)`,
     ).run(assistantJobId, assistantChatId, assistantAt, assistantAt, assistantAt);
-    expectThrow(
-      () => coordinatedService.deleteDocument(assistantBlocked.document.id),
-      /active parse job or dependent work/,
+    const unrelatedAssistantDelete = coordinatedService.deleteDocument(assistantUnrelated.document.id);
+    assert.equal(unrelatedAssistantDelete.documentId, assistantUnrelated.document.id);
+    assert.equal(repository.getDocument(assistantUnrelated.document.id), null);
+    assert.equal(
+      database.prepare("SELECT status FROM jobs WHERE id = ?").get(assistantJobId)?.status,
+      "queued",
+      "an unrelated queued assistant job is neither a document dependency nor a deletion target",
     );
-    assert.ok(repository.getDocument(assistantBlocked.document.id));
-    database.prepare("UPDATE jobs SET status = 'cancelled', retryable = 0, completed_at = ? WHERE id = ?").run(new Date().toISOString(), assistantJobId);
+    assert.equal(
+      lifecycleCancelled.includes(assistantJobId),
+      false,
+      "document lifecycle cancellation is limited to dependent jobs",
+    );
 
     const rollbackWithCell = await reopenedService.upload({ filename: "tabular-rollback.txt", mimetype: "text/plain", buffer: Buffer.from("tabular rollback") });
     database.prepare("UPDATE jobs SET status = 'failed', retryable = 0, completed_at = ? WHERE id = ?").run(new Date().toISOString(), rollbackWithCell.job.id);
@@ -871,7 +878,7 @@ async function runAudit() {
         "startup cleanup removes an unrecorded extracted blob after a put-before-commit crash while retaining original authority",
         "same-hash extracted retry reuses authority while different hash preserves the old blob and chunks",
         "runtime-managed parser requires a live lease claim and stale-worker commit cannot change blob/chunk authority",
-        "document delete coordinates tabular jobs, blocks ambiguous assistant work, removes terminal jobs, and restores blobs on DB failure",
+        "document delete coordinates dependent tabular jobs, leaves unrelated assistant jobs queued, removes terminal jobs, and restores blobs on DB failure",
         "retry eligibility and no duplicate queued/complete retry",
         "restart reopen",
         "delete rollback and preview quarantine",

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
+import { WorkspaceApiError } from "../lib/workspace/errors";
+import { WORKSPACE_LOCAL_PRINCIPAL_ID } from "../lib/workspace/principal";
 import { WorkspaceRuntime } from "../lib/workspace/runtime";
 import { ProjectsService } from "../lib/workspace/services/projects";
+import {
+  parseMikeWorkflowCreate,
+  parseMikeWorkflowUpdate,
+} from "../lib/workspace/workflowCompatibility";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const versionId = "22222222-2222-4222-8222-222222222222";
@@ -13,7 +20,10 @@ const otherProjectId = "33333333-3333-4333-8333-333333333333";
 const foreignDocumentId = "44444444-4444-4444-8444-444444444444";
 const now = "2026-07-14T00:00:00.000Z";
 
-function dependencies(events: string[], fail?: "cleanup" | "reconcile") {
+function dependencies(
+  events: string[],
+  fail?: "migrate" | "seed" | "cleanup" | "reconcile" | "pump",
+) {
   const database = {
     close: () => events.push("close"),
     exec() {},
@@ -225,6 +235,7 @@ function dependencies(events: string[], fail?: "cleanup" | "reconcile") {
   const pump = {
     async start() {
       events.push("pump");
+      if (fail === "pump") throw new Error("pump");
       pumpStarted = true;
       return {};
     },
@@ -270,20 +281,111 @@ function dependencies(events: string[], fail?: "cleanup" | "reconcile") {
         requestedVersionId === oldVersionId ? oldVersion : version,
     } as any,
     pump: pump as any,
-    runMigrations: () => events.push("migrate"),
-    replayCleanup: () => {
-      events.push("cleanup");
-      if (fail === "cleanup") throw new Error("cleanup");
+    abortRegistry: {
+      abortAll() {
+        events.push("abort");
+      },
+    } as any,
+    runMigrations: () => {
+      events.push("migrate");
+      if (fail === "migrate") throw new Error("migrate");
     },
-    reconcileBlobs: () => {
-      events.push("reconcile");
-      if (fail === "reconcile") throw new Error("reconcile");
+    seedWorkflows: () => {
+      events.push("seed");
+      if (fail === "seed") throw new Error("seed");
+      return Array.from({ length: 21 }, () => ({}));
+    },
+    cleanupReplay: {
+      replayPending() {
+        events.push("cleanup");
+        if (fail === "cleanup") throw new Error("cleanup");
+        return { resolved: 0, restored: 0, finalized: 0, retained: 0 };
+      },
+    },
+    blobReconciliation: {
+      reconcile() {
+        events.push("reconcile");
+        if (fail === "reconcile") throw new Error("reconcile");
+        return { restored: 0, finalized: 0, conflicts: 0 };
+      },
     },
     audit: {
       projectPage: () => lastProjectPage,
       documentList: () => lastDocumentList,
     },
   };
+}
+
+async function auditProductionWorkflowCrud() {
+  const dataDir = mkdtempSync(
+    path.join(os.tmpdir(), "vera-workspace-runtime-workflows-"),
+  );
+  const originalEncryption = process.env.ALETHEIA_DATABASE_ENCRYPTION;
+  process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
+  const runtime = new WorkspaceRuntime({
+    dataDir,
+    // This audit exercises workflow composition only; no document/blob data is
+    // introduced, so a strict empty staged-delete authority is sufficient.
+    blobs: { listStagedDeletesSync: () => [] } as any,
+  });
+  const context = { principalId: WORKSPACE_LOCAL_PRINCIPAL_ID };
+  try {
+    await runtime.start();
+    const system = await runtime.workflowCrud.list(context, {});
+    assert.equal(system.length, 21, "startup seeds all fixed Mike templates");
+    assert.ok(system.every((workflow) => workflow.is_system));
+
+    const custom = await runtime.workflowCrud.create(
+      context,
+      parseMikeWorkflowCreate({
+        metadata: { title: "Runtime CRUD custom", type: "assistant" },
+        skill_md: "Summarize selected documents.",
+      }),
+    );
+    const updated = await runtime.workflowCrud.update(
+      context,
+      custom.id,
+      parseMikeWorkflowUpdate({ skill_md: "Revise the summary." }),
+    );
+    assert.equal(updated.skill_md, "Revise the summary.");
+    await runtime.workflowCrud.delete(context, custom.id);
+    await assert.rejects(
+      runtime.workflowCrud.get(context, custom.id),
+      (error: unknown) =>
+        error instanceof WorkspaceApiError && error.status === 404,
+    );
+
+    const systemId = system[0]?.id;
+    assert.ok(systemId);
+    await runtime.workflowCrud.hide(context, systemId);
+    assert.ok(
+      (await runtime.workflowCrud.list(context, {})).some(
+        (workflow) => workflow.id === systemId,
+      ),
+      "hidden system templates remain in the Mike list response",
+    );
+    assert.ok(
+      (await runtime.workflowCrud.listHidden(context)).includes(systemId),
+    );
+    await runtime.workflowCrud.unhide(context, systemId);
+    await assert.rejects(
+      runtime.workflowCrud.update(
+        context,
+        systemId,
+        parseMikeWorkflowUpdate({ skill_md: "not allowed" }),
+      ),
+      (error: unknown) =>
+        error instanceof WorkspaceApiError && error.status === 403,
+    );
+  } finally {
+    await runtime.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    if (originalEncryption === undefined) {
+      delete process.env.ALETHEIA_DATABASE_ENCRYPTION;
+    } else {
+      process.env.ALETHEIA_DATABASE_ENCRYPTION = originalEncryption;
+    }
+  }
 }
 
 async function run() {
@@ -296,6 +398,27 @@ async function run() {
     /new WorkspaceDocumentsService\([\s\S]*?cleanupRecorder,\s*lifecycle,\s*\)/,
     "the production document service must receive the shared job lifecycle coordinator",
   );
+  assert.match(
+    runtimeSource,
+    /new WorkflowsService\([\s\S]*?new WorkspaceJobEnqueuerAdapter\(this\.jobs\)/,
+    "workflow CRUD reuses the shared Jobs enqueue adapter",
+  );
+  assert.match(
+    runtimeSource,
+    /new WorkspaceBlobStartupRecovery\(cleanupReplay, blobReconciliation\)/,
+    "composition reuses the established cleanup-then-reconciliation coordinator",
+  );
+  assert.match(
+    runtimeSource,
+    /this\.startupRecovery\.recover\(\);[\s\S]*?await this\.pump\.start\(\);/,
+    "recovery completes before workers start",
+  );
+  assert.match(
+    runtimeSource,
+    /handlers: \{ document_parse: \(context\) => parser\.handleJob\(context\) \}/,
+    "the production pump registers only the fenced document parser handler",
+  );
+  await auditProductionWorkflowCrud();
   let cascaded = false;
   let restored = false;
   const deletionProbe = new ProjectsService(
@@ -367,8 +490,8 @@ async function run() {
   );
   await runtime.start();
   assert.deepEqual(
-    events.slice(0, 4),
-    ["migrate", "cleanup", "reconcile", "pump"],
+    events.slice(0, 5),
+    ["migrate", "seed", "cleanup", "reconcile", "pump"],
     "startup is fail-closed and ordered",
   );
   assert.equal(
@@ -576,7 +699,48 @@ async function run() {
     "a timed-out pump still closes the workspace database exactly once",
   );
 
-  for (const failure of ["cleanup", "reconcile"] as const) {
+  const migrationFailureEvents: string[] = [];
+  const migrationFailure = new WorkspaceRuntime(
+    dependencies(migrationFailureEvents, "migrate"),
+  );
+  await assert.rejects(() => migrationFailure.start(), /migrate/);
+  assert.deepEqual(
+    migrationFailureEvents,
+    ["migrate", "stop-pump", "abort", "close"],
+    "a migration failure closes fail-closed before seed, recovery, or workers",
+  );
+  assert.deepEqual(
+    migrationFailure.health(),
+    { started: false, draining: false, worker: { documentParse: false } },
+    "a migration failure never reports a usable runtime health state",
+  );
+
+  const pumpFailureEvents: string[] = [];
+  const pumpFailure = new WorkspaceRuntime(
+    dependencies(pumpFailureEvents, "pump"),
+  );
+  await assert.rejects(() => pumpFailure.start(), /pump/);
+  assert.deepEqual(
+    pumpFailureEvents,
+    [
+      "migrate",
+      "seed",
+      "cleanup",
+      "reconcile",
+      "pump",
+      "stop-pump",
+      "abort",
+      "close",
+    ],
+    "a pump-start failure runs recovery first, then aborts and closes in catch",
+  );
+  assert.deepEqual(
+    pumpFailure.health(),
+    { started: false, draining: false, worker: { documentParse: false } },
+    "a failed pump start is never observable as a started runtime",
+  );
+
+  for (const failure of ["seed", "cleanup", "reconcile"] as const) {
     const failedEvents: string[] = [];
     const failed = new WorkspaceRuntime(dependencies(failedEvents, failure));
     await assert.rejects(() => failed.start());
@@ -584,6 +748,11 @@ async function run() {
       failedEvents.includes("pump"),
       false,
       `${failure} failure never starts the pump`,
+    );
+    assert.equal(
+      failedEvents.filter((event) => event === "close").length,
+      1,
+      `${failure} failure closes the one database handle`,
     );
   }
   console.log("vera workspace runtime audit passed");

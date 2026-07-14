@@ -9,7 +9,6 @@ import ExcelJS from "exceljs";
 import { WorkspaceDatabase } from "../lib/workspace/database";
 import { WorkspaceApiError } from "../lib/workspace/errors";
 import { WORKSPACE_MIGRATIONS } from "../lib/workspace/migrations";
-import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
 import { TabularRepository } from "../lib/workspace/repositories/tabular";
 import { WorkflowsRepository } from "../lib/workspace/repositories/workflows";
 import { TabularService } from "../lib/workspace/services/tabular";
@@ -351,7 +350,7 @@ async function main() {
     bootstrap.close();
 
     database = new WorkspaceDatabase(databasePath, {
-      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+      migrations: WORKSPACE_MIGRATIONS,
     });
     seed(database);
     const jobs = new FakeJobEnqueuer(database);
@@ -853,7 +852,7 @@ async function main() {
     const persistedReviewId = review.review.id;
     database.close();
     database = new WorkspaceDatabase(databasePath, {
-      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+      migrations: WORKSPACE_MIGRATIONS,
     });
     const restartedWorkflows = new WorkflowsRepository(database);
     const restartedTabular = new TabularRepository(database);

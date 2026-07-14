@@ -4,6 +4,9 @@ import type { Server } from "node:http";
 import { resolve } from "node:path";
 import type { Express } from "express";
 
+import type { MikeWorkflowWire } from "../lib/workspace/workflowCompatibility";
+import { WorkspaceApiError } from "../lib/workspace/errors";
+import type { WorkspaceWorkflowsV1Port } from "../routes/workspaceWorkflowsV1";
 import {
   bootstrapVeraApplication,
   createVeraApplication,
@@ -15,6 +18,120 @@ import {
 } from "../veraApplication";
 
 type EventLog = string[];
+
+function fakeWorkflowCrud(): WorkspaceWorkflowsV1Port {
+  const system: MikeWorkflowWire = {
+    id: "builtin-audit-template",
+    user_id: null,
+    metadata: {
+      title: "固定内置模板",
+      description: null,
+      type: "assistant" as const,
+      contributors: [],
+      language: "English",
+      version: "e32daad",
+      practice: "General Transactions",
+      jurisdictions: ["General"],
+    },
+    skill_md: "Summarize the selected documents.",
+    columns_config: null,
+    is_system: true,
+    created_at: "",
+    shared_by_name: null,
+    allow_edit: false,
+    is_owner: false,
+    open_source_submission: null,
+  };
+  const workflows: MikeWorkflowWire[] = [system];
+  const hidden = new Set<string>();
+  let nextId = 1;
+  const find = (id: string) => {
+    const workflow = workflows.find((candidate) => candidate.id === id);
+    if (!workflow) throw new Error("Workflow not found.");
+    return workflow;
+  };
+  return {
+    async list(_context, input) {
+      return input.type
+        ? workflows.filter((workflow) => workflow.metadata.type === input.type)
+        : workflows;
+    },
+    async get(_context, workflowId) {
+      return find(workflowId);
+    },
+    async create(_context, input) {
+      const workflow = {
+        id: `custom-audit-${nextId++}`,
+        user_id: "00000000-0000-4000-8000-000000000001",
+        metadata: {
+          title: input.title,
+          description: null,
+          type: input.type,
+          contributors: [],
+          language: input.language,
+          version: null,
+          practice: input.practice,
+          jurisdictions: input.jurisdictions,
+        },
+        skill_md:
+          input.type === "assistant" ? input.skillMarkdown || null : null,
+        columns_config:
+          input.type === "tabular"
+            ? input.columns.map((column, index) => ({
+                index,
+                name: column.title,
+                prompt: column.prompt,
+              }))
+            : null,
+        is_system: false,
+        created_at: "2026-07-14T00:00:00.000Z",
+        shared_by_name: null,
+        allow_edit: true,
+        is_owner: true,
+        open_source_submission: null,
+      };
+      workflows.push(workflow);
+      return workflow;
+    },
+    async update(_context, workflowId) {
+      const workflow = find(workflowId);
+      if (workflow.is_system) {
+        throw new WorkspaceApiError(
+          403,
+          "FORBIDDEN",
+          "System workflows are immutable; hide them instead.",
+        );
+      }
+      return workflow;
+    },
+    async delete(_context, workflowId) {
+      const index = workflows.findIndex(
+        (workflow) => workflow.id === workflowId,
+      );
+      if (index < 0) throw new Error("Workflow not found.");
+      if (workflows[index]?.is_system) {
+        throw new WorkspaceApiError(
+          403,
+          "FORBIDDEN",
+          "System workflows cannot be deleted; hide them instead.",
+        );
+      }
+      workflows.splice(index, 1);
+      hidden.delete(workflowId);
+    },
+    async listHidden() {
+      return [...hidden];
+    },
+    async hide(_context, workflowId) {
+      find(workflowId);
+      hidden.add(workflowId);
+    },
+    async unhide(_context, workflowId) {
+      find(workflowId);
+      hidden.delete(workflowId);
+    },
+  };
+}
 
 function fakeRuntime(
   options: {
@@ -45,6 +162,7 @@ function fakeRuntime(
       options.onListProjects?.();
       return { items: [], nextCursor: null };
     },
+    workflowCrud: fakeWorkflowCrud(),
   };
   return new Proxy(base, {
     get(target, property, receiver) {
@@ -254,6 +372,139 @@ async function auditApplicationSurface(): Promise<void> {
         retryable: false,
       },
     });
+  });
+
+  const workflowToken = "vera-workflow-http-audit-token-0123456789";
+  const workflowApp = createVeraApplication({
+    runtime: fakeRuntime(),
+    env: testEnvironment({
+      ALETHEIA_AUTH_MODE: "private_token",
+      ALETHEIA_PRIVATE_AUTH_TOKEN: workflowToken,
+    }),
+    auditAnchorStatus: () => ({ enabled: false, healthy: true }),
+  });
+  await withHttpServer(workflowApp, async (baseUrl) => {
+    const workflowsUrl = `${baseUrl}/api/v1/workflows`;
+    for (const authorization of [undefined, "Bearer wrong-workflow-token"]) {
+      const response = await fetch(workflowsUrl, {
+        headers: authorization ? { authorization } : undefined,
+      });
+      assert.equal(
+        response.status,
+        401,
+        "workflow CRUD requires a valid token",
+      );
+    }
+    const headers = {
+      authorization: `Bearer ${workflowToken}`,
+      "content-type": "application/json",
+    };
+    const list = await fetch(workflowsUrl, { headers });
+    assert.equal(list.status, 200);
+    const system = (await list.json()) as Array<{
+      id: string;
+      is_system: boolean;
+    }>;
+    assert.equal(system.length, 1);
+    assert.equal(system[0]?.is_system, true);
+    const systemId = system[0]?.id;
+    assert.ok(systemId);
+
+    const create = await fetch(workflowsUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        metadata: { title: "HTTP custom workflow", type: "assistant" },
+        skill_md: "Summarize selected documents.",
+      }),
+    });
+    assert.equal(create.status, 201);
+    const custom = (await create.json()) as { id: string };
+    assert.ok(custom.id);
+    const update = await fetch(`${workflowsUrl}/${custom.id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ skill_md: "Revise the summary." }),
+    });
+    assert.equal(update.status, 200);
+    const hide = await fetch(`${workflowsUrl}/hidden`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workflow_id: systemId }),
+    });
+    assert.equal(hide.status, 204);
+    const hidden = await fetch(`${workflowsUrl}/hidden`, { headers });
+    assert.deepEqual(await hidden.json(), [systemId]);
+    const immutable = await fetch(`${workflowsUrl}/${systemId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ skill_md: "not allowed" }),
+    });
+    assert.equal(immutable.status, 403);
+    const remove = await fetch(`${workflowsUrl}/${custom.id}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(remove.status, 204);
+
+    const dormantProjectId = "00000000-0000-4000-8000-000000000001";
+    const dormantRoutes = [
+      { method: "POST", path: "/api/v1/chat" },
+      { method: "POST", path: `/api/v1/projects/${dormantProjectId}/chat` },
+      { method: "POST", path: `/api/v1/workflows/${systemId}/runs` },
+      { method: "GET", path: "/api/v1/tabular-review" },
+      { method: "POST", path: "/api/v1/tabular-review" },
+      { method: "GET", path: "/api/v1/settings" },
+      { method: "PATCH", path: "/api/v1/settings" },
+      { method: "GET", path: "/api/v1/models" },
+      { method: "POST", path: "/api/v1/models" },
+      { method: "GET", path: "/api/v1/providers" },
+      { method: "POST", path: "/api/v1/credentials" },
+    ] as const;
+    for (const route of dormantRoutes) {
+      const response = await fetch(`${baseUrl}${route.path}`, {
+        method: route.method,
+        headers,
+        ...(route.method === "GET" ? {} : { body: "{}" }),
+      });
+      assert.equal(
+        response.status,
+        404,
+        `${route.method} ${route.path} stays dormant`,
+      );
+    }
+  });
+
+  const blockedWorkflowApp = createVeraApplication({
+    runtime: fakeRuntime(),
+    env: testEnvironment({
+      ALETHEIA_AUTH_MODE: "private_token",
+      ALETHEIA_PRIVATE_AUTH_TOKEN: workflowToken,
+    }),
+    auditAnchorStatus: () => ({ enabled: true, healthy: false }),
+    auditWriteBlocked: () => true,
+  });
+  await withHttpServer(blockedWorkflowApp, async (baseUrl) => {
+    const url = `${baseUrl}/api/v1/workflows`;
+    const unauthenticated = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(
+      unauthenticated.status,
+      401,
+      "authentication runs before the mutation audit guard",
+    );
+    const blocked = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${workflowToken}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    assert.equal(blocked.status, 503);
   });
 
   const blockedApp = createVeraApplication({
@@ -541,6 +792,16 @@ async function auditStaticOwnership(): Promise<void> {
     (applicationSource.match(/app\.use\(\s*"\/api\/v1"/g) ?? []).length,
     1,
     "Workspace API prefix must be mounted exactly once",
+  );
+  assert.match(
+    applicationSource,
+    /workspaceApi\.use\(createWorkspaceAuthMiddleware\(env\)\);[\s\S]*?workspaceApi\.use\(mutationGuard\);/,
+    "workspace authentication must run before mutation audit protection",
+  );
+  assert.match(
+    applicationSource,
+    /workspaceApi\.use\(\s*"\/workflows",\s*createWorkspaceWorkflowsV1Router\(options\.runtime\.workflowCrud\),/,
+    "Mike workflow CRUD is mounted beneath the sole /api/v1 composition root",
   );
   const healthSource = applicationSource.slice(
     applicationSource.indexOf('app.get("/health"'),

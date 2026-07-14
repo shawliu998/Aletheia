@@ -13,14 +13,7 @@ import type {
 } from "../lib/workspace/blobStore";
 import { WorkspaceDatabase } from "../lib/workspace/database";
 import { WorkspaceApiError } from "../lib/workspace/errors";
-import { INITIAL_WORKSPACE_MIGRATION } from "../lib/workspace/migrations/v1InitialWorkspace";
-import { WORKSPACE_INTEGRITY_MIGRATION } from "../lib/workspace/migrations/v2WorkspaceIntegrity";
-import { WORKSPACE_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v3WorkspaceRuntime";
-import { PROJECT_OWNERSHIP_MIGRATION } from "../lib/workspace/migrations/v4ProjectOwnership";
-import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
-import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
-import { TABULAR_MIKE_SEMANTICS_V7_MIGRATION } from "../lib/workspace/migrations/v7TabularMikeSemantics";
-import { MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION } from "../lib/workspace/migrations/v8ModelCredentialOrigin";
+import { WORKSPACE_MIGRATIONS } from "../lib/workspace/migrations";
 import { WorkspaceBlobRecordsRepository } from "../lib/workspace/repositories/blobRecords";
 import { WorkspaceDocumentsRepository } from "../lib/workspace/repositories/documents";
 import { ProjectsRepository } from "../lib/workspace/repositories/projects";
@@ -28,17 +21,6 @@ import { WorkspaceDocumentsService } from "../lib/workspace/services/documents";
 import { ProjectsService } from "../lib/workspace/services/projects";
 
 const NOW = "2026-07-14T12:00:00.000Z";
-const ALL_MIGRATIONS = [
-  INITIAL_WORKSPACE_MIGRATION,
-  WORKSPACE_INTEGRITY_MIGRATION,
-  WORKSPACE_RUNTIME_MIGRATION,
-  PROJECT_OWNERSHIP_MIGRATION,
-  ASSISTANT_RUNTIME_MIGRATION,
-  WORKFLOW_RUNTIME_V6_MIGRATION,
-  TABULAR_MIKE_SEMANTICS_V7_MIGRATION,
-  MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
-] as const;
-
 function locatorKey(locator: WorkspaceBlobLocator) {
   return JSON.stringify(locator);
 }
@@ -367,9 +349,12 @@ function run() {
   let database: WorkspaceDatabase | null = null;
   try {
     database = new WorkspaceDatabase(path.join(root, "workspace.sqlite"), {
-      migrations: ALL_MIGRATIONS,
+      migrations: WORKSPACE_MIGRATIONS,
     });
-    assert.equal(database.migration?.currentVersion, 8);
+    assert.equal(
+      database.migration?.currentVersion,
+      WORKSPACE_MIGRATIONS.at(-1)?.version,
+    );
     const blobs = new AuditBlobStore();
     const projectsRepository = new ProjectsRepository(database);
     const records = new WorkspaceBlobRecordsRepository(database);
@@ -411,9 +396,10 @@ function run() {
     database
       .prepare(
         `INSERT INTO message_sources
-          (id, message_id, document_id, version_id, locator_json, rank,
+          (id, message_id, document_id, version_id, filename_snapshot,
+           quote, start_offset, end_offset, locator_json, rank,
            citation_ordinal, citation_metadata_json, created_at)
-         VALUES (?, ?, ?, ?, '{}', 0, 0, '{}', ?)`,
+         VALUES (?, ?, ?, ?, 'history.txt', 'history', 0, 7, '{}', 0, 0, '{}', ?)`,
       )
       .run(
         randomUUID(),
@@ -541,58 +527,6 @@ function run() {
       documents,
       projects,
       failedReview,
-    );
-
-    const tabularSource = createScenario(
-      database,
-      projectsRepository,
-      records,
-      blobs,
-      "Tabular chat source",
-    );
-    const sourceReviewId = randomUUID();
-    const sourceChatId = randomUUID();
-    database
-      .prepare(
-        `INSERT INTO tabular_reviews
-          (id, project_id, title, status, document_ids_json,
-           columns_config_json, created_at, updated_at)
-         VALUES (?, ?, 'Source-only review', 'complete', '[]', '[]', ?, ?)`,
-      )
-      .run(sourceReviewId, tabularSource.projectId, NOW, NOW);
-    database
-      .prepare(
-        `INSERT INTO tabular_review_chats
-          (id, review_id, title, status, created_at, updated_at)
-         VALUES (?, ?, 'Source chat', 'archived', ?, ?)`,
-      )
-      .run(sourceChatId, sourceReviewId, NOW, NOW);
-    database
-      .prepare(
-        `INSERT INTO tabular_review_chat_messages
-          (id, review_chat_id, sequence, role, content, annotations_json,
-           sources_json, status, created_at, updated_at, completed_at)
-         VALUES (?, ?, 0, 'assistant', 'history', '[]', ?, 'complete', ?, ?, ?)`,
-      )
-      .run(
-        randomUUID(),
-        sourceChatId,
-        JSON.stringify([
-          {
-            documentId: tabularSource.documentId,
-            versionId: tabularSource.versionId,
-          },
-        ]),
-        NOW,
-        NOW,
-        NOW,
-      );
-    assertHistoryBlocksBoth(
-      database,
-      blobs,
-      documents,
-      projects,
-      tabularSource,
     );
 
     const assistant = createScenario(
@@ -760,9 +694,10 @@ function run() {
     database
       .prepare(
         `INSERT INTO message_sources
-          (id, message_id, document_id, version_id, locator_json, rank,
+          (id, message_id, document_id, version_id, filename_snapshot,
+           quote, start_offset, end_offset, locator_json, rank,
            citation_ordinal, citation_metadata_json, created_at)
-         VALUES (?, ?, ?, ?, '{}', 0, 0, '{}', ?)`,
+         VALUES (?, ?, ?, ?, 'history.txt', 'history', 0, 7, '{}', 0, 0, '{}', ?)`,
       )
       .run(
         randomUUID(),
@@ -819,7 +754,7 @@ function run() {
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(database.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
     console.log(
-      "Vera deletion-history audit passed: exact durable citations, attachments, assistant snapshots, tabular memberships/cells/chat sources, active workflow fencing, pre-stage zero-change rejection, transaction race rollback, plain deletion, and project ownership-boundary purge verified.",
+      "Vera deletion-history audit passed: exact durable citations, attachments, assistant snapshots, tabular memberships/cells, active workflow fencing, pre-stage zero-change rejection, transaction race rollback, plain deletion, and project ownership-boundary purge verified.",
     );
   } finally {
     try {

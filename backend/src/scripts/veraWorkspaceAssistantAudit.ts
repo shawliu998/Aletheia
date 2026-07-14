@@ -26,7 +26,6 @@ import {
 import { WorkspaceApiError } from "../lib/workspace/errors";
 import { searchSafeFtsQuery } from "../lib/searchSafeFtsQuery";
 import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
-import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
 import { AssistantRetrievalRepository } from "../lib/workspace/repositories/assistantRetrieval";
 import { ChatsRepository } from "../lib/workspace/repositories/chats";
 import { ModelProfilesRepository } from "../lib/workspace/repositories/modelProfiles";
@@ -53,11 +52,7 @@ const MIGRATIONS = [
   ...WORKSPACE_MIGRATIONS.filter((migration) => migration.version < 5),
   ASSISTANT_RUNTIME_MIGRATION,
 ] as const;
-const CHECKSUM_PARITY_MIGRATIONS = [
-  ...WORKSPACE_MIGRATIONS,
-  ASSISTANT_RUNTIME_MIGRATION,
-  WORKFLOW_RUNTIME_V6_MIGRATION,
-] as const;
+const CHECKSUM_PARITY_MIGRATIONS = [...WORKSPACE_MIGRATIONS] as const;
 const CHECKSUM_PARITY_MODULES = [
   ["v1InitialWorkspace", "INITIAL_WORKSPACE_MIGRATION"],
   ["v2WorkspaceIntegrity", "WORKSPACE_INTEGRITY_MIGRATION"],

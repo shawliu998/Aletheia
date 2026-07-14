@@ -12,6 +12,8 @@ import {
   type WorkspaceDatabaseAdapter,
   type WorkspaceMigration,
 } from "../lib/workspace/migrations";
+import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
+import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
 import {
   runWorkspaceMigrations,
   WorkspaceDatabase,
@@ -22,6 +24,20 @@ const originalEnvironment = { ...process.env };
 const root = mkdtempSync(
   path.join(os.tmpdir(), "vera-workspace-migration-audit-"),
 );
+
+// The production registry is intentionally frozen at v6 for this integration
+// milestone. v7/v8 stay dormant and are never implicitly tested as defaults.
+const CORE_V4 = [
+  INITIAL_WORKSPACE_MIGRATION,
+  WORKSPACE_INTEGRITY_MIGRATION,
+  WORKSPACE_RUNTIME_MIGRATION,
+  PROJECT_OWNERSHIP_MIGRATION,
+] as const;
+const DEFAULT_V1_TO_V6 = [
+  ...CORE_V4,
+  ASSISTANT_RUNTIME_MIGRATION,
+  WORKFLOW_RUNTIME_V6_MIGRATION,
+] as const;
 
 function schemaNames(
   database: WorkspaceDatabase,
@@ -163,6 +179,12 @@ function assertThrowsSql(
 
 try {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
+  assert.deepEqual(
+    WORKSPACE_MIGRATIONS.map((migration) => migration.version),
+    [1, 2, 3, 4, 5, 6],
+    "the default registry remains a contiguous v1-v6 prefix",
+  );
+  assert.deepEqual(WORKSPACE_MIGRATIONS, DEFAULT_V1_TO_V6);
 
   const upgradePath = path.join(root, "upgrade.db");
   const v1Database = createUnmigratedDatabase("upgrade.db");
@@ -171,10 +193,10 @@ try {
 
   const database = new WorkspaceDatabase(upgradePath);
   try {
-    assert.equal(database.migration?.currentVersion, 4);
+    assert.equal(database.migration?.currentVersion, 6);
     assert.deepEqual(
       database.migration?.applied.map((migration) => migration.version),
-      [2, 3, 4],
+      [2, 3, 4, 5, 6],
     );
     assert.deepEqual(database.migration?.preflight, {
       foreignKeysEnabled: true,
@@ -218,6 +240,16 @@ try {
           version: 4,
           name: PROJECT_OWNERSHIP_MIGRATION.name,
           checksum: workspaceMigrationChecksum(PROJECT_OWNERSHIP_MIGRATION),
+        },
+        {
+          version: 5,
+          name: ASSISTANT_RUNTIME_MIGRATION.name,
+          checksum: workspaceMigrationChecksum(ASSISTANT_RUNTIME_MIGRATION),
+        },
+        {
+          version: 6,
+          name: WORKFLOW_RUNTIME_V6_MIGRATION.name,
+          checksum: workspaceMigrationChecksum(WORKFLOW_RUNTIME_V6_MIGRATION),
         },
       ],
     );
@@ -536,9 +568,11 @@ try {
     database
       .prepare(
         `INSERT INTO message_sources
-          (id, message_id, document_id, version_id, chunk_id)
+          (id, message_id, document_id, version_id, filename_snapshot,
+           chunk_id, quote, start_offset, end_offset)
          VALUES ('source-valid', 'message-1', 'document-1', 'version-1',
-                 'chunk-1')`,
+                 'one.txt', 'chunk-1', 'privileged workspace search payload',
+                 0, 35)`,
       )
       .run();
     database.exec(`
@@ -562,10 +596,11 @@ try {
       VALUES
         ('message-global', 'chat-global', 0, 'assistant', 'answer', 'complete');
       INSERT INTO message_sources
-        (id, message_id, document_id, version_id)
+        (id, message_id, document_id, version_id, filename_snapshot, quote,
+         start_offset, end_offset)
       VALUES
         ('source-global-valid', 'message-global', 'document-standalone',
-         'version-standalone');
+         'version-standalone', 'standalone.txt', 'global source', 0, 13);
     `);
     assertThrowsSql(
       database,
@@ -843,7 +878,7 @@ try {
     );
 
     const rerun = runWorkspaceMigrations(database, WORKSPACE_MIGRATIONS);
-    assert.equal(rerun.currentVersion, 4);
+    assert.equal(rerun.currentVersion, 6);
     assert.deepEqual(rerun.applied, []);
 
     const driftedV2: WorkspaceMigration = {
@@ -862,7 +897,7 @@ try {
       database
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      4,
+      6,
     );
   } finally {
     database.close();
@@ -877,10 +912,10 @@ try {
   v2UpgradeBootstrap.close();
   const v2Upgrade = new WorkspaceDatabase(v2UpgradePath);
   try {
-    assert.equal(v2Upgrade.migration?.currentVersion, 4);
+    assert.equal(v2Upgrade.migration?.currentVersion, 6);
     assert.deepEqual(
       v2Upgrade.migration?.applied.map((record) => record.version),
-      [3, 4],
+      [3, 4, 5, 6],
     );
     assert.ok(
       schemaNames(v2Upgrade, "table").has("workspace_blob_cleanup_intents"),
@@ -940,10 +975,10 @@ try {
 
   const v3HistoricalUpgrade = new WorkspaceDatabase(v3HistoricalPath);
   try {
-    assert.equal(v3HistoricalUpgrade.migration?.currentVersion, 4);
+    assert.equal(v3HistoricalUpgrade.migration?.currentVersion, 6);
     assert.deepEqual(
       v3HistoricalUpgrade.migration?.applied.map((record) => record.version),
-      [4],
+      [4, 5, 6],
     );
     assert.ok(
       schemaNames(v3HistoricalUpgrade, "trigger").has(
@@ -987,10 +1022,10 @@ try {
   const newInstall = createUnmigratedDatabase("new-install.db");
   try {
     const migration = runWorkspaceMigrations(newInstall, WORKSPACE_MIGRATIONS);
-    assert.equal(migration.currentVersion, 4);
+    assert.equal(migration.currentVersion, 6);
     assert.deepEqual(
       migration.applied.map((record) => record.version),
-      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5, 6],
     );
     assert.ok(schemaNames(newInstall, "table").has("workspace_blob_records"));
     assert.ok(
@@ -1033,7 +1068,7 @@ try {
 
   const rollbackDatabase = createUnmigratedDatabase("rollback.db");
   try {
-    runWorkspaceMigrations(rollbackDatabase, WORKSPACE_MIGRATIONS);
+    runWorkspaceMigrations(rollbackDatabase, CORE_V4);
     const failingMigration: WorkspaceMigration = {
       version: 5,
       name: "forced_rollback_probe",
@@ -1048,7 +1083,7 @@ try {
     assert.throws(
       () =>
         runWorkspaceMigrations(rollbackDatabase, [
-          ...WORKSPACE_MIGRATIONS,
+          ...CORE_V4,
           failingMigration,
         ]),
       /failed and was rolled back/i,
@@ -1152,12 +1187,12 @@ try {
   try {
     encryptedStatus = encryptedDatabase.status();
     assert.equal(encryptedStatus.encrypted, true);
-    assert.equal(encryptedDatabase.migration?.currentVersion, 4);
+    assert.equal(encryptedDatabase.migration?.currentVersion, 6);
     assert.equal(
       encryptedDatabase
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      4,
+      6,
     );
   } finally {
     encryptedDatabase.close();
@@ -1171,12 +1206,12 @@ try {
     JSON.stringify(
       {
         ok: true,
-        suite: "vera-workspace-migration-audit-v4",
-        current_version: 4,
+        suite: "vera-workspace-migration-audit-v6",
+        current_version: 6,
         encrypted_driver: encryptedStatus!.encrypted,
         checks: [
-          "v1 upgrade and clean v4 install",
-          "v2 to v4 cleanup-ledger and project-ownership upgrade",
+          "v1 upgrade and clean v6 install",
+          "v2 to v6 cleanup-ledger, assistant, and workflow upgrade",
           "ordered SHA-256 checksums and idempotent rerun",
           "failed migration DDL and record roll back atomically",
           "legacy Aletheia sentinel table and row preserved",

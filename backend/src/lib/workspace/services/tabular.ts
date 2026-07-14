@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
@@ -20,12 +20,21 @@ import type {
   StructuredError,
   TabularCellValue,
   TabularColumn,
-  WorkspaceJson,
 } from "../types";
-import type { JobEnqueuer } from "./workflows";
+import type { JobEnqueuer } from "./jobEnqueuer";
 
 export const MAX_TABULAR_MATRIX_CELLS = 10_000;
 export const MAX_TABULAR_CELL_ATTEMPTS = 3;
+export const TABULAR_GENERATION_DISABLED_MESSAGE =
+  "Tabular generation requires a document-level authoritative extracted-text runtime.";
+
+export function failTabularGenerationDisabled(): never {
+  throw new WorkspaceApiError(
+    409,
+    "CONFLICT",
+    TABULAR_GENERATION_DISABLED_MESSAGE,
+  );
+}
 
 const DraftColumnInputSchema = z
   .object({
@@ -102,48 +111,6 @@ function sanitizeError(value: unknown): StructuredError {
             ]),
           ),
   });
-}
-
-function configHash(detail: TabularReviewDetail, modelProfileId: string) {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        schemaVersion: 1,
-        reviewId: detail.review.id,
-        workflowId: detail.review.workflowId,
-        modelProfileId,
-        documents: detail.review.documentIds,
-        columns: detail.columns.map((column) => ({
-          id: column.id,
-          key: column.key,
-          outputType: column.outputType,
-          prompt: column.prompt,
-          enumValues: column.enumValues,
-          ordinal: column.ordinal,
-        })),
-      }),
-    )
-    .digest("hex");
-}
-
-function cellIdempotencyKey(
-  cell: TabularCellRecord,
-  reviewConfigHash: string,
-  attempt: number,
-) {
-  const digest = createHash("sha256")
-    .update(
-      [
-        "tabular-cell-v1",
-        cell.reviewId,
-        cell.documentId,
-        cell.columnId,
-        reviewConfigHash,
-        String(attempt),
-      ].join("\n"),
-    )
-    .digest("hex");
-  return `tabular_cell:v1:${digest}`;
 }
 
 function validateCellValue(
@@ -398,7 +365,11 @@ export class TabularService {
     this.repository.delete(id);
   }
 
-  runReview(reviewId: string) {
+  runReview(reviewId: string): {
+    review: TabularReviewDetail;
+    queued: number;
+    skipped: number;
+  } {
     const detail = this.repository.requireDetail(reviewId);
     if (["archived", "cancelled"].includes(detail.review.status)) {
       throw new WorkspaceApiError(
@@ -424,88 +395,11 @@ export class TabularService {
       );
     }
     const project = this.repository.requireActiveProject(projectId);
-    this.repository.requireReadyDocuments(projectId, detail.review.documentIds);
     if (detail.review.workflowId) {
       this.repository.requireActiveTabularWorkflow(detail.review.workflowId);
     }
-    const modelProfileId =
-      detail.review.modelProfileId ??
-      project.defaultModelProfileId ??
-      defaults.defaultModelProfileId;
-    if (!modelProfileId) {
-      throw new WorkspaceApiError(
-        412,
-        "PRECONDITION_FAILED",
-        "Review model is unavailable.",
-      );
-    }
-    this.repository.requireEnabledModelProfile(modelProfileId);
-    const hash = configHash(detail, modelProfileId);
-    let queued = 0;
-    let skipped = 0;
-    for (const cell of detail.cells) {
-      if (
-        ["complete", "queued", "running", "cancelled"].includes(cell.status)
-      ) {
-        skipped += 1;
-        continue;
-      }
-      if (
-        cell.status === "failed" &&
-        (!cell.error?.retryable || cell.attempt >= MAX_TABULAR_CELL_ATTEMPTS)
-      ) {
-        skipped += 1;
-        continue;
-      }
-      this.queueCell(cell, modelProfileId, hash);
-      queued += 1;
-    }
-    return { review: this.repository.requireDetail(reviewId), queued, skipped };
-  }
-
-  private queueCell(
-    cell: TabularCellRecord,
-    modelProfileId: string,
-    reviewConfigHash: string,
-  ) {
-    const nextAttempt = cell.attempt + 1;
-    if (nextAttempt > MAX_TABULAR_CELL_ATTEMPTS) {
-      throw new WorkspaceApiError(
-        409,
-        "CONFLICT",
-        "Tabular cell retry limit reached.",
-      );
-    }
-    const jobId = this.idFactory();
-    const now = this.now();
-    const idempotencyKey = cellIdempotencyKey(
-      cell,
-      reviewConfigHash,
-      nextAttempt,
-    );
-    const payload: WorkspaceJson = {
-      reviewId: cell.reviewId,
-      documentId: cell.documentId,
-      columnId: cell.columnId,
-      modelProfileId,
-      configVersion: 1,
-      configSha256: reviewConfigHash,
-      cellAttempt: nextAttempt,
-    };
-    return this.repository.queueCell(
-      { cellId: cell.id, jobId, nextAttempt, now },
-      () =>
-        this.jobs.enqueueInCurrentTransaction({
-          id: jobId,
-          type: "tabular_cell",
-          resourceType: "tabular_cell",
-          resourceId: cell.id,
-          idempotencyKey,
-          payload,
-          maxAttempts: 1,
-          now,
-        }),
-    );
+    void project;
+    return failTabularGenerationDisabled();
   }
 
   startCell(cellId: string) {
@@ -576,7 +470,7 @@ export class TabularService {
     );
   }
 
-  retryCell(cellId: string) {
+  retryCell(cellId: string): TabularCellRecord {
     const cell = this.repository.requireCell(cellId);
     if (
       cell.status !== "failed" ||
@@ -607,27 +501,11 @@ export class TabularService {
       );
     }
     const project = this.repository.requireActiveProject(projectId);
-    this.repository.requireReadyDocuments(projectId, [cell.documentId]);
     if (detail.review.workflowId) {
       this.repository.requireActiveTabularWorkflow(detail.review.workflowId);
     }
-    const modelProfileId =
-      detail.review.modelProfileId ??
-      project.defaultModelProfileId ??
-      defaults.defaultModelProfileId;
-    if (!modelProfileId) {
-      throw new WorkspaceApiError(
-        412,
-        "PRECONDITION_FAILED",
-        "Review model is unavailable.",
-      );
-    }
-    this.repository.requireEnabledModelProfile(modelProfileId);
-    return this.queueCell(
-      cell,
-      modelProfileId,
-      configHash(detail, modelProfileId),
-    );
+    void project;
+    return failTabularGenerationDisabled();
   }
 
   cancelReview(reviewId: string) {
