@@ -1000,6 +1000,37 @@ try {
     newInstall.close();
   }
 
+  const registryGapProbe = createUnmigratedDatabase("registry-gap.db");
+  try {
+    const skippedVersion: WorkspaceMigration = {
+      version: 3,
+      name: "skipped_version_probe",
+      checksumMaterial: "must never run",
+      apply() {
+        throw new Error("a gapped registry must be rejected before apply");
+      },
+    };
+    assert.throws(
+      () =>
+        runWorkspaceMigrations(registryGapProbe, [
+          INITIAL_WORKSPACE_MIGRATION,
+          skippedVersion,
+        ]),
+      /contiguous version order starting at 1/i,
+    );
+    assert.equal(
+      registryGapProbe
+        .prepare(
+          "SELECT count(*) AS count FROM sqlite_schema WHERE name = 'workspace_schema_migrations'",
+        )
+        .get()?.count,
+      0,
+      "an invalid registry is rejected before touching the database",
+    );
+  } finally {
+    registryGapProbe.close();
+  }
+
   const rollbackDatabase = createUnmigratedDatabase("rollback.db");
   try {
     runWorkspaceMigrations(rollbackDatabase, WORKSPACE_MIGRATIONS);

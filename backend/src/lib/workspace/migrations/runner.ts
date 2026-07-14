@@ -124,9 +124,9 @@ function validateMigrationRegistry(migrations: readonly WorkspaceMigration[]) {
         `Workspace migration version must be a positive safe integer: ${migration.version}`,
       );
     }
-    if (migration.version <= previousVersion) {
+    if (migration.version !== previousVersion + 1) {
       throw new WorkspaceMigrationError(
-        "Workspace migrations must be registered in strictly increasing version order.",
+        "Workspace migrations must be registered in contiguous version order starting at 1.",
       );
     }
     if (!migration.name.trim() || names.has(migration.name)) {
