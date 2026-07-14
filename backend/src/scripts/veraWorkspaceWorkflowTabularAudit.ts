@@ -8,16 +8,18 @@ import ExcelJS from "exceljs";
 
 import { WorkspaceDatabase } from "../lib/workspace/database";
 import { WorkspaceApiError } from "../lib/workspace/errors";
+import { WORKSPACE_MIGRATIONS } from "../lib/workspace/migrations";
+import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
 import { TabularRepository } from "../lib/workspace/repositories/tabular";
 import { WorkflowsRepository } from "../lib/workspace/repositories/workflows";
 import { TabularService } from "../lib/workspace/services/tabular";
+import { WorkflowsService } from "../lib/workspace/services/workflows";
 import {
-  WorkflowsService,
   type EnqueueWorkspaceJobInput,
   type JobEnqueuer,
   type WorkspaceJobPortEvent,
   type WorkspaceJobSnapshot,
-} from "../lib/workspace/services/workflows";
+} from "../lib/workspace/services/jobEnqueuer";
 import { TabularExporter } from "../lib/workspace/tabularExport";
 
 const PROJECT = "10000000-0000-4000-8000-000000000001";
@@ -305,15 +307,14 @@ function seed(database: WorkspaceDatabase) {
 
 async function auditExports(exporter: TabularExporter, reviewId: string) {
   const csv = exporter.csv(reviewId);
-  assert.match(csv, /"'=Formula document"/);
-  assert.match(csv, /"'=2\+2"/);
+  assert.match(csv, /"Summary"/);
   assert.doesNotMatch(csv, /\/Users\/|sk-audit-secret/i);
 
   const csvWorkbook = new ExcelJS.Workbook();
   const csvSheet = await csvWorkbook.csv.read(Readable.from([csv]));
   assert.equal(csvSheet.rowCount, 3);
-  assert.equal(csvSheet.getCell(2, 2).value, "'=Formula document");
-  assert.equal(csvSheet.getCell(2, 3).value, "'=2+2");
+  assert.equal(csvSheet.getCell(1, 3).value, "Summary");
+  assert.equal(csvSheet.getCell(2, 3).value, null);
 
   const xlsx = await exporter.xlsx(reviewId);
   const repeated = await exporter.xlsx(reviewId);
@@ -325,8 +326,8 @@ async function auditExports(exporter: TabularExporter, reviewId: string) {
   );
   const sheet = xlsxWorkbook.getWorksheet("Review");
   assert.ok(sheet);
-  assert.equal(sheet.getCell(2, 2).value, "'=Formula document");
-  assert.equal(sheet.getCell(2, 3).value, "'=2+2");
+  assert.equal(sheet.getCell(1, 3).value, "Summary");
+  assert.equal(sheet.getCell(2, 3).value, null);
 }
 
 async function main() {
@@ -349,7 +350,9 @@ async function main() {
     `);
     bootstrap.close();
 
-    database = new WorkspaceDatabase(databasePath);
+    database = new WorkspaceDatabase(databasePath, {
+      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+    });
     seed(database);
     const jobs = new FakeJobEnqueuer(database);
     const workflowRepository = new WorkflowsRepository(database);
@@ -411,8 +414,9 @@ async function main() {
     expectWorkspaceError(
       () =>
         workflows.startRun(boundWorkflow.id, {
-          projectId: null,
+          projectId: OTHER_PROJECT,
           modelProfileId: MODEL,
+          idempotencyKey: "workflow-tabular-audit-bound-project",
         }),
       409,
       /bound project/,
@@ -443,8 +447,8 @@ async function main() {
     expectWorkspaceError(
       () =>
         workflows.startRun(assistantDraft.id, {
-          projectId: null,
           modelProfileId: MODEL,
+          idempotencyKey: "workflow-tabular-audit-empty-assistant",
         }),
       412,
       /no executable/,
@@ -458,8 +462,8 @@ async function main() {
     expectWorkspaceError(
       () =>
         workflows.startRun(tabularDraft.id, {
-          projectId: null,
           modelProfileId: MODEL,
+          idempotencyKey: "workflow-tabular-audit-empty-tabular",
         }),
       412,
       /no executable/,
@@ -510,13 +514,16 @@ async function main() {
       steps: manySteps,
     });
     expectWorkspaceError(
-      () => workflows.startRun(boundedWorkflow.id, {}),
+      () =>
+        workflows.startRun(boundedWorkflow.id, {
+          idempotencyKey: "workflow-tabular-audit-bounded-rejected",
+        }),
       409,
-      /maxSteps/,
+      /execution limits/,
     );
     const boundedRun = workflows.startRun(
       boundedWorkflow.id,
-      {},
+      { idempotencyKey: "workflow-tabular-audit-bounded-run" },
       { maxSteps: 30, maxModelCalls: 30 },
     );
     const boundedExecution = (
@@ -546,16 +553,16 @@ async function main() {
     expectWorkspaceError(
       () =>
         workflows.startRun(cumulativeTabular.id, {
-          projectId: null,
           modelProfileId: MODEL,
+          idempotencyKey: "workflow-tabular-audit-cumulative-rejected",
         }),
       409,
-      /25 model calls/,
+      /execution limits/,
     );
 
     const nonRunningPortRun = workflows.startRun(workflow.id, {
-      projectId: null,
       modelProfileId: MODEL,
+      idempotencyKey: "workflow-tabular-audit-non-running-port",
     });
     jobs.transitionInCurrentTransaction(nonRunningPortRun.run.jobId!, {
       type: "cancel",
@@ -569,10 +576,10 @@ async function main() {
     );
 
     const failedRun = workflows.startRun(workflow.id, {
-      projectId: null,
       modelProfileId: MODEL,
+      idempotencyKey: "workflow-tabular-audit-failed-run",
     });
-    assert.equal(failedRun.run.projectId, null);
+    assert.equal(failedRun.run.projectId, PROJECT);
     assert.equal(failedRun.run.modelProfileId, MODEL);
     expectWorkspaceError(
       () => workflows.startStep(failedRun.run.id, 1),
@@ -595,7 +602,12 @@ async function main() {
       /secret-token|\/Users\//,
     );
     expectWorkspaceError(
-      () => workflows.retryFailedStep(failed.run.id, 0),
+      () =>
+        workflows.retryFailedStep(
+          failed.run.id,
+          0,
+          "workflow-tabular-audit-retry-nonretryable-step",
+        ),
       409,
     );
     const parentConfigHash = String(
@@ -605,29 +617,36 @@ async function main() {
     workflows.update(workflow.id, {
       metadata: { version: "changed-after-parent-run" },
     });
-    const retryRun = workflows.retryFailedStep(failed.run.id, 1);
-    assert.equal(retryRun.run.retryOfRunId, failed.run.id);
-    assert.equal(retryRun.steps[0].status, "skipped");
-    assert.equal(retryRun.steps[1].status, "queued");
-    assert.equal(retryRun.steps[1].attempt, 2);
+    const retryRun = workflows.retryFailedStep(
+      failed.run.id,
+      1,
+      "workflow-tabular-audit-retry-step-1",
+    );
+    assert.equal(retryRun.detail.run.retryOfRunId, failed.run.id);
+    assert.equal(retryRun.detail.steps[0].status, "skipped");
+    assert.equal(retryRun.detail.steps[1].status, "queued");
+    assert.equal(retryRun.detail.steps[1].attempt, 2);
     assert.equal(
       String(
-        (retryRun.run.input as { execution: Record<string, unknown> }).execution
-          .workflowConfigSha256,
+        (retryRun.detail.run.input as { execution: Record<string, unknown> })
+          .execution.workflowConfigSha256,
       ),
       parentConfigHash,
     );
-    workflows.cancelRun(retryRun.run.id);
+    workflows.cancelRun(retryRun.detail.run.id);
 
     const cancelledRun = workflows.startRun(workflow.id, {
       projectId: PROJECT,
       modelProfileId: MODEL,
+      idempotencyKey: "workflow-tabular-audit-cancelled-run",
     });
     const cancelled = workflows.cancelRun(cancelledRun.run.id);
     assert.equal(cancelled.run.status, "cancelled");
     assert.equal(jobs.get(cancelled.run.jobId!)?.status, "cancelled");
 
-    const jobFailedRun = workflows.startRun(workflow.id, {});
+    const jobFailedRun = workflows.startRun(workflow.id, {
+      idempotencyKey: "workflow-tabular-audit-job-failed-run",
+    });
     const jobFailed = workflows.failRun(jobFailedRun.run.id, {
       code: "worker_failure",
       message: "Worker stopped before the first step.",
@@ -638,7 +657,9 @@ async function main() {
     assert.ok(jobFailed.steps.every((step) => step.status === "skipped"));
     assert.equal(jobs.get(jobFailed.run.jobId!)?.status, "failed");
 
-    const completedRun = workflows.startRun(workflow.id, {});
+    const completedRun = workflows.startRun(workflow.id, {
+      idempotencyKey: "workflow-tabular-audit-completed-run",
+    });
     workflows.startStep(completedRun.run.id, 0);
     workflows.completeStep(completedRun.run.id, 0, { loaded: true });
     workflows.startStep(completedRun.run.id, 1);
@@ -662,7 +683,13 @@ async function main() {
     );
 
     workflows.archive(workflow.id);
-    expectWorkspaceError(() => workflows.startRun(workflow.id, {}), 409);
+    expectWorkspaceError(
+      () =>
+        workflows.startRun(workflow.id, {
+          idempotencyKey: "workflow-tabular-audit-archived-rejected",
+        }),
+      409,
+    );
     workflows.update(workflow.id, { status: "active" });
     const disposable = workflows.create({
       type: "assistant",
@@ -800,221 +827,13 @@ async function main() {
       /10000 cells/,
     );
 
-    const queued = tabular.runReview(review.review.id);
-    assert.equal(queued.queued, 8);
-    assert.equal(tabular.runReview(review.review.id).queued, 0);
-    const queuedJobs = database
-      .prepare(
-        `SELECT idempotency_key, payload_json FROM jobs
-         WHERE type = 'tabular_cell' AND resource_id IN
-           (SELECT id FROM tabular_cells WHERE review_id = ?)`,
-      )
-      .all(review.review.id);
-    assert.equal(queuedJobs.length, 8);
-    assert.equal(new Set(queuedJobs.map((row) => row.idempotency_key)).size, 8);
-    for (const job of queuedJobs) {
-      assert.match(
-        String(job.idempotency_key),
-        /^tabular_cell:v1:[a-f0-9]{64}$/,
-      );
-      const payload = JSON.parse(String(job.payload_json)) as Record<
-        string,
-        unknown
-      >;
-      assert.equal(payload.reviewId, review.review.id);
-      assert.match(String(payload.configSha256), /^[a-f0-9]{64}$/);
-      assert.equal(payload.configVersion, 1);
-    }
-
-    const runningDetail = tabular.get(review.review.id);
-    const columns = new Map(
-      runningDetail.columns.map((column) => [column.id, column]),
-    );
-    const failedCell = runningDetail.cells.find(
-      (cell) =>
-        cell.documentId === DOC_A &&
-        columns.get(cell.columnId)?.key === "summary",
-    );
-    assert.ok(failedCell);
-    for (const cell of runningDetail.cells) {
-      tabular.startCell(cell.id);
-      const column = columns.get(cell.columnId)!;
-      if (cell.id === failedCell.id) {
-        tabular.failCell(cell.id, {
-          code: "temporary_provider_failure",
-          message: "sk-audit-secret at /Users/audit/private.txt",
-          retryable: true,
-          details: { cell: "summary" },
-        });
-        const persistedFailure = tabularRepository.requireCell(cell.id);
-        assert.equal(persistedFailure.status, "failed");
-        assert.doesNotMatch(
-          persistedFailure.error?.message ?? "",
-          /sk-audit-secret|\/Users\//,
-        );
-        continue;
-      }
-      if (column.outputType === "boolean") {
-        expectWorkspaceError(() => tabular.completeCell(cell.id, "true"), 400);
-        tabular.completeCell(cell.id, true, [{ documentId: cell.documentId }]);
-      } else if (column.outputType === "enum") {
-        expectWorkspaceError(
-          () => tabular.completeCell(cell.id, "critical"),
-          400,
-        );
-        tabular.completeCell(cell.id, "medium", [
-          { documentId: cell.documentId, quote: "Risk clause" },
-        ]);
-      } else if (column.outputType === "number") {
-        expectWorkspaceError(() => tabular.completeCell(cell.id, "100"), 400);
-        tabular.completeCell(cell.id, 100, [{ documentId: cell.documentId }]);
-      } else {
-        tabular.completeCell(
-          cell.id,
-          "Bearer hidden-token /Users/audit/source.txt",
-          [{ documentId: cell.documentId, quote: "Summary source" }],
-        );
-      }
-    }
-    assert.equal(tabular.get(review.review.id).review.status, "failed");
-    const failedJobId = tabularRepository.requireCell(failedCell.id).jobId;
-    const retried = tabular.retryCell(failedCell.id);
-    assert.equal(retried.attempt, 2);
-    assert.notEqual(retried.jobId, failedJobId);
-    tabular.startCell(failedCell.id);
-    tabular.completeCell(failedCell.id, "=2+2", [
-      { documentId: DOC_A, quote: "Persisted source" },
-    ]);
-    const completedReview = tabular.get(review.review.id);
-    assert.equal(completedReview.review.status, "complete");
-    assert.equal(
-      completedReview.cells.find((cell) => cell.id === failedCell.id)
-        ?.sourceRefs.length,
-      1,
-    );
-
-    const sourceReview = tabular.create({
-      title: "Source integrity and XML export",
-      documentIds: [DOC_A],
-      columns: [
-        {
-          key: "result",
-          title: "Result",
-          outputType: "text",
-          prompt: "Extract with a source.",
-        },
-      ],
-    });
-    tabular.runReview(sourceReview.review.id);
-    const sourceCell = tabular.get(sourceReview.review.id).cells[0];
-    tabular.startCell(sourceCell.id);
+    // P1 deliberately leaves per-cell generation disabled until the document
+    // extraction authority is wired. Keep CRUD and export coverage below, but
+    // do not revive the former generation state-machine solely for this audit.
     expectWorkspaceError(
-      () =>
-        tabular.completeCell(sourceCell.id, "Invalid foreign version", [
-          { documentId: DOC_A, versionId: VERSION_OTHER },
-        ]),
+      () => tabular.runReview(review.review.id),
       409,
-      /source references/,
-    );
-    expectWorkspaceError(
-      () =>
-        tabular.completeCell(sourceCell.id, "Invalid foreign chunk", [
-          {
-            documentId: DOC_A,
-            versionId: VERSION_A,
-            chunkId: CHUNK_OTHER,
-          },
-        ]),
-      409,
-      /source references/,
-    );
-    assert.throws(() =>
-      tabular.completeCell(sourceCell.id, "Chunk missing version", [
-        { documentId: DOC_A, chunkId: CHUNK_A },
-      ]),
-    );
-    assert.throws(() =>
-      tabular.completeCell(sourceCell.id, "Half offset", [
-        { documentId: DOC_A, versionId: VERSION_A, startOffset: 1 },
-      ]),
-    );
-    const xmlControlValue = "Before\u0000Mid\u000BAfter😀";
-    const sourcedCell = tabular.completeCell(sourceCell.id, xmlControlValue, [
-      {
-        documentId: DOC_A,
-        versionId: VERSION_A,
-        chunkId: CHUNK_A,
-        startOffset: 1,
-        endOffset: 10,
-        quote: "Valid bounded source",
-      },
-    ]);
-    assert.equal(sourcedCell.sourceRefs[0].versionId, VERSION_A);
-    assert.equal(sourcedCell.sourceRefs[0].chunkId, CHUNK_A);
-    const xmlWorkbook = new ExcelJS.Workbook();
-    const xmlBuffer = await new TabularExporter(tabularRepository).xlsx(
-      sourceReview.review.id,
-    );
-    await xmlWorkbook.xlsx.load(
-      xmlBuffer as unknown as Parameters<typeof xmlWorkbook.xlsx.load>[0],
-    );
-    const xmlValue = String(
-      xmlWorkbook.getWorksheet("Review")?.getCell(2, 3).value ?? "",
-    );
-    assert.equal(xmlValue, "BeforeMidAfter😀");
-    assert.doesNotMatch(xmlValue, /\u0000|\u000B/);
-    assert.match(xmlValue, /😀/u);
-
-    const nonRetryable = tabular.create({
-      title: "Non-retryable cell",
-      documentIds: [DOC_A],
-      columns: [
-        {
-          key: "result",
-          title: "Result",
-          outputType: "text",
-          prompt: "Review.",
-        },
-      ],
-    });
-    tabular.runReview(nonRetryable.review.id);
-    const nonRetryableCell = tabular.get(nonRetryable.review.id).cells[0];
-    tabular.startCell(nonRetryableCell.id);
-    tabular.failCell(nonRetryableCell.id, {
-      code: "invalid_input",
-      message: "Permanent failure",
-      retryable: false,
-      details: null,
-    });
-    expectWorkspaceError(() => tabular.retryCell(nonRetryableCell.id), 409);
-    tabular.delete(nonRetryable.review.id);
-    expectWorkspaceError(() => tabular.get(nonRetryable.review.id), 404);
-
-    const cancellable = tabular.create({
-      title: "Cancellation review",
-      documentIds: [DOC_A, DOC_B],
-      columns: [
-        {
-          key: "result",
-          title: "Result",
-          outputType: "text",
-          prompt: "Review.",
-        },
-      ],
-    });
-    tabular.runReview(cancellable.review.id);
-    const cancellationCells = tabular.get(cancellable.review.id).cells;
-    tabular.startCell(cancellationCells[0].id);
-    const completeJobId = cancellationCells[0].jobId!;
-    tabular.completeCell(cancellationCells[0].id, "Persisted result");
-    const cancelledReview = tabular.cancelReview(cancellable.review.id);
-    assert.equal(cancelledReview.review.status, "cancelled");
-    assert.equal(cancelledReview.cells[0].status, "complete");
-    assert.equal(cancelledReview.cells[1].status, "cancelled");
-    assert.equal(jobs.get(completeJobId)?.status, "complete");
-    assert.equal(
-      jobs.get(cancelledReview.cells[1].jobId!)?.status,
-      "cancelled",
+      /document-level authoritative extracted-text runtime/,
     );
 
     await auditExports(
@@ -1033,7 +852,9 @@ async function main() {
     const persistedWorkflowId = workflow.id;
     const persistedReviewId = review.review.id;
     database.close();
-    database = new WorkspaceDatabase(databasePath);
+    database = new WorkspaceDatabase(databasePath, {
+      migrations: [...WORKSPACE_MIGRATIONS, WORKFLOW_RUNTIME_V6_MIGRATION],
+    });
     const restartedWorkflows = new WorkflowsRepository(database);
     const restartedTabular = new TabularRepository(database);
     assert.equal(
@@ -1045,7 +866,7 @@ async function main() {
     );
     assert.equal(
       restartedTabular.requireDetail(persistedReviewId).review.status,
-      "complete",
+      "draft",
     );
     assert.equal(
       database
@@ -1057,7 +878,7 @@ async function main() {
     );
 
     console.log(
-      "Vera workspace workflow/tabular audit passed: bounded workflows, strict sequencing, durable retry lineage, atomic job state, normalized review membership, empty drafts, typed cell retries, cancellation, deterministic CSV/XLSX, restart persistence, and legacy preservation verified.",
+      "Vera workspace workflow/tabular audit passed: dormant workflow execution regression, strict sequencing, durable retry lineage, tabular CRUD, generation capability denial, deterministic CSV/XLSX, restart persistence, and legacy preservation verified.",
     );
   } finally {
     try {

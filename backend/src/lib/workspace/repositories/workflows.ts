@@ -36,6 +36,57 @@ export type WorkflowRunDetail = {
   steps: WorkflowRunStep[];
 };
 
+/**
+ * Immutable, non-secret record of exactly what a queued workflow run is
+ * allowed to execute.  This is intentionally separate from the editable
+ * workflow row.
+ */
+export type WorkflowExecutionSnapshot = {
+  id: string;
+  workflowRunId: string;
+  workflowId: string;
+  schemaVersion: 1;
+  workflowVersion: string;
+  projectId: string | null;
+  modelProfileId: string | null;
+  config: WorkspaceJson;
+  steps: WorkflowStep[];
+  skillMarkdown: string;
+  columns: WorkflowColumn[];
+  inputBinding: WorkspaceJson;
+  snapshotSha256: string;
+  createdAt: string;
+};
+
+export type NewWorkflowExecutionSnapshot = WorkflowExecutionSnapshot;
+
+export type PreparedWorkflowRunInput = {
+  record: NewWorkflowRunRecord;
+  snapshot: NewWorkflowExecutionSnapshot;
+  idempotencyKey: string;
+  inputSha256: string;
+};
+
+export type PreparedWorkflowRun = {
+  detail: WorkflowRunDetail;
+  snapshot: WorkflowExecutionSnapshot;
+  reused: boolean;
+};
+
+export type SystemWorkflowTemplate = {
+  workflow: NewWorkflowRecord;
+  upstreamId: string;
+  upstreamVersion: string;
+  sourceSha256: string;
+};
+
+export type SystemWorkflowMapping = {
+  workflowId: string;
+  upstreamId: string;
+  upstreamVersion: string;
+  sourceSha256: string;
+};
+
 export type NewWorkflowRecord = {
   id: string;
   type: Workflow["type"];
@@ -134,8 +185,27 @@ function optionalJson<T>(
   return value == null ? null : parseJson(value, schema, label);
 }
 
+/**
+ * Tabular workflows have no first-class `skillMarkdown` domain field, but
+ * Mike's tabular system workflows do.  Keep that bounded, non-secret source
+ * text in the existing metadata envelope while the durable row retains the
+ * exact value in `skill_markdown`.  This is compatibility metadata, not an
+ * execution shortcut.
+ */
+const MIKE_TABULAR_SKILL_METADATA_KEY = "mikeTabularSkillMarkdown";
+
+function tabularSkillMarkdown(metadata: Record<string, WorkspaceJson>): string {
+  const value = metadata[MIKE_TABULAR_SKILL_METADATA_KEY];
+  return typeof value === "string" ? value : "";
+}
+
 function mapWorkflow(row: Row): Workflow {
   const type = row.type;
+  const metadata = parseJson(
+    row.metadata_json,
+    WorkflowMetadataSchema,
+    "workflow metadata",
+  );
   const common = {
     id: String(row.id),
     projectId: row.project_id == null ? null : String(row.project_id),
@@ -154,11 +224,13 @@ function mapWorkflow(row: Row): Workflow {
       WorkflowJurisdictionsSchema,
       "workflow jurisdictions",
     ),
-    metadata: parseJson(
-      row.metadata_json,
-      WorkflowMetadataSchema,
-      "workflow metadata",
-    ),
+    metadata:
+      type === "tabular"
+        ? {
+            ...metadata,
+            [MIKE_TABULAR_SKILL_METADATA_KEY]: String(row.skill_markdown),
+          }
+        : metadata,
     isBuiltin: Number(row.is_builtin) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -240,6 +312,53 @@ function mapRun(row: Row): WorkflowRunRecord {
   }
 }
 
+function mapSnapshot(row: Row): WorkflowExecutionSnapshot {
+  const candidate = {
+    id: String(row.id),
+    workflowRunId: String(row.workflow_run_id),
+    workflowId: String(row.workflow_id),
+    schemaVersion: Number(row.schema_version),
+    workflowVersion: String(row.workflow_version),
+    projectId: row.project_id == null ? null : String(row.project_id),
+    modelProfileId:
+      row.model_profile_id == null ? null : String(row.model_profile_id),
+    config: parseJson(
+      row.config_json,
+      SafeStructuredValueSchema,
+      "snapshot config",
+    ),
+    steps: parseJson(
+      row.steps_json,
+      WorkflowStepSchema.array().max(100),
+      "snapshot steps",
+    ),
+    skillMarkdown: String(row.skill_markdown),
+    columns: parseJson(
+      row.columns_config_json,
+      WorkflowColumnSchema.array().max(100),
+      "snapshot columns",
+    ),
+    inputBinding: parseJson(
+      row.input_binding_json,
+      SafeStructuredValueSchema,
+      "snapshot input binding",
+    ),
+    snapshotSha256: String(row.snapshot_sha256),
+    createdAt: String(row.created_at),
+  };
+  if (
+    candidate.schemaVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(candidate.snapshotSha256)
+  ) {
+    throw new WorkspaceApiError(
+      500,
+      "INTERNAL_ERROR",
+      "Invalid persisted workflow execution snapshot.",
+    );
+  }
+  return { ...candidate, schemaVersion: 1 };
+}
+
 function mapStepRun(row: Row): WorkflowRunStep {
   const candidate = {
     id: String(row.id),
@@ -300,6 +419,95 @@ export class WorkflowsRepository {
       }
       throw error;
     }
+  }
+
+  private requireWorkflowRuntimeV6() {
+    const row = this.database
+      .prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_execution_snapshots'",
+      )
+      .get();
+    if (!row) {
+      throw new WorkspaceApiError(
+        503,
+        "PRECONDITION_FAILED",
+        "Workflow runtime schema v6 has not been applied.",
+      );
+    }
+  }
+
+  private insertRunInCurrentTransaction(input: NewWorkflowRunRecord) {
+    this.database
+      .prepare(
+        `INSERT INTO workflow_runs
+          (id, workflow_id, project_id, model_profile_id, retry_of_run_id,
+           status, input_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.workflowId,
+        input.projectId,
+        input.modelProfileId,
+        input.retryOfRunId,
+        serialize(input.input),
+        input.now,
+        input.now,
+      );
+    const statement = this.database.prepare(
+      `INSERT INTO workflow_step_runs
+        (id, workflow_run_id, ordinal, attempt, step_json, status, input_json,
+         output_json, error_json, error_code, started_at, completed_at,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const step of input.steps) {
+      statement.run(
+        step.id,
+        input.id,
+        step.ordinal,
+        step.attempt,
+        serialize(step.step),
+        step.status,
+        serialize(step.input),
+        step.output == null ? null : serialize(step.output),
+        step.error == null ? null : serialize(step.error),
+        step.error?.code ?? null,
+        step.startedAt,
+        step.completedAt,
+        input.now,
+        input.now,
+      );
+    }
+  }
+
+  private insertSnapshotInCurrentTransaction(
+    snapshot: NewWorkflowExecutionSnapshot,
+  ) {
+    this.database
+      .prepare(
+        `INSERT INTO workflow_execution_snapshots
+          (id, workflow_run_id, workflow_id, schema_version, workflow_version,
+           project_id, model_profile_id, config_json, steps_json, skill_markdown,
+           columns_config_json, input_binding_json, snapshot_sha256, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        snapshot.id,
+        snapshot.workflowRunId,
+        snapshot.workflowId,
+        snapshot.schemaVersion,
+        snapshot.workflowVersion,
+        snapshot.projectId,
+        snapshot.modelProfileId,
+        serialize(snapshot.config),
+        serialize(snapshot.steps),
+        snapshot.skillMarkdown,
+        serialize(snapshot.columns),
+        serialize(snapshot.inputBinding),
+        snapshot.snapshotSha256,
+        snapshot.createdAt,
+      );
   }
 
   list(
@@ -372,6 +580,10 @@ export class WorkflowsRepository {
   }
 
   create(input: NewWorkflowRecord): Workflow {
+    const persistedSkillMarkdown =
+      input.type === "tabular"
+        ? tabularSkillMarkdown(input.metadata) || input.skillMarkdown
+        : input.skillMarkdown;
     this.database
       .prepare(
         `INSERT INTO workflows
@@ -386,7 +598,7 @@ export class WorkflowsRepository {
         input.projectId,
         input.title,
         input.description,
-        input.skillMarkdown,
+        persistedSkillMarkdown,
         serialize(input.steps),
         serialize(input.columns),
         input.language,
@@ -400,8 +612,124 @@ export class WorkflowsRepository {
     return this.require(input.id);
   }
 
+  /**
+   * Persist a Mike system template under a local UUID while retaining the
+   * upstream builtin identifier in dedicated metadata.  Existing mappings are
+   * never rewritten: a newer template must be introduced deliberately rather
+   * than mutating a workflow that may have historical runs.
+   */
+  seedSystemWorkflow(input: SystemWorkflowTemplate): Workflow {
+    if (!input.workflow.isBuiltin) {
+      throw new WorkspaceApiError(
+        400,
+        "VALIDATION_ERROR",
+        "System workflow seed must be marked builtin.",
+      );
+    }
+    if (!/^builtin-[a-z0-9-]+$/.test(input.upstreamId)) {
+      throw new WorkspaceApiError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid Mike builtin workflow identifier.",
+      );
+    }
+    if (!/^[a-f0-9]{64}$/.test(input.sourceSha256)) {
+      throw new WorkspaceApiError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid system workflow source checksum.",
+      );
+    }
+    return this.transaction(() => {
+      this.requireWorkflowRuntimeV6();
+      const existing = this.database
+        .prepare(
+          "SELECT workflow_id FROM workflow_system_templates WHERE upstream_id = ?",
+        )
+        .get(input.upstreamId);
+      if (existing) return this.require(String(existing.workflow_id));
+
+      const occupied = this.get(input.workflow.id);
+      if (occupied) {
+        throw new WorkspaceApiError(
+          409,
+          "CONFLICT",
+          "Local workflow UUID is already occupied and cannot be remapped.",
+        );
+      }
+      const created = this.create(input.workflow);
+      this.database
+        .prepare(
+          `INSERT INTO workflow_system_templates
+            (workflow_id, upstream_id, upstream_version, source_sha256, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          created.id,
+          input.upstreamId,
+          input.upstreamVersion,
+          input.sourceSha256,
+          input.workflow.now,
+          input.workflow.now,
+        );
+      return created;
+    });
+  }
+
+  getSystemWorkflowMappingByUpstreamId(
+    upstreamId: string,
+  ): SystemWorkflowMapping | null {
+    this.requireWorkflowRuntimeV6();
+    const row = this.database
+      .prepare(
+        `SELECT workflow_id, upstream_id, upstream_version, source_sha256
+         FROM workflow_system_templates WHERE upstream_id = ?`,
+      )
+      .get(upstreamId);
+    return row
+      ? {
+          workflowId: String(row.workflow_id),
+          upstreamId: String(row.upstream_id),
+          upstreamVersion: String(row.upstream_version),
+          sourceSha256: String(row.source_sha256),
+        }
+      : null;
+  }
+
+  getSystemWorkflowMappingByWorkflowId(
+    workflowId: string,
+  ): SystemWorkflowMapping | null {
+    this.requireWorkflowRuntimeV6();
+    const row = this.database
+      .prepare(
+        `SELECT workflow_id, upstream_id, upstream_version, source_sha256
+         FROM workflow_system_templates WHERE workflow_id = ?`,
+      )
+      .get(workflowId);
+    return row
+      ? {
+          workflowId: String(row.workflow_id),
+          upstreamId: String(row.upstream_id),
+          upstreamVersion: String(row.upstream_version),
+          sourceSha256: String(row.source_sha256),
+        }
+      : null;
+  }
+
+  resolveMikeWorkflowId(id: string) {
+    if (!id.startsWith("builtin-")) return id;
+    const mapping = this.getSystemWorkflowMappingByUpstreamId(id);
+    if (!mapping)
+      throw new WorkspaceApiError(404, "NOT_FOUND", "Workflow not found.");
+    return mapping.workflowId;
+  }
+
   replace(workflow: Workflow, now: string): Workflow {
     this.require(workflow.id);
+    const persistedSkillMarkdown =
+      workflow.type === "tabular"
+        ? tabularSkillMarkdown(workflow.metadata)
+        : workflow.skillMarkdown;
     this.database
       .prepare(
         `UPDATE workflows
@@ -416,7 +744,7 @@ export class WorkflowsRepository {
         workflow.title,
         workflow.description,
         workflow.status,
-        workflow.type === "assistant" ? workflow.skillMarkdown : "",
+        persistedSkillMarkdown,
         serialize(workflow.steps),
         serialize(workflow.type === "tabular" ? workflow.columns : []),
         workflow.language,
@@ -483,6 +811,15 @@ export class WorkflowsRepository {
     );
   }
 
+  listHiddenWorkflowIds() {
+    return this.database
+      .prepare(
+        "SELECT workflow_id FROM hidden_workflows ORDER BY created_at ASC, id ASC",
+      )
+      .all()
+      .map((row) => String(row.workflow_id));
+  }
+
   requireActiveProject(projectId: string) {
     const row = this.database
       .prepare(
@@ -519,6 +856,41 @@ export class WorkflowsRepository {
     return { id: modelProfileId };
   }
 
+  executionModelProfile(modelProfileId: string): WorkspaceJson {
+    const row = this.database
+      .prepare(
+        `SELECT id, provider, model, context_window_tokens, max_output_tokens,
+                capabilities_json, enabled, updated_at
+           FROM model_profiles WHERE id = ?`,
+      )
+      .get(modelProfileId);
+    if (!row || Number(row.enabled) !== 1) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Model profile is unavailable for workflow execution.",
+      );
+    }
+    return SafeStructuredValueSchema.parse({
+      id: String(row.id),
+      provider: String(row.provider),
+      model: String(row.model),
+      contextWindow:
+        row.context_window_tokens == null
+          ? null
+          : Number(row.context_window_tokens),
+      maxOutput:
+        row.max_output_tokens == null ? null : Number(row.max_output_tokens),
+      capabilities: parseJson(
+        row.capabilities_json,
+        SafeStructuredValueSchema,
+        "model profile capabilities",
+      ),
+      enabled: true,
+      updatedAt: String(row.updated_at),
+    });
+  }
+
   workspaceDefaults() {
     const row = this.database
       .prepare(
@@ -545,48 +917,7 @@ export class WorkflowsRepository {
 
   createRun(input: NewWorkflowRunRecord, enqueueJob: () => { id: string }) {
     return this.transaction(() => {
-      this.database
-        .prepare(
-          `INSERT INTO workflow_runs
-            (id, workflow_id, project_id, model_profile_id, retry_of_run_id,
-             status, input_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.workflowId,
-          input.projectId,
-          input.modelProfileId,
-          input.retryOfRunId,
-          serialize(input.input),
-          input.now,
-          input.now,
-        );
-      const statement = this.database.prepare(
-        `INSERT INTO workflow_step_runs
-          (id, workflow_run_id, ordinal, attempt, step_json, status, input_json,
-           output_json, error_json, error_code, started_at, completed_at,
-           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const step of input.steps) {
-        statement.run(
-          step.id,
-          input.id,
-          step.ordinal,
-          step.attempt,
-          serialize(step.step),
-          step.status,
-          serialize(step.input),
-          step.output == null ? null : serialize(step.output),
-          step.error == null ? null : serialize(step.error),
-          step.error?.code ?? null,
-          step.startedAt,
-          step.completedAt,
-          input.now,
-          input.now,
-        );
-      }
+      this.insertRunInCurrentTransaction(input);
       const job = enqueueJob();
       if (job.id !== input.jobId) {
         throw new WorkspaceApiError(
@@ -604,6 +935,92 @@ export class WorkflowsRepository {
     });
   }
 
+  createPreparedRun(
+    input: PreparedWorkflowRunInput,
+    enqueueJob: () => { id: string },
+  ): PreparedWorkflowRun {
+    return this.transaction(() => {
+      this.requireWorkflowRuntimeV6();
+      const existing = this.database
+        .prepare(
+          `SELECT workflow_run_id, workflow_id, project_id, retry_of_run_id,
+                  snapshot_sha256, input_sha256
+           FROM workflow_run_idempotency WHERE idempotency_key = ?`,
+        )
+        .get(input.idempotencyKey);
+      if (existing) {
+        const same =
+          String(existing.workflow_id) === input.record.workflowId &&
+          (existing.project_id == null ? null : String(existing.project_id)) ===
+            input.record.projectId &&
+          (existing.retry_of_run_id == null
+            ? null
+            : String(existing.retry_of_run_id)) === input.record.retryOfRunId &&
+          String(existing.snapshot_sha256) === input.snapshot.snapshotSha256 &&
+          String(existing.input_sha256) === input.inputSha256;
+        if (!same) {
+          throw new WorkspaceApiError(
+            409,
+            "CONFLICT",
+            "Workflow run idempotency key conflicts with a different execution snapshot or input.",
+          );
+        }
+        const runId = String(existing.workflow_run_id);
+        const snapshot = this.requireExecutionSnapshot(runId);
+        return {
+          detail: this.requireRunDetail(runId),
+          snapshot,
+          reused: true,
+        };
+      }
+
+      if (input.snapshot.workflowRunId !== input.record.id) {
+        throw new WorkspaceApiError(
+          500,
+          "INTERNAL_ERROR",
+          "Workflow snapshot run identity mismatch.",
+        );
+      }
+      this.insertRunInCurrentTransaction(input.record);
+      this.insertSnapshotInCurrentTransaction(input.snapshot);
+      this.database
+        .prepare(
+          `INSERT INTO workflow_run_idempotency
+            (idempotency_key, workflow_run_id, workflow_id, project_id,
+             retry_of_run_id, snapshot_sha256, input_sha256, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.idempotencyKey,
+          input.record.id,
+          input.record.workflowId,
+          input.record.projectId,
+          input.record.retryOfRunId,
+          input.snapshot.snapshotSha256,
+          input.inputSha256,
+          input.record.now,
+        );
+      const job = enqueueJob();
+      if (job.id !== input.record.jobId) {
+        throw new WorkspaceApiError(
+          500,
+          "INTERNAL_ERROR",
+          "Job enqueuer returned an unexpected id.",
+        );
+      }
+      this.database
+        .prepare(
+          "UPDATE workflow_runs SET job_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(input.record.jobId, input.record.now, input.record.id);
+      return {
+        detail: this.requireRunDetail(input.record.id),
+        snapshot: this.requireExecutionSnapshot(input.record.id),
+        reused: false,
+      };
+    });
+  }
+
   getRun(id: string): WorkflowRunRecord | null {
     const row = this.database
       .prepare("SELECT * FROM workflow_runs WHERE id = ?")
@@ -616,6 +1033,28 @@ export class WorkflowsRepository {
     if (!run)
       throw new WorkspaceApiError(404, "NOT_FOUND", "Workflow run not found.");
     return run;
+  }
+
+  getExecutionSnapshot(runId: string): WorkflowExecutionSnapshot | null {
+    this.requireWorkflowRuntimeV6();
+    const row = this.database
+      .prepare(
+        "SELECT * FROM workflow_execution_snapshots WHERE workflow_run_id = ?",
+      )
+      .get(runId);
+    return row ? mapSnapshot(row) : null;
+  }
+
+  requireExecutionSnapshot(runId: string): WorkflowExecutionSnapshot {
+    const snapshot = this.getExecutionSnapshot(runId);
+    if (!snapshot) {
+      throw new WorkspaceApiError(
+        409,
+        "PRECONDITION_FAILED",
+        "Workflow run has no durable execution snapshot.",
+      );
+    }
+    return snapshot;
   }
 
   getRunDetail(id: string): WorkflowRunDetail | null {
@@ -758,8 +1197,10 @@ export class WorkflowsRepository {
     ordinal: number,
     output: WorkspaceJson,
     now: string,
+    assertClaim?: () => void,
   ) {
     return this.transaction(() => {
+      assertClaim?.();
       this.requireRunDetail(runId);
       const row = this.database
         .prepare(
