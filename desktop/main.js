@@ -13,6 +13,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const { ensureMacOsKeychainKey } = require("./macOsKeychain");
 const {
   AUDIT_ANCHOR_ENV_KEYS,
   disabledAuditAnchorConfiguration,
@@ -275,64 +276,6 @@ function encryptedVolumeAttested() {
   }
 }
 
-function ensureMacOsKeychainKey({ service, account, label }) {
-  if (process.platform !== "darwin") {
-    throw new Error(
-      `${label} needs an operator-provided key on this platform.`,
-    );
-  }
-  const args = ["find-generic-password", "-s", service, "-a", account, "-w"];
-  try {
-    const existing = execFileSync("/usr/bin/security", args, {
-      encoding: "utf8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
-    }).trim();
-    if (Buffer.from(existing, "base64").length !== 32) {
-      throw new Error("invalid key length");
-    }
-    return;
-  } catch {
-    // A missing item is provisioned below. We never log or return its value.
-  }
-  const generated = crypto.randomBytes(32).toString("base64");
-  try {
-    execFileSync(
-      "/usr/bin/security",
-      [
-        "add-generic-password",
-        "-U",
-        "-s",
-        service,
-        "-a",
-        account,
-        "-w",
-        generated,
-      ],
-      {
-        encoding: "utf8",
-        timeout: 10_000,
-        stdio: ["ignore", "pipe", "pipe"],
-        shell: false,
-      },
-    );
-    const verified = execFileSync("/usr/bin/security", args, {
-      encoding: "utf8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
-    }).trim();
-    if (Buffer.from(verified, "base64").length !== 32) {
-      throw new Error("invalid key length");
-    }
-  } catch {
-    throw new Error(
-      `Unable to provision the ${PRODUCT_NAME} ${label} key in macOS Keychain.`,
-    );
-  }
-}
-
 function applicationEncryptionEnvironment() {
   const mode = process.env.ALETHEIA_APPLICATION_ENCRYPTION ?? "required";
   if (mode === "disabled") {
@@ -361,6 +304,7 @@ function applicationEncryptionEnvironment() {
     service: APPLICATION_KEYCHAIN_SERVICE,
     account: APPLICATION_KEYCHAIN_ACCOUNT,
     label: "application encryption",
+    productName: PRODUCT_NAME,
   });
   return {
     ALETHEIA_APPLICATION_ENCRYPTION: "required",
@@ -381,6 +325,7 @@ function readApplicationMasterKey() {
       service: APPLICATION_KEYCHAIN_SERVICE,
       account: APPLICATION_KEYCHAIN_ACCOUNT,
       label: "application encryption",
+      productName: PRODUCT_NAME,
     });
     encoded = execFileSync(
       "/usr/bin/security",
@@ -485,6 +430,7 @@ function databaseEncryptionEnvironment() {
     service: DATABASE_KEYCHAIN_SERVICE,
     account: DATABASE_KEYCHAIN_ACCOUNT,
     label: "SQLCipher database encryption",
+    productName: PRODUCT_NAME,
   });
   return {
     ALETHEIA_DATABASE_ENCRYPTION: "sqlcipher_required",

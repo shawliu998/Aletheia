@@ -19,6 +19,7 @@
     "test:packaged-notifications": "node scripts/packagedNotificationAudit.js",
     "test:product-rename": "node scripts/productRenameAudit.js",
     "test:audit-anchor-config": "node scripts/auditAnchorConfigAudit.js",
+    "test:keychain-provisioning": "node scripts/macOsKeychainProvisioningAudit.js",
     "test:original-document-save": "node scripts/originalDocumentSaveAudit.js",
     "signing:preflight": "node scripts/releaseSigningPreflight.js",
     "signing:verify": "node scripts/verifyMacRelease.js",
@@ -40,6 +41,7 @@
     "afterSign": "scripts/afterSign.js",
     "files": [
       "main.js",
+      "macOsKeychain.js",
       "preload.js",
       "auditAnchorConfig.js",
       "originalDocumentSave.js",
