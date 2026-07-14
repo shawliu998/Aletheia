@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -21,11 +20,12 @@ import {
   runWorkspaceMigrations,
   workspaceMigrationChecksum,
   type WorkspaceDatabaseAdapter,
-  type WorkspaceMigration,
 } from "../lib/workspace/database";
 import { WorkspaceApiError } from "../lib/workspace/errors";
 import { searchSafeFtsQuery } from "../lib/searchSafeFtsQuery";
 import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
+import { TABULAR_MIKE_SEMANTICS_V7_MIGRATION } from "../lib/workspace/migrations/v7TabularMikeSemantics";
+import { MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION } from "../lib/workspace/migrations/v8ModelCredentialOrigin";
 import { AssistantRetrievalRepository } from "../lib/workspace/repositories/assistantRetrieval";
 import { ChatsRepository } from "../lib/workspace/repositories/chats";
 import { ModelProfilesRepository } from "../lib/workspace/repositories/modelProfiles";
@@ -52,7 +52,11 @@ const MIGRATIONS = [
   ...WORKSPACE_MIGRATIONS.filter((migration) => migration.version < 5),
   ASSISTANT_RUNTIME_MIGRATION,
 ] as const;
-const CHECKSUM_PARITY_MIGRATIONS = [...WORKSPACE_MIGRATIONS] as const;
+const CHECKSUM_PARITY_MIGRATIONS = [
+  ...WORKSPACE_MIGRATIONS.filter((migration) => migration.version <= 6),
+  TABULAR_MIKE_SEMANTICS_V7_MIGRATION,
+  MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
+] as const;
 const CHECKSUM_PARITY_MODULES = [
   ["v1InitialWorkspace", "INITIAL_WORKSPACE_MIGRATION"],
   ["v2WorkspaceIntegrity", "WORKSPACE_INTEGRITY_MIGRATION"],
@@ -60,6 +64,8 @@ const CHECKSUM_PARITY_MODULES = [
   ["v4ProjectOwnership", "PROJECT_OWNERSHIP_MIGRATION"],
   ["v5AssistantRuntime", "ASSISTANT_RUNTIME_MIGRATION"],
   ["v6WorkflowRuntime", "WORKFLOW_RUNTIME_V6_MIGRATION"],
+  ["v7TabularMikeSemantics", "TABULAR_MIKE_SEMANTICS_V7_MIGRATION"],
+  ["v8ModelCredentialOrigin", "MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION"],
 ] as const;
 const BACKEND_ROOT = path.resolve(__dirname, "../..");
 const root = mkdtempSync(path.join(os.tmpdir(), "vera-assistant-audit-"));
@@ -91,7 +97,7 @@ function sha(value: string) {
 function assertMigrationChecksumRuntimeParity() {
   assert.deepEqual(
     CHECKSUM_PARITY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6],
+    [1, 2, 3, 4, 5, 6, 7, 8],
   );
   const compiledRoot = path.join(root, "checksum-parity-commonjs");
   const tscPath = path.join(
@@ -130,31 +136,63 @@ function assertMigrationChecksumRuntimeParity() {
     ],
     { cwd: BACKEND_ROOT, encoding: "utf8", stdio: "pipe" },
   );
-  const requireCompiled = createRequire(
-    path.join(compiledRoot, "checksum-parity-entry.cjs"),
+  const compiledRunnerPath = path.join(
+    compiledRoot,
+    "lib/workspace/migrations/runner.js",
   );
-  const compiledRunner = requireCompiled(
-    path.join(compiledRoot, "lib/workspace/migrations/runner.js"),
-  ) as {
-    workspaceMigrationChecksum(migration: WorkspaceMigration): string;
+  const compiledModules = CHECKSUM_PARITY_MODULES.map(
+    ([moduleName, exportName]) => ({
+      path: path.join(
+        compiledRoot,
+        `lib/workspace/migrations/${moduleName}.js`,
+      ),
+      exportName,
+    }),
+  );
+  const compiledChecksums = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `
+const { workspaceMigrationChecksum } = require(${JSON.stringify(compiledRunnerPath)});
+const modules = ${JSON.stringify(compiledModules)};
+const values = modules.map(({ path, exportName }) => {
+  const migration = require(path)[exportName];
+  if (!migration) throw new Error(\`compiled migration \${exportName} is missing\`);
+  return {
+    version: migration.version,
+    checksum: workspaceMigrationChecksum(migration),
   };
-  for (const [
-    index,
-    [moduleName, exportName],
-  ] of CHECKSUM_PARITY_MODULES.entries()) {
-    const compiledModule = requireCompiled(
-      path.join(compiledRoot, `lib/workspace/migrations/${moduleName}.js`),
-    ) as Record<string, WorkspaceMigration>;
-    const compiledMigration = compiledModule[exportName];
-    const runtimeMigration = CHECKSUM_PARITY_MIGRATIONS[index];
-    assert.ok(compiledMigration, `compiled migration ${exportName} is missing`);
-    assert.equal(compiledMigration.version, runtimeMigration.version);
-    assert.equal(
-      compiledRunner.workspaceMigrationChecksum(compiledMigration),
-      workspaceMigrationChecksum(runtimeMigration),
-      `migration v${runtimeMigration.version} checksum differs between tsx/esbuild and tsc CommonJS`,
-    );
-  }
+});
+process.stdout.write(JSON.stringify(values));
+        `,
+      ],
+      {
+        cwd: BACKEND_ROOT,
+        env: {
+          ...process.env,
+          NODE_PATH: [
+            path.join(BACKEND_ROOT, "node_modules"),
+            process.env.NODE_PATH,
+          ]
+            .filter(Boolean)
+            .join(path.delimiter),
+        },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ),
+  ) as Array<{ version: number; checksum: string }>;
+  const runtimeChecksums = CHECKSUM_PARITY_MIGRATIONS.map((migration) => ({
+    version: migration.version,
+    checksum: workspaceMigrationChecksum(migration),
+  }));
+  assert.deepEqual(
+    compiledChecksums,
+    runtimeChecksums,
+    "migration checksums differ between tsx/esbuild and one CommonJS module graph",
+  );
 }
 
 function expectSqlFailure(
