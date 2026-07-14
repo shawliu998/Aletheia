@@ -9,26 +9,90 @@ export type WorkspaceId = string;
 export type IsoDateTime = string;
 
 export type ProjectStatus = "active" | "archived" | "deleted";
-export type DocumentStatus = "pending" | "processing" | "ready" | "failed" | "unsupported" | "ocr_required";
-export type DocumentVersionSource = "upload" | "user_upload" | "assistant_edit";
+export type DocumentStatus =
+  | "pending"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "unsupported"
+  | "ocr_required";
+export type DocumentVersionSource =
+  | "upload"
+  | "user_upload"
+  | "assistant_edit"
+  | "user_accept"
+  | "user_reject"
+  | "generated";
 export type DocumentEditStatus = "pending" | "accepted" | "rejected";
 export type ChatScope = "global" | "project";
 export type ChatStatus = "active" | "archived";
 export type MessageRole = "system" | "user" | "assistant" | "tool";
-export type MessageStatus = "pending" | "streaming" | "complete" | "failed" | "cancelled" | "interrupted";
-export type ModelProvider = "openai" | "deepseek" | "anthropic" | "gemini" | "openai_compatible";
+export type MessageStatus =
+  | "pending"
+  | "streaming"
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type ModelProvider =
+  | "openai"
+  | "deepseek"
+  | "anthropic"
+  | "gemini"
+  | "openai_compatible";
 export type CredentialStatus = "not_configured" | "configured" | "unavailable";
 export type WorkflowType = "assistant" | "tabular";
 export type WorkflowStatus = "active" | "archived";
-export type RunStatus = "queued" | "waiting" | "running" | "complete" | "failed" | "cancelled" | "interrupted";
+export type RunStatus =
+  | "queued"
+  | "waiting"
+  | "running"
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
 export type StepRunStatus = RunStatus | "skipped";
 export type TabularOutputType = "text" | "boolean" | "enum" | "number";
-export type TabularReviewStatus = "draft" | "ready" | "running" | "complete" | "failed" | "cancelled" | "archived";
-export type TabularCellStatus = "empty" | "queued" | "running" | "complete" | "failed" | "cancelled";
-export type JobType = "document_parse" | "assistant_generate" | "workflow_run" | "tabular_cell";
-export type JobStatus = "queued" | "running" | "complete" | "failed" | "cancelled" | "interrupted";
-export type LegacyImportStatus = "pending" | "running" | "complete" | "failed" | "skipped";
-export type WorkspaceJson = string | number | boolean | null | WorkspaceJson[] | { [key: string]: WorkspaceJson };
+export type TabularReviewStatus =
+  | "draft"
+  | "ready"
+  | "running"
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "archived";
+export type TabularCellStatus =
+  | "empty"
+  | "queued"
+  | "running"
+  | "complete"
+  | "failed"
+  | "cancelled";
+export type JobType =
+  | "document_parse"
+  | "assistant_generate"
+  | "workflow_run"
+  | "tabular_cell";
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type LegacyImportStatus =
+  | "pending"
+  | "running"
+  | "complete"
+  | "failed"
+  | "skipped";
+export type WorkspaceJson =
+  | string
+  | number
+  | boolean
+  | null
+  | WorkspaceJson[]
+  | { [key: string]: WorkspaceJson };
 
 /** Redacted, transport-safe failure information; never carries a stack, path, or secret. */
 export interface StructuredError {
@@ -42,6 +106,8 @@ export interface Project {
   id: WorkspaceId;
   name: string;
   description: string | null;
+  cmNumber: string | null;
+  practice: string | null;
   status: ProjectStatus;
   defaultModelProfileId: WorkspaceId | null;
   createdAt: IsoDateTime;
@@ -203,28 +269,30 @@ export interface WorkflowColumn {
   ordinal: number;
 }
 
-export interface AssistantWorkflow {
+export interface WorkflowBase {
   id: WorkspaceId;
-  type: "assistant";
+  projectId: WorkspaceId | null;
   title: string;
   description: string | null;
   status: WorkflowStatus;
-  skillMarkdown: string;
   steps: WorkflowStep[];
+  language: string;
+  practice: string;
+  jurisdictions: string[];
+  metadata: Record<string, WorkspaceJson>;
+  isBuiltin: boolean;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
 
-export interface TabularWorkflow {
-  id: WorkspaceId;
+export interface AssistantWorkflow extends WorkflowBase {
+  type: "assistant";
+  skillMarkdown: string;
+}
+
+export interface TabularWorkflow extends WorkflowBase {
   type: "tabular";
-  title: string;
-  description: string | null;
-  status: WorkflowStatus;
   columns: WorkflowColumn[];
-  steps: WorkflowStep[];
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
 }
 
 export type Workflow = AssistantWorkflow | TabularWorkflow;
@@ -317,7 +385,13 @@ export interface Job {
   id: WorkspaceId;
   type: JobType;
   status: JobStatus;
-  resourceType: "document" | "chat" | "workflow_run" | "tabular_cell" | "tabular_review" | "project";
+  resourceType:
+    | "document"
+    | "chat"
+    | "workflow_run"
+    | "tabular_cell"
+    | "tabular_review"
+    | "project";
   resourceId: WorkspaceId;
   attempt: number;
   maxAttempts: number;

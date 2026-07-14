@@ -1,22 +1,29 @@
 import { timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import type { Request, RequestHandler, Response } from "express";
+import {
+  WORKSPACE_LOCAL_PRINCIPAL_EMAIL,
+  WORKSPACE_LOCAL_PRINCIPAL_ID,
+} from "../lib/workspace/principal";
+
+export {
+  WORKSPACE_LOCAL_PRINCIPAL_EMAIL,
+  WORKSPACE_LOCAL_PRINCIPAL_ID,
+} from "../lib/workspace/principal";
 
 export const WORKSPACE_API_ROUTE_PREFIX = "/api/v1";
-export const WORKSPACE_LOCAL_PRINCIPAL_ID = "workspace-local";
-export const WORKSPACE_LOCAL_PRINCIPAL_EMAIL =
-  "workspace-local@vera.internal";
 export const WORKSPACE_AUTH_KIND = "workspace_bootstrap";
 const MINIMUM_BOOTSTRAP_TOKEN_LENGTH = 32;
 
-type WorkspaceAuthFailureCode =
-  | "workspace_route_outside_api"
-  | "workspace_auth_unauthorized"
-  | "workspace_auth_unavailable";
+type WorkspaceAuthFailureCode = "UNAUTHORIZED" | "NOT_FOUND" | "INTERNAL_ERROR";
 
 type WorkspaceAuthResponse = {
+  detail: string;
+  code: WorkspaceAuthFailureCode;
   error: {
     code: WorkspaceAuthFailureCode;
     message: string;
+    retryable: false;
   };
 };
 
@@ -26,6 +33,9 @@ export interface WorkspaceAuthRequestLike {
     authorization?: string | string[] | undefined;
   };
   rawHeaders?: string[];
+  socket?: {
+    remoteAddress?: string | undefined;
+  };
 }
 
 export interface WorkspaceAuthEnvironment {
@@ -45,7 +55,7 @@ export type WorkspaceAuthConfiguration =
       kind: "single_user_dev";
     };
 
-type WorkspaceAuthFailure = {
+export type WorkspaceAuthFailure = {
   ok: false;
   status: 401 | 404 | 500;
   code: WorkspaceAuthFailureCode;
@@ -78,13 +88,52 @@ function normalizedAuthMode(
   return "invalid";
 }
 
-export function workspaceRouteAllowed(request: WorkspaceAuthRequestLike): boolean {
+export function workspaceRouteAllowed(
+  request: WorkspaceAuthRequestLike,
+): boolean {
   if (typeof request.originalUrl !== "string") return false;
   const path = request.originalUrl.split("?", 1)[0] ?? "";
   return (
     path === WORKSPACE_API_ROUTE_PREFIX ||
     path.startsWith(`${WORKSPACE_API_ROUTE_PREFIX}/`)
   );
+}
+
+export function workspaceRequestRemoteAddress(
+  request: WorkspaceAuthRequestLike,
+): string | null {
+  const value = request.socket?.remoteAddress ?? null;
+  if (typeof value !== "string") return null;
+  return value === "" ? null : value;
+}
+
+export function isLoopbackRemoteAddress(address: string): boolean {
+  if (address === "" || address !== address.trim() || address.includes("%")) {
+    return false;
+  }
+
+  const family = isIP(address);
+  if (family === 4) {
+    const firstOctet = address.split(".", 1)[0];
+    return firstOctet === "127";
+  }
+  if (family !== 6) return false;
+
+  // WHATWG URL parsing gives one canonical spelling for every valid IPv6
+  // literal. `isIP` above rejects brackets, ports, zone IDs and malformed
+  // input before the value reaches this canonicalization step.
+  let canonical: string;
+  try {
+    canonical = new URL(`http://[${address}]/`).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (canonical === "[::1]") return true;
+
+  const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+  if (mapped === null) return false;
+  const highWord = Number.parseInt(mapped[1], 16);
+  return highWord >= 0x7f00 && highWord <= 0x7fff;
 }
 
 export function constantTimeTokenEqual(left: string, right: string): boolean {
@@ -104,7 +153,9 @@ export function constantTimeTokenEqual(left: string, right: string): boolean {
 function authorizationHeaderValues(
   request: WorkspaceAuthRequestLike,
 ): string[] {
-  const rawHeaders = Array.isArray(request.rawHeaders) ? request.rawHeaders : [];
+  const rawHeaders = Array.isArray(request.rawHeaders)
+    ? request.rawHeaders
+    : [];
   const values: string[] = [];
   for (let index = 0; index < rawHeaders.length - 1; index += 2) {
     if (rawHeaders[index]?.toLowerCase() === "authorization") {
@@ -124,14 +175,14 @@ export function parseWorkspaceBearerToken(
   if (values.length === 0) {
     return authFailure(
       401,
-      "workspace_auth_unauthorized",
+      "UNAUTHORIZED",
       "Workspace API authentication failed.",
     );
   }
   if (values.length !== 1) {
     return authFailure(
       401,
-      "workspace_auth_unauthorized",
+      "UNAUTHORIZED",
       "Workspace API authentication failed.",
     );
   }
@@ -144,7 +195,7 @@ export function parseWorkspaceBearerToken(
   ) {
     return authFailure(
       401,
-      "workspace_auth_unauthorized",
+      "UNAUTHORIZED",
       "Workspace API authentication failed.",
     );
   }
@@ -157,7 +208,7 @@ export function parseWorkspaceBearerToken(
   ) {
     return authFailure(
       401,
-      "workspace_auth_unauthorized",
+      "UNAUTHORIZED",
       "Workspace API authentication failed.",
     );
   }
@@ -171,22 +222,22 @@ export function resolveWorkspaceAuthConfiguration(
   if (mode === "invalid") {
     return authFailure(
       500,
-      "workspace_auth_unavailable",
+      "INTERNAL_ERROR",
       "Workspace API authentication is not configured.",
     );
   }
   if (mode === "single_user") {
-    if (env.NODE_ENV === "production") {
+    if (env.NODE_ENV?.trim().toLowerCase() === "production") {
       return authFailure(
         500,
-        "workspace_auth_unavailable",
+        "INTERNAL_ERROR",
         "Workspace API authentication is not configured.",
       );
     }
     if (env.VERA_WORKSPACE_ALLOW_SINGLE_USER_DEV !== "true") {
       return authFailure(
         500,
-        "workspace_auth_unavailable",
+        "INTERNAL_ERROR",
         "Workspace API authentication is not configured.",
       );
     }
@@ -196,7 +247,7 @@ export function resolveWorkspaceAuthConfiguration(
   if (expectedToken.length < MINIMUM_BOOTSTRAP_TOKEN_LENGTH) {
     return authFailure(
       500,
-      "workspace_auth_unavailable",
+      "INTERNAL_ERROR",
       "Workspace API authentication is not configured.",
     );
   }
@@ -208,21 +259,25 @@ export function authenticateWorkspaceRequest(
   config: WorkspaceAuthConfiguration,
 ): WorkspaceAuthResult {
   if (!workspaceRouteAllowed(request)) {
+    return authFailure(404, "NOT_FOUND", "Workspace API route not found.");
+  }
+  const remoteAddress = workspaceRequestRemoteAddress(request);
+  if (remoteAddress === null || !isLoopbackRemoteAddress(remoteAddress)) {
     return authFailure(
-      404,
-      "workspace_route_outside_api",
-      "Route is outside the Workspace API.",
+      401,
+      "UNAUTHORIZED",
+      "Workspace API authentication failed.",
     );
   }
   if (config.kind === "single_user_dev") {
     return { ok: true, authKind: WORKSPACE_AUTH_KIND };
   }
   const token = parseWorkspaceBearerToken(request);
-  if (!token.ok) return token;
+  if (token.ok === false) return token;
   if (!constantTimeTokenEqual(token.token, config.expectedToken)) {
     return authFailure(
       401,
-      "workspace_auth_unauthorized",
+      "UNAUTHORIZED",
       "Workspace API authentication failed.",
     );
   }
@@ -234,9 +289,12 @@ function writeWorkspaceAuthFailure(
   failure: WorkspaceAuthFailure,
 ): void {
   const body: WorkspaceAuthResponse = {
+    detail: failure.message,
+    code: failure.code,
     error: {
       code: failure.code,
       message: failure.message,
+      retryable: false,
     },
   };
   res.status(failure.status).json(body);
@@ -258,12 +316,12 @@ export function createWorkspaceAuthMiddleware(
 ): RequestHandler {
   return function workspaceAuth(req, res, next): void {
     const configuration = resolveWorkspaceAuthConfiguration(env);
-    if ("ok" in configuration) {
+    if (!("kind" in configuration)) {
       writeWorkspaceAuthFailure(res, configuration);
       return;
     }
     const authentication = authenticateWorkspaceRequest(req, configuration);
-    if (!authentication.ok) {
+    if (authentication.ok === false) {
       writeWorkspaceAuthFailure(res, authentication);
       return;
     }

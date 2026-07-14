@@ -17,6 +17,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -39,6 +40,7 @@ import type {
 
 const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
+const DELETE_MANIFEST_SUFFIX = ".delete.json";
 const RFC4122_UUID_V1_TO_V8 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -172,6 +174,7 @@ export class LocalWorkspaceBlobStore implements BlobStore {
       );
     }
     this.ensureRoot();
+    this.recoverIncompleteDeleteIntents();
   }
 
   putSync(
@@ -186,6 +189,7 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     const parent = path.dirname(target);
     this.ensureDirectory(parent);
     if (this.entryExists(target)) {
+      this.recoverInterruptedPublication(target);
       this.assertRegularUnlinkedFile(target);
       throw new WorkspaceBlobAlreadyExistsError(locator);
     }
@@ -202,27 +206,38 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     );
     let temporaryFd: number | undefined;
     let published = false;
+    let temporaryRemoved = false;
     try {
       temporaryFd = openSync(
         temporaryPath,
-        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+        fsConstants.O_WRONLY |
+          fsConstants.O_CREAT |
+          fsConstants.O_EXCL |
+          (fsConstants.O_NOFOLLOW ?? 0),
         OWNER_FILE_MODE,
       );
       let offset = 0;
       while (offset < encoded.length) {
         offset += writeSync(temporaryFd, encoded, offset, encoded.length - offset);
       }
+      chmodSync(temporaryPath, OWNER_FILE_MODE);
       fsyncSync(temporaryFd);
       closeSync(temporaryFd);
       temporaryFd = undefined;
-      chmodSync(temporaryPath, OWNER_FILE_MODE);
+      // Persist the temporary directory entry before it becomes the fallback
+      // for a partially-published hardlink operation.
+      this.fsyncDirectory(parent);
 
       // linkSync is the no-clobber publication primitive: renameSync would
       // replace a concurrently-created authoritative blob.
       linkSync(temporaryPath, target);
       published = true;
       this.fsyncFile(target);
+      // The authoritative link must be durable before the temporary link is
+      // removed. Otherwise a power loss could make both names disappear.
+      this.fsyncDirectory(parent);
       unlinkSync(temporaryPath);
+      temporaryRemoved = true;
       this.fsyncDirectory(parent);
       published = false;
     } catch (error) {
@@ -233,7 +248,7 @@ export class LocalWorkspaceBlobStore implements BlobStore {
           // Preserve the original write error.
         }
       }
-      if (published) {
+      if (published && !temporaryRemoved) {
         try {
           unlinkSync(target);
           this.fsyncDirectory(parent);
@@ -266,6 +281,7 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     this.validateIntegrity(expected);
     const target = this.authoritativePath(locator);
     this.ensureDirectory(path.dirname(target));
+    this.recoverInterruptedPublication(target);
     const encoded = this.readAuthoritativeFile(target, locator);
     const plaintext = this.codec.decode({
       filePath: target,
@@ -287,23 +303,40 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     const parent = path.dirname(target);
     this.ensureDirectory(parent);
     if (!this.entryExists(target)) throw new WorkspaceBlobNotFoundError(locator);
+    this.recoverInterruptedPublication(target);
     this.assertRegularUnlinkedFile(target);
     const quarantineDir = path.join(this.root, ".quarantine");
     this.ensureDirectory(quarantineDir);
     const quarantineId = this.newQuarantineId(quarantineDir);
     const quarantinePath = path.join(quarantineDir, quarantineId);
+    const manifestPath = this.deleteManifestPath(quarantineId);
+    const receipt: WorkspaceBlobDeleteReceipt = {
+      status: "staged",
+      locator,
+      quarantineId,
+    };
     let linked = false;
+    let manifestWritten = false;
     try {
+      this.writeDeleteManifest(receipt, manifestPath);
+      manifestWritten = true;
       linkSync(target, quarantinePath);
       linked = true;
       this.fsyncFile(quarantinePath);
+      // Make the recovery copy durable before deleting the authoritative
+      // directory entry.
+      this.fsyncDirectory(quarantineDir);
       unlinkSync(target);
       this.fsyncDirectory(parent);
-      this.fsyncDirectory(quarantineDir);
     } catch (error) {
-      if (linked && this.entryExists(target)) {
+      if (this.entryExists(target)) {
         try {
-          unlinkSync(quarantinePath);
+          if (linked && this.entryExists(quarantinePath)) {
+            unlinkSync(quarantinePath);
+          }
+          if (manifestWritten && this.entryExists(manifestPath)) {
+            unlinkSync(manifestPath);
+          }
           this.fsyncDirectory(quarantineDir);
         } catch {
           // Keep the original and quarantine copy for explicit recovery.
@@ -311,23 +344,30 @@ export class LocalWorkspaceBlobStore implements BlobStore {
       }
       throw error;
     }
-    return { status: "staged", locator, quarantineId };
+    return receipt;
   }
 
   finalizeDeleteSync(receipt: WorkspaceBlobDeleteReceipt) {
-    const quarantinePath = this.validateReceipt(receipt);
+    const { quarantinePath, manifestPath } = this.receiptPaths(receipt);
     if (this.entryExists(this.authoritativePath(receipt.locator))) {
       throw new WorkspaceBlobError(
         "Cannot finalize a staged delete while the authoritative path exists.",
       );
     }
-    this.assertRegularUnlinkedFile(quarantinePath);
-    unlinkSync(quarantinePath);
+    // Retrying finalize after a crash or successful prior call is safe.
+    if (!this.entryExists(quarantinePath) && !this.entryExists(manifestPath)) return;
+    this.assertDeleteManifestMatches(receipt, manifestPath);
+    if (this.entryExists(quarantinePath)) {
+      this.assertRegularUnlinkedFile(quarantinePath);
+      unlinkSync(quarantinePath);
+    }
+    if (this.entryExists(manifestPath)) unlinkSync(manifestPath);
     this.fsyncDirectory(path.dirname(quarantinePath));
   }
 
   restoreDeleteSync(receipt: WorkspaceBlobDeleteReceipt) {
-    const quarantinePath = this.validateReceipt(receipt);
+    const { quarantinePath, manifestPath } = this.receiptPaths(receipt);
+    this.assertDeleteManifestMatches(receipt, manifestPath);
     const target = this.authoritativePath(receipt.locator);
     const parent = path.dirname(target);
     this.ensureDirectory(parent);
@@ -336,24 +376,52 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     }
     this.assertRegularUnlinkedFile(quarantinePath);
     let published = false;
+    let quarantineRemoved = false;
     try {
       linkSync(quarantinePath, target);
       published = true;
       this.fsyncFile(target);
-      unlinkSync(quarantinePath);
+      // Persist the restored authoritative name before removing quarantine.
       this.fsyncDirectory(parent);
+      unlinkSync(quarantinePath);
+      quarantineRemoved = true;
+      unlinkSync(manifestPath);
       this.fsyncDirectory(path.dirname(quarantinePath));
       published = false;
     } catch (error) {
-      if (published) {
+      if (published && !quarantineRemoved) {
         try {
           unlinkSync(target);
+          this.fsyncDirectory(parent);
         } catch {
           // Preserve the staged copy if cleanup cannot be completed.
         }
       }
       throw error;
     }
+  }
+
+  listStagedDeletesSync(): WorkspaceBlobDeleteReceipt[] {
+    this.recoverIncompleteDeleteIntents();
+    const quarantineDir = path.join(this.root, ".quarantine");
+    return readdirSync(quarantineDir)
+      .filter((name) => name.endsWith(DELETE_MANIFEST_SUFFIX))
+      .sort()
+      .map((name) => {
+        const quarantineId = name.slice(0, -DELETE_MANIFEST_SUFFIX.length);
+        assertUuid(quarantineId, "quarantineId");
+        const receipt = this.readDeleteManifest(
+          path.join(quarantineDir, name),
+          quarantineId,
+        );
+        const quarantinePath = path.join(quarantineDir, quarantineId);
+        if (!this.entryExists(quarantinePath)) {
+          throw new WorkspaceBlobIntegrityError(
+            "A staged-delete manifest has no recoverable quarantine blob.",
+          );
+        }
+        return receipt;
+      });
   }
 
   private validateLocator(locator: WorkspaceBlobLocator) {
@@ -468,6 +536,46 @@ export class LocalWorkspaceBlobStore implements BlobStore {
     }
   }
 
+  /**
+   * A power loss after linking the authoritative name but before unlinking
+   * the internal temp name can legitimately leave exactly two links to the
+   * same inode. Only that tightly-scoped internal state is repaired; all
+   * other hardlink shapes remain fail-closed.
+   */
+  private recoverInterruptedPublication(filePath: string) {
+    if (!this.entryExists(filePath)) return;
+    const target = lstatSync(filePath);
+    if (!target.isFile() || target.isSymbolicLink() || target.nlink === 1) return;
+    if (target.nlink !== 2) {
+      throw new WorkspaceBlobUnsafePathError(
+        "Workspace blob hardlink state is not recoverable.",
+      );
+    }
+    const parent = path.dirname(filePath);
+    const prefix = `.${path.basename(filePath)}.tmp-`;
+    const matches = readdirSync(parent)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => path.join(parent, name))
+      .filter((candidate) => {
+        const entry = lstatSync(candidate);
+        return (
+          entry.isFile() &&
+          !entry.isSymbolicLink() &&
+          entry.dev === target.dev &&
+          entry.ino === target.ino &&
+          entry.nlink === 2
+        );
+      });
+    if (matches.length !== 1) {
+      throw new WorkspaceBlobUnsafePathError(
+        "Workspace blob hardlink state is not an internal publication remnant.",
+      );
+    }
+    unlinkSync(matches[0]);
+    this.fsyncDirectory(parent);
+    this.assertRegularUnlinkedFile(filePath);
+  }
+
   private entryExists(filePath: string) {
     try {
       lstatSync(filePath);
@@ -531,12 +639,17 @@ export class LocalWorkspaceBlobStore implements BlobStore {
   private newQuarantineId(quarantineDir: string) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const id = randomUUID();
-      if (!this.entryExists(path.join(quarantineDir, id))) return id;
+      if (
+        !this.entryExists(path.join(quarantineDir, id)) &&
+        !this.entryExists(this.deleteManifestPath(id))
+      ) {
+        return id;
+      }
     }
     throw new WorkspaceBlobError("Unable to allocate a unique quarantine ID.");
   }
 
-  private validateReceipt(receipt: WorkspaceBlobDeleteReceipt) {
+  private receiptPaths(receipt: WorkspaceBlobDeleteReceipt) {
     if (!receipt || receipt.status !== "staged") {
       throw new WorkspaceBlobUnsafePathError("Workspace blob delete receipt is invalid.");
     }
@@ -546,7 +659,167 @@ export class LocalWorkspaceBlobStore implements BlobStore {
       path.join(this.root, ".quarantine", receipt.quarantineId),
     );
     this.ensureDirectory(path.dirname(quarantinePath));
-    return quarantinePath;
+    return {
+      quarantinePath,
+      manifestPath: this.deleteManifestPath(receipt.quarantineId),
+    };
+  }
+
+  private deleteManifestPath(quarantineId: string) {
+    return this.assertInsideRoot(
+      path.join(
+        this.root,
+        ".quarantine",
+        `${quarantineId}${DELETE_MANIFEST_SUFFIX}`,
+      ),
+    );
+  }
+
+  private writeDeleteManifest(
+    receipt: WorkspaceBlobDeleteReceipt,
+    manifestPath: string,
+  ) {
+    const encoded = Buffer.from(
+      `${JSON.stringify({
+        version: 1,
+        quarantineId: receipt.quarantineId,
+        locator: receipt.locator,
+      })}\n`,
+      "utf8",
+    );
+    let fd: number | undefined;
+    try {
+      fd = openSync(
+        manifestPath,
+        fsConstants.O_WRONLY |
+          fsConstants.O_CREAT |
+          fsConstants.O_EXCL |
+          (fsConstants.O_NOFOLLOW ?? 0),
+        OWNER_FILE_MODE,
+      );
+      let offset = 0;
+      while (offset < encoded.length) {
+        offset += writeSync(fd, encoded, offset, encoded.length - offset);
+      }
+      fsyncSync(fd);
+      closeSync(fd);
+      fd = undefined;
+    } catch (error) {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd);
+        } catch {
+          // Preserve the manifest write error.
+        }
+      }
+      try {
+        unlinkSync(manifestPath);
+      } catch {
+        // The manifest may not have been created.
+      }
+      throw error;
+    }
+  }
+
+  private readDeleteManifest(
+    manifestPath: string,
+    expectedQuarantineId: string,
+  ): WorkspaceBlobDeleteReceipt {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+    } catch (error) {
+      throw new WorkspaceBlobIntegrityError(
+        `Workspace staged-delete manifest is unreadable: ${
+          error instanceof Error ? error.name : "unknown"
+        }.`,
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new WorkspaceBlobIntegrityError(
+        "Workspace staged-delete manifest is invalid.",
+      );
+    }
+    const record = parsed as Record<string, unknown>;
+    if (
+      record.version !== 1 ||
+      record.quarantineId !== expectedQuarantineId ||
+      Object.keys(record).sort().join(",") !==
+        "locator,quarantineId,version"
+    ) {
+      throw new WorkspaceBlobIntegrityError(
+        "Workspace staged-delete manifest fields are invalid.",
+      );
+    }
+    this.validateLocator(record.locator as WorkspaceBlobLocator);
+    return {
+      status: "staged",
+      quarantineId: expectedQuarantineId,
+      locator: record.locator as WorkspaceBlobLocator,
+    };
+  }
+
+  private assertDeleteManifestMatches(
+    receipt: WorkspaceBlobDeleteReceipt,
+    manifestPath: string,
+  ) {
+    if (!this.entryExists(manifestPath)) {
+      throw new WorkspaceBlobIntegrityError(
+        "Workspace staged-delete manifest is missing.",
+      );
+    }
+    const stored = this.readDeleteManifest(
+      manifestPath,
+      receipt.quarantineId,
+    );
+    if (JSON.stringify(stored.locator) !== JSON.stringify(receipt.locator)) {
+      throw new WorkspaceBlobUnsafePathError(
+        "Workspace blob delete receipt does not match its durable intent.",
+      );
+    }
+  }
+
+  private recoverIncompleteDeleteIntents() {
+    const quarantineDir = path.join(this.root, ".quarantine");
+    this.ensureDirectory(quarantineDir);
+    for (const name of readdirSync(quarantineDir)
+      .filter((entry) => entry.endsWith(DELETE_MANIFEST_SUFFIX))
+      .sort()) {
+      const quarantineId = name.slice(0, -DELETE_MANIFEST_SUFFIX.length);
+      assertUuid(quarantineId, "quarantineId");
+      const manifestPath = path.join(quarantineDir, name);
+      const receipt = this.readDeleteManifest(manifestPath, quarantineId);
+      const quarantinePath = path.join(quarantineDir, quarantineId);
+      const target = this.authoritativePath(receipt.locator);
+      const targetExists = this.entryExists(target);
+      const quarantineExists = this.entryExists(quarantinePath);
+
+      if (targetExists && quarantineExists) {
+        const targetEntry = lstatSync(target);
+        const quarantineEntry = lstatSync(quarantinePath);
+        if (
+          !targetEntry.isFile() ||
+          !quarantineEntry.isFile() ||
+          targetEntry.dev !== quarantineEntry.dev ||
+          targetEntry.ino !== quarantineEntry.ino
+        ) {
+          throw new WorkspaceBlobIntegrityError(
+            "Workspace staged-delete recovery found conflicting blob files.",
+          );
+        }
+        // Stage had not durably removed the source (or restore had already
+        // published it), so the authoritative copy wins.
+        unlinkSync(quarantinePath);
+        this.fsyncDirectory(quarantineDir);
+      }
+
+      if (targetExists || !quarantineExists) {
+        if (this.entryExists(manifestPath)) unlinkSync(manifestPath);
+        this.fsyncDirectory(quarantineDir);
+      }
+      // target missing + quarantine present is a completed staged delete.
+      // Keep both entries for DB-aware startup reconciliation.
+    }
   }
 
   private isAlreadyExistsError(error: unknown) {

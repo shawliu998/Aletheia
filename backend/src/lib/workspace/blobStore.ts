@@ -69,4 +69,9 @@ export interface BlobStore {
   stageDeleteSync(locator: WorkspaceBlobLocator): WorkspaceBlobDeleteReceipt;
   finalizeDeleteSync(receipt: WorkspaceBlobDeleteReceipt): void;
   restoreDeleteSync(receipt: WorkspaceBlobDeleteReceipt): void;
+  /**
+   * Production stores may expose durable staged-delete intents so startup
+   * reconciliation can decide whether to restore or finalize after a crash.
+   */
+  listStagedDeletesSync?(): WorkspaceBlobDeleteReceipt[];
 }

@@ -1,6 +1,7 @@
-import type { Request, RequestHandler } from "express";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
+import { closeSync, createWriteStream, openSync } from "node:fs";
 import { chmod, lstat, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +36,61 @@ export const UPLOAD_TEMP_ROOT = path.join(
   os.tmpdir(),
   "aletheia-secure-uploads",
 );
+
+export type UploadPathRemover = (candidate: string) => Promise<void>;
+
+const requestUploadPaths = new WeakMap<Request, Set<string>>();
+
+const defaultUploadPathRemover: UploadPathRemover = async (candidate) => {
+  await rm(candidate, { force: true });
+};
+
+class UploadCleanupError extends Error {
+  readonly cleanupErrors: readonly unknown[];
+  readonly originalError: unknown;
+
+  constructor(cleanupErrors: readonly unknown[], originalError?: unknown) {
+    super("Temporary upload cleanup failed.", {
+      cause: new AggregateError(
+        originalError === undefined
+          ? cleanupErrors
+          : [originalError, ...cleanupErrors],
+        "Upload processing and cleanup did not complete safely.",
+      ),
+    });
+    this.name = "UploadCleanupError";
+    this.cleanupErrors = cleanupErrors;
+    this.originalError = originalError;
+  }
+}
+
+function errorFrom(value: unknown): Error {
+  return value instanceof Error
+    ? value
+    : new Error("Upload storage operation failed.", { cause: value });
+}
+
+function trackedPaths(
+  request: Request,
+  create = false,
+): Set<string> | undefined {
+  const existing = requestUploadPaths.get(request);
+  if (existing || !create) return existing;
+  const created = new Set<string>();
+  requestUploadPaths.set(request, created);
+  return created;
+}
+
+function trackPath(request: Request, candidate: string) {
+  trackedPaths(request, true)!.add(candidate);
+}
+
+function forgetPath(request: Request, candidate: string) {
+  const paths = trackedPaths(request);
+  if (!paths) return;
+  paths.delete(candidate);
+  if (paths.size === 0) requestUploadPaths.delete(request);
+}
 
 async function ensureUploadRoot() {
   await mkdir(UPLOAD_TEMP_ROOT, { recursive: true, mode: 0o700 });
@@ -82,18 +138,90 @@ const uploadTempJanitor = setInterval(
 );
 uploadTempJanitor.unref();
 
-function diskUpload(maxFiles: number) {
+function trackedDiskStorage(
+  removePath: UploadPathRemover,
+): multer.StorageEngine {
+  return {
+    _handleFile(request, file, callback) {
+      const filename = randomUUID();
+      const finalPath = path.join(UPLOAD_TEMP_ROOT, filename);
+      // Multer may emit a parser/file-stream error in the same event-loop turn.
+      // Track and create synchronously before returning control so cleanup can
+      // never race a deferred open that creates an orphan after rm(ENOENT).
+      trackPath(request, finalPath);
+      let descriptor: number;
+      try {
+        descriptor = openSync(finalPath, "wx", 0o600);
+      } catch (error) {
+        callback(errorFrom(error));
+        return;
+      }
+
+      let output: ReturnType<typeof createWriteStream>;
+      try {
+        output = createWriteStream(finalPath, {
+          fd: descriptor,
+          autoClose: true,
+        });
+      } catch (error) {
+        closeSync(descriptor);
+        callback(errorFrom(error));
+        return;
+      }
+
+      let settled = false;
+      const complete = (
+        error?: unknown,
+        info?: Partial<Express.Multer.File>,
+      ) => {
+        if (settled) return;
+        settled = true;
+        callback(error === undefined ? undefined : errorFrom(error), info);
+      };
+      output.once("error", (error) => complete(error));
+      output.once("finish", () =>
+        complete(undefined, {
+          destination: UPLOAD_TEMP_ROOT,
+          filename,
+          path: finalPath,
+          size: output.bytesWritten,
+        }),
+      );
+      file.stream.once("error", (error) => {
+        output.destroy();
+        complete(error);
+      });
+      try {
+        file.stream.pipe(output);
+      } catch (error) {
+        output.destroy();
+        complete(error);
+      }
+    },
+    _removeFile(request, file, callback) {
+      const candidate = file.path;
+      if (!candidate) {
+        callback(null);
+        return;
+      }
+      void removePath(candidate).then(
+        () => {
+          forgetPath(request, candidate);
+          callback(null);
+        },
+        (error) => callback(errorFrom(error)),
+      );
+    },
+  };
+}
+
+function diskUpload(maxFiles: number, removePath: UploadPathRemover) {
   return multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, callback) => {
-        void ensureUploadRoot()
-          .then(() => callback(null, UPLOAD_TEMP_ROOT))
-          .catch((error) => callback(error, UPLOAD_TEMP_ROOT));
-      },
-      filename: (_req, _file, callback) => callback(null, randomUUID()),
-    }),
+    storage: trackedDiskStorage(removePath),
     limits: {
-      fileSize: MAX_UPLOAD_SIZE_BYTES,
+      // Multer treats the exact byte boundary as exceeded; keep one parser
+      // byte of headroom and enforce the authoritative limit below.
+      fileSize: MAX_UPLOAD_SIZE_BYTES + 1,
       files: maxFiles,
     },
   });
@@ -106,13 +234,56 @@ export async function materializeUploadedFile(file: Express.Multer.File) {
 }
 
 export async function cleanupUploadedFile(file: Express.Multer.File) {
-  if (file.path) await rm(file.path, { force: true });
+  if (file.path) await defaultUploadPathRemover(file.path);
 }
 
 export async function cleanupUploadedFiles(
   files: readonly Express.Multer.File[],
 ) {
-  await Promise.allSettled(files.map((file) => cleanupUploadedFile(file)));
+  const results = await Promise.allSettled(
+    files.map((file) => cleanupUploadedFile(file)),
+  );
+  const failures = results
+    .filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    )
+    .map((result) => result.reason);
+  if (failures.length > 0) throw new UploadCleanupError(failures);
+}
+
+async function cleanupRequestUploadPaths(
+  request: Request,
+  files: readonly Express.Multer.File[],
+  removePath: UploadPathRemover,
+  originalError?: unknown,
+) {
+  const candidates = new Set<string>(trackedPaths(request) ?? []);
+  for (const file of files) {
+    if (file.path) candidates.add(file.path);
+  }
+  const paths = [...candidates];
+  const results = await Promise.allSettled(
+    paths.map((candidate) => removePath(candidate)),
+  );
+  const failures: unknown[] = [];
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      forgetPath(request, paths[index]);
+    } else {
+      failures.push(result.reason);
+    }
+  });
+  if (failures.length > 0) {
+    throw new UploadCleanupError(failures, originalError);
+  }
+}
+
+export async function cleanupRequestUploadedFiles(
+  request: Request,
+  files: readonly Express.Multer.File[],
+  removePath: UploadPathRemover = defaultUploadPathRemover,
+) {
+  await cleanupRequestUploadPaths(request, files, removePath);
 }
 
 function requestUploadedFiles(req: Request) {
@@ -132,16 +303,30 @@ async function handleUploadCompletion(
   res: Parameters<RequestHandler>[1],
   next: Parameters<RequestHandler>[2],
   aggregateLimitBytes: number,
+  onError?: UploadErrorForwarder,
+  removePath: UploadPathRemover = defaultUploadPathRemover,
 ) {
   const files = requestUploadedFiles(req);
 
   if (!err) {
     const aggregateBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (aggregateBytes <= aggregateLimitBytes) return next();
+    const fileTooLarge = files.some(
+      (file) => file.size > MAX_UPLOAD_SIZE_BYTES,
+    );
+    if (!fileTooLarge && aggregateBytes <= aggregateLimitBytes) return next();
 
-    await cleanupUploadedFiles(files);
+    const limitError = new multer.MulterError("LIMIT_FILE_SIZE");
+    await cleanupRequestUploadPaths(req, files, removePath, limitError);
     req.file = undefined;
     req.files = [];
+    if (onError) {
+      return void onError(limitError, req, res, next);
+    }
+    if (fileTooLarge) {
+      return void res.status(413).json({
+        detail: `File too large. Maximum size is ${MAX_UPLOAD_SIZE_MB} MB.`,
+      });
+    }
     return void res.status(413).json({
       detail: `Upload batch too large. Maximum aggregate size is ${Math.round(
         aggregateLimitBytes / (1024 * 1024),
@@ -149,9 +334,11 @@ async function handleUploadCompletion(
     });
   }
 
-  await cleanupUploadedFiles(files);
+  await cleanupRequestUploadPaths(req, files, removePath, err);
   req.file = undefined;
   req.files = [];
+
+  if (onError) return void onError(err, req, res, next);
 
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
@@ -167,41 +354,64 @@ async function handleUploadCompletion(
   return next(err);
 }
 
-const singleDiskUpload = diskUpload(1);
+export type UploadErrorForwarder = (
+  error: unknown,
+  request: Request,
+  response: Response,
+  next: NextFunction,
+) => void;
 
-export function singleFileUpload(fieldName: string): RequestHandler {
+export function singleFileUpload(
+  fieldName: string,
+  options: {
+    onError?: UploadErrorForwarder;
+    removePath?: UploadPathRemover;
+  } = {},
+): RequestHandler {
+  const removePath = options.removePath ?? defaultUploadPathRemover;
+  const upload = diskUpload(1, removePath);
   return (req, res, next) => {
-    singleDiskUpload.single(fieldName)(req, res, (err) => {
-      void handleUploadCompletion(
-        err,
-        req,
-        res,
-        next,
-        MAX_UPLOAD_SIZE_BYTES,
-      ).catch(next);
-    });
+    void ensureUploadRoot().then(() => {
+      upload.single(fieldName)(req, res, (err) => {
+        void handleUploadCompletion(
+          err,
+          req,
+          res,
+          next,
+          MAX_UPLOAD_SIZE_BYTES,
+          options.onError,
+          removePath,
+        ).catch(next);
+      });
+    }, next);
   };
 }
 
 export function multiFileUpload(
   fieldName: string,
   maxFiles = MAX_BATCH_UPLOAD_FILES,
+  options: { removePath?: UploadPathRemover } = {},
 ): RequestHandler {
   const effectiveMaxFiles = Math.min(
     Math.max(1, Math.floor(maxFiles)),
     MAX_BATCH_UPLOAD_FILES,
   );
-  const upload = diskUpload(effectiveMaxFiles);
+  const removePath = options.removePath ?? defaultUploadPathRemover;
+  const upload = diskUpload(effectiveMaxFiles, removePath);
   return (req, res, next) => {
-    upload.array(fieldName, effectiveMaxFiles)(req, res, (err) => {
-      void handleUploadCompletion(
-        err,
-        req,
-        res,
-        next,
-        MAX_BATCH_UPLOAD_SIZE_BYTES,
-      ).catch(next);
-    });
+    void ensureUploadRoot().then(() => {
+      upload.array(fieldName, effectiveMaxFiles)(req, res, (err) => {
+        void handleUploadCompletion(
+          err,
+          req,
+          res,
+          next,
+          MAX_BATCH_UPLOAD_SIZE_BYTES,
+          undefined,
+          removePath,
+        ).catch(next);
+      });
+    }, next);
   };
 }
 

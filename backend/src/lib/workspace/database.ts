@@ -31,6 +31,16 @@ export class WorkspaceDatabase {
       readOnly: options.readOnly,
     });
     try {
+      // Workspace and Legacy repositories intentionally share the same
+      // aletheia.db file through separate handles. Configure every Workspace
+      // handle before migrations or repository work so concurrent desktop
+      // activity waits briefly instead of failing immediately, and so all
+      // connections enforce the same foreign-key boundary.
+      this.database.exec("PRAGMA foreign_keys = ON");
+      this.database.exec("PRAGMA busy_timeout = 5000");
+      if (!options.readOnly) {
+        this.database.exec("PRAGMA journal_mode = WAL");
+      }
       this.migration =
         options.migrate === false || options.readOnly
           ? null

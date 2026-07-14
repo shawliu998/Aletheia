@@ -138,6 +138,16 @@ function runAudit() {
     expectThrow(WorkspaceBlobUnsafePathError, () => store.readSync(locator, rewritten));
     rmSync(hardlinkTarget);
 
+    const interruptedTemp = path.join(
+      path.dirname(target),
+      `.${path.basename(target)}.tmp-99999-deadbeef`,
+    );
+    linkSync(target, interruptedTemp);
+    assert.equal(lstatSync(target).nlink, 2);
+    assert.deepEqual(store.readSync(locator, rewritten), bytes);
+    assert.equal(existsSync(interruptedTemp), false);
+    assert.equal(lstatSync(target).nlink, 1);
+
     const failedDoc = "44444444-4444-4444-8444-444444444444";
     const failedStore = makeStore(root, new FailingCodec());
     expectThrow(Error, () => failedStore.putSync(original(failedDoc, versionId), bytes));
@@ -150,10 +160,33 @@ function runAudit() {
     const staged = restarted.stageDeleteSync(locator);
     assert.equal(existsSync(target), false);
     assert.equal(existsSync(path.join(root, ".quarantine", staged.quarantineId)), true);
-    restarted.restoreDeleteSync(staged);
-    assert.deepEqual(restarted.readSync(locator, rewritten), bytes);
-    const stagedAgain = restarted.stageDeleteSync(locator);
-    restarted.finalizeDeleteSync(stagedAgain);
+    assert.equal(
+      existsSync(
+        path.join(
+          root,
+          ".quarantine",
+          `${staged.quarantineId}.delete.json`,
+        ),
+      ),
+      true,
+    );
+    const afterStagedRestart = makeStore(root);
+    assert.deepEqual(afterStagedRestart.listStagedDeletesSync(), [staged]);
+    afterStagedRestart.restoreDeleteSync(staged);
+    assert.deepEqual(afterStagedRestart.readSync(locator, rewritten), bytes);
+    const stagedAgain = afterStagedRestart.stageDeleteSync(locator);
+    const forgedValidLocator = {
+      ...stagedAgain,
+      locator: original(
+        "55555555-5555-4555-8555-555555555555",
+        versionId,
+      ),
+    };
+    expectThrow(WorkspaceBlobUnsafePathError, () =>
+      afterStagedRestart.restoreDeleteSync(forgedValidLocator),
+    );
+    afterStagedRestart.finalizeDeleteSync(stagedAgain);
+    afterStagedRestart.finalizeDeleteSync(stagedAgain);
     assert.equal(existsSync(target), false);
     assert.equal(existsSync(path.join(root, ".quarantine", stagedAgain.quarantineId)), false);
 
@@ -209,12 +242,14 @@ function runAudit() {
       checks: [
         "controlled ID/kind path generation",
         "same-name no-overwrite publication",
-        "atomic fsync/link publication and owner-only modes",
+        "crash-safe fsync/link publication and owner-only modes",
+        "interrupted internal publication recovery",
         "plaintext hash/size verification and tamper rejection",
         "symlink and hardlink rejection",
         "failed-write temporary cleanup",
         "restart read",
-        "quarantine, restore, and staged cleanup",
+        "durable staged-delete journal, restart discovery, restore, and idempotent finalize",
+        "delete receipt manifest binding",
         "parse failure preserves original",
         "root-bounded delete receipt",
         "encrypted production default with no plaintext fallback",

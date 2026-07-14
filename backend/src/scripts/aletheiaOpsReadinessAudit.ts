@@ -24,6 +24,10 @@ function hasAll(source: string, values: string[]) {
   return values.every((value) => source.includes(value));
 }
 
+function countOccurrences(source: string, value: string) {
+  return source.split(value).length - 1;
+}
+
 function packageScript(root: string, packagePath: string, script: string) {
   if (!fileExists(root, packagePath)) return false;
   const parsed = JSON.parse(readText(root, packagePath)) as {
@@ -73,6 +77,7 @@ function main() {
     "backend/src/scripts/aletheiaRestoreDrill.ts",
   );
   const index = readText(root, "backend/src/index.ts");
+  const veraApplication = readText(root, "backend/src/veraApplication.ts");
   const repositoryFactory = readText(root, "backend/src/lib/aletheia/index.ts");
   const auth = readText(root, "backend/src/middleware/auth.ts");
   const ci = readText(root, ".github/workflows/aletheia-local-ci.yml");
@@ -117,21 +122,61 @@ function main() {
     ),
     check(
       "local-only-product-boundary",
-      hasAll(index, ['app.use("/aletheia", aletheiaRouter)']) &&
+      hasAll(index, [
+        'from "./veraApplication"',
+        "bootstrapVeraApplication",
+        "if (require.main === module)",
+      ]) &&
+        countOccurrences(index, "bootstrapVeraApplication") === 2 &&
+        countOccurrences(index, "bootstrapVeraApplication()") === 1 &&
+        hasAll(veraApplication, [
+          'app.use("/aletheia", aletheiaRouter)',
+          'app.use("/aletheia", legalResearchRouter)',
+          'app.use("/aletheia", legalResearchIssuesRouter)',
+          'app.use("/aletheia", legalOpinionsRouter)',
+          'app.use("/aletheia", litigationRouter)',
+          'app.use("/aletheia", durableAgentRunsRouter)',
+          'app.use("/aletheia", localGovernanceRouter)',
+          'app.use("/aletheia", localModelsRouter)',
+          'app.use("/aletheia", createLocalVoiceRouter())',
+          'app.use("/aletheia", createAletheiaLocalControlRouter())',
+        ]) &&
         !index.includes('app.use("/chat"') &&
         !index.includes('require("./routes/chat")') &&
         repositoryFactory.includes("return new LocalAletheiaRepository()"),
-      "Aletheia must default to the product-only router surface and have exactly one local repository implementation.",
+      "Vera must preserve the product-only legacy router surface, use exactly one bootstrap call, and keep one local repository implementation.",
     ),
     check(
       "http-health-and-private-auth",
       hasAll(index, [
-        'app.get("/health"',
-        "helmet",
-        "rateLimit",
-        "Aletheia backend running at http://",
-        "ALETHEIA_BACKEND_HOST",
+        "console.log(\n    `Vera backend running at http://${application.host}:${application.port}`",
+        'process.once("SIGINT"',
+        'process.once("SIGTERM"',
       ]) &&
+        countOccurrences(index, 'process.once("SIGINT"') === 1 &&
+        countOccurrences(index, 'process.once("SIGTERM"') === 1 &&
+        !index.includes("Aletheia backend running at") &&
+        !veraApplication.includes("process.once(") &&
+        hasAll(veraApplication, [
+          'app.get("/health"',
+          "helmet",
+          "rateLimit",
+          'app.use("/aletheia", mutationGuard)',
+          'app.use(\n    "/api/v1",',
+          "createWorkspaceAuthMiddleware",
+          "createWorkspaceV1Router",
+          'LOOPBACK_HOST = "127.0.0.1"',
+          "ALETHEIA_BACKEND_HOST",
+          "HOST",
+          "uploadLimiter",
+          "applyWorkspaceUploadLimit",
+          "closeServerBounded",
+          "runtime!.stop()",
+          "durableRuntime!.close()",
+          "auditAnchor!.close()",
+          "shutdownPromise",
+          "protectionActive",
+        ]) &&
         hasAll(auth, [
           'authMode === "single_user"',
           'authMode === "private_token"',
@@ -139,7 +184,7 @@ function main() {
           "ALETHEIA_PRIVATE_AUTH_TOKEN",
           'req.originalUrl.startsWith("/aletheia")',
         ]),
-      "Backend must expose a health endpoint and keep Aletheia local/private auth scoped to /aletheia with constant-time token comparison.",
+      "Backend must keep the Vera bootstrap loopback-only, preserve legacy/API guards and auth/upload middleware, expose a redacted health endpoint, and retain a single bounded shutdown owner while legacy auth remains private and constant-time.",
     ),
     check(
       "package-private-runtime",
