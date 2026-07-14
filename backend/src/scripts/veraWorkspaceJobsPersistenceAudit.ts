@@ -9,6 +9,7 @@ import { projectWorkspaceJobForLogs } from "../lib/workspace/jobs/stateMachine";
 import {
   DuplicateWorkspaceJobError,
   WorkspaceJobConflictError,
+  WorkspaceJobLeaseLostError,
   WorkspaceJobsRepository,
   type WorkspaceJobStoredRecord,
 } from "../lib/workspace/repositories/jobs";
@@ -23,6 +24,7 @@ const root = mkdtempSync(
   path.join(os.tmpdir(), "vera-workspace-jobs-persistence-"),
 );
 const persistenceDbPath = path.join(root, "workspace-persistence.db");
+const claimFenceDbPath = path.join(root, "workspace-claim-fence.db");
 const runtimeDbPath = path.join(root, "workspace-runtime.db");
 const BASE_TIME = new Date("2026-07-14T12:00:00.000Z").getTime();
 let tick = 0;
@@ -60,7 +62,15 @@ const IDS = {
   adapterCellResource: "22111111-1111-4111-8111-111111111111",
   raceCellJob: "23111111-1111-4111-8111-111111111111",
   raceCellResource: "24111111-1111-4111-8111-111111111111",
+  claimFenceAtomicJob: "27111111-1111-4111-8111-111111111111",
+  claimFenceAtomicResource: "28111111-1111-4111-8111-111111111111",
+  claimFenceRetryJob: "29111111-1111-4111-8111-111111111111",
+  claimFenceRetryResource: "2a111111-1111-4111-8111-111111111111",
+  claimFenceCancelJob: "2b111111-1111-4111-8111-111111111111",
+  claimFenceCancelResource: "2c111111-1111-4111-8111-111111111111",
 } as const;
+
+const CLAIM_FENCE_SECRET = "claim-fence-secret-must-never-leak";
 
 function nextDate() {
   const date = new Date(BASE_TIME + tick * 1000);
@@ -116,6 +126,49 @@ function assertSnapshot(
   }
 }
 
+function assertStableLeaseLost(action: () => unknown) {
+  let thrown: unknown;
+  try {
+    action();
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof WorkspaceJobLeaseLostError);
+  assert.equal(thrown.message, "Workspace job claim lease was lost.");
+  assert.equal(thrown.message.includes(CLAIM_FENCE_SECRET), false);
+}
+
+function sentinelValue(database: WorkspaceDatabase, jobId: string) {
+  const row = database
+    .prepare("SELECT value FROM claim_fence_sentinel WHERE job_id = ?")
+    .get(jobId) as { value?: unknown } | undefined;
+  assert.equal(typeof row?.value, "string");
+  return row?.value as string;
+}
+
+function createClaimFenceJob(
+  repository: WorkspaceJobsRepository,
+  input: {
+    id: string;
+    resourceId: string;
+    createdAt: string;
+    maxAttempts: number;
+    payload: unknown;
+  },
+) {
+  return repository.createJob({
+    job: repository.toRecord({
+      id: input.id,
+      type: "document_parse",
+      payload: input.payload,
+      maxAttempts: input.maxAttempts,
+      createdAt: input.createdAt,
+    }),
+    resourceType: "document",
+    resourceId: input.resourceId,
+  });
+}
+
 async function auditPersistenceAcrossReopen() {
   const database = createDatabase(persistenceDbPath);
   try {
@@ -148,6 +201,426 @@ async function auditPersistenceAcrossReopen() {
     assert.equal(repository.listJobs().length, 1);
   } finally {
     reopened.close();
+  }
+}
+
+async function auditTransactionlessClaimFence() {
+  const database = createDatabase(claimFenceDbPath);
+  const repository = createRepository(database);
+  const atomicPayload = {
+    documentId: IDS.claimFenceAtomicResource,
+    instruction: CLAIM_FENCE_SECRET,
+    options: { language: "zh-CN", mode: "exact" },
+  };
+
+  try {
+    database.exec(`CREATE TABLE claim_fence_sentinel (
+      job_id TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    ) STRICT`);
+
+    createClaimFenceJob(repository, {
+      id: IDS.claimFenceAtomicJob,
+      resourceId: IDS.claimFenceAtomicResource,
+      createdAt: "2026-07-15T00:00:00.000Z",
+      maxAttempts: 1,
+      payload: atomicPayload,
+    });
+    database
+      .prepare("INSERT INTO claim_fence_sentinel (job_id, value) VALUES (?, ?)")
+      .run(IDS.claimFenceAtomicJob, "initial");
+
+    const atomicClaim = repository.claimNextQueued(
+      "2026-07-15T00:00:01.000Z",
+      "claim-fence-worker-a",
+      "2026-07-15T00:10:00.000Z",
+    );
+    assert.equal(atomicClaim?.id, IDS.claimFenceAtomicJob);
+    assert.equal(atomicClaim?.attempt, 1);
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const asserted = repository.assertClaimInCurrentTransaction({
+        id: IDS.claimFenceAtomicJob,
+        type: "document_parse",
+        resourceType: "document",
+        resourceId: IDS.claimFenceAtomicResource,
+        payload: atomicPayload,
+        leaseOwner: "claim-fence-worker-a",
+        attempt: 1,
+        at: "2026-07-15T00:00:02.000Z",
+      });
+      assert.equal(asserted.id, IDS.claimFenceAtomicJob);
+      assert.deepEqual(asserted.payload, atomicPayload);
+
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: "deadbeef-1111-4111-8111-111111111111",
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "assistant_generate",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "chat",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceRetryResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: {
+            ...atomicPayload,
+            instruction: `${CLAIM_FENCE_SECRET}-mismatch`,
+          },
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-b",
+          attempt: 1,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 2,
+          at: "2026-07-15T00:00:02.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:10:00.000Z",
+        }),
+      );
+      database.exec("ROLLBACK");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database
+        .prepare("UPDATE claim_fence_sentinel SET value = ? WHERE job_id = ?")
+        .run("rolled-back-domain-write", IDS.claimFenceAtomicJob);
+      const completedInsideRolledBackTransaction =
+        repository.finishClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          event: {
+            type: "complete",
+            at: "2026-07-15T00:00:03.000Z",
+            result: { parsed: true },
+          },
+        });
+      assert.equal(completedInsideRolledBackTransaction.status, "complete");
+      assert.equal(
+        repository.getJob(IDS.claimFenceAtomicJob)?.status,
+        "complete",
+      );
+      assert.equal(
+        sentinelValue(database, IDS.claimFenceAtomicJob),
+        "rolled-back-domain-write",
+      );
+      database.exec("ROLLBACK");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    assert.equal(sentinelValue(database, IDS.claimFenceAtomicJob), "initial");
+    assert.equal(repository.getJob(IDS.claimFenceAtomicJob)?.status, "running");
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database
+        .prepare("UPDATE claim_fence_sentinel SET value = ? WHERE job_id = ?")
+        .run("committed-domain-write", IDS.claimFenceAtomicJob);
+      const completed = repository.finishClaimInCurrentTransaction({
+        id: IDS.claimFenceAtomicJob,
+        type: "document_parse",
+        resourceType: "document",
+        resourceId: IDS.claimFenceAtomicResource,
+        payload: atomicPayload,
+        leaseOwner: "claim-fence-worker-a",
+        attempt: 1,
+        event: {
+          type: "complete",
+          at: "2026-07-15T00:00:04.000Z",
+          result: { parsed: true, committed: true },
+        },
+      });
+      assert.equal(completed.status, "complete");
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    assert.equal(
+      sentinelValue(database, IDS.claimFenceAtomicJob),
+      "committed-domain-write",
+    );
+    assert.equal(
+      repository.getJob(IDS.claimFenceAtomicJob)?.status,
+      "complete",
+    );
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceAtomicJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceAtomicResource,
+          payload: atomicPayload,
+          leaseOwner: "claim-fence-worker-a",
+          attempt: 1,
+          at: "2026-07-15T00:00:05.000Z",
+        }),
+      );
+      database.exec("ROLLBACK");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+
+    const retryPayload = {
+      documentId: IDS.claimFenceRetryResource,
+      instruction: CLAIM_FENCE_SECRET,
+    };
+    createClaimFenceJob(repository, {
+      id: IDS.claimFenceRetryJob,
+      resourceId: IDS.claimFenceRetryResource,
+      createdAt: "2026-07-15T01:00:00.000Z",
+      maxAttempts: 2,
+      payload: retryPayload,
+    });
+    database
+      .prepare("INSERT INTO claim_fence_sentinel (job_id, value) VALUES (?, ?)")
+      .run(IDS.claimFenceRetryJob, "initial");
+    const firstAttempt = repository.claimNextQueued(
+      "2026-07-15T01:00:01.000Z",
+      "claim-fence-old-worker",
+      "2026-07-15T01:00:05.000Z",
+    );
+    assert.equal(firstAttempt?.id, IDS.claimFenceRetryJob);
+    assert.equal(firstAttempt?.attempt, 1);
+    const recovered = repository.recoverStaleRunningJobs(
+      "2026-07-15T01:00:05.000Z",
+    );
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].status, "queued");
+    assert.equal(recovered[0].attempt, 1);
+    const secondAttempt = repository.claimNextQueued(
+      "2026-07-15T01:00:06.000Z",
+      "claim-fence-current-worker",
+      "2026-07-15T01:10:00.000Z",
+    );
+    assert.equal(secondAttempt?.id, IDS.claimFenceRetryJob);
+    assert.equal(secondAttempt?.attempt, 2);
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database
+        .prepare("UPDATE claim_fence_sentinel SET value = ? WHERE job_id = ?")
+        .run("stale-claim-domain-write", IDS.claimFenceRetryJob);
+      assertStableLeaseLost(() =>
+        repository.finishClaimInCurrentTransaction({
+          id: IDS.claimFenceRetryJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceRetryResource,
+          payload: retryPayload,
+          leaseOwner: "claim-fence-old-worker",
+          attempt: 1,
+          event: {
+            type: "complete",
+            at: "2026-07-15T01:00:07.000Z",
+            result: { stale: true, secret: CLAIM_FENCE_SECRET },
+          },
+        }),
+      );
+      assert.equal(
+        repository.getJob(IDS.claimFenceRetryJob)?.status,
+        "running",
+      );
+      assert.equal(repository.getJob(IDS.claimFenceRetryJob)?.attempt, 2);
+      database.exec("ROLLBACK");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    assert.equal(sentinelValue(database, IDS.claimFenceRetryJob), "initial");
+    assert.equal(repository.getJob(IDS.claimFenceRetryJob)?.status, "running");
+    assert.equal(repository.getJob(IDS.claimFenceRetryJob)?.attempt, 2);
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database
+        .prepare("UPDATE claim_fence_sentinel SET value = ? WHERE job_id = ?")
+        .run("current-claim-domain-write", IDS.claimFenceRetryJob);
+      const completed = repository.finishClaimInCurrentTransaction({
+        id: IDS.claimFenceRetryJob,
+        type: "document_parse",
+        resourceType: "document",
+        resourceId: IDS.claimFenceRetryResource,
+        payload: retryPayload,
+        leaseOwner: "claim-fence-current-worker",
+        attempt: 2,
+        event: {
+          type: "complete",
+          at: "2026-07-15T01:00:08.000Z",
+          result: { current: true },
+        },
+      });
+      assert.equal(completed.status, "complete");
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    assert.equal(
+      sentinelValue(database, IDS.claimFenceRetryJob),
+      "current-claim-domain-write",
+    );
+
+    const cancellationPayload = {
+      documentId: IDS.claimFenceCancelResource,
+      instruction: CLAIM_FENCE_SECRET,
+    };
+    createClaimFenceJob(repository, {
+      id: IDS.claimFenceCancelJob,
+      resourceId: IDS.claimFenceCancelResource,
+      createdAt: "2026-07-15T02:00:00.000Z",
+      maxAttempts: 1,
+      payload: cancellationPayload,
+    });
+    const cancellationClaim = repository.claimNextQueued(
+      "2026-07-15T02:00:01.000Z",
+      "claim-fence-cancel-worker",
+      "2026-07-15T02:10:00.000Z",
+    );
+    assert.equal(cancellationClaim?.id, IDS.claimFenceCancelJob);
+    const cancellationRequested = repository.requestCancellation(
+      IDS.claimFenceCancelJob,
+      "2026-07-15T02:00:02.000Z",
+      "claim fence cancellation fixture",
+    );
+    assert.ok(cancellationRequested.cancelRequestedAt);
+
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      assertStableLeaseLost(() =>
+        repository.assertClaimInCurrentTransaction({
+          id: IDS.claimFenceCancelJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceCancelResource,
+          payload: cancellationPayload,
+          leaseOwner: "claim-fence-cancel-worker",
+          attempt: 1,
+          at: "2026-07-15T02:00:03.000Z",
+        }),
+      );
+      assertStableLeaseLost(() =>
+        repository.finishClaimInCurrentTransaction({
+          id: IDS.claimFenceCancelJob,
+          type: "document_parse",
+          resourceType: "document",
+          resourceId: IDS.claimFenceCancelResource,
+          payload: cancellationPayload,
+          leaseOwner: "claim-fence-cancel-worker",
+          attempt: 1,
+          event: {
+            type: "complete",
+            at: "2026-07-15T02:00:03.000Z",
+            result: { mustNotPersist: true },
+          },
+        }),
+      );
+      database.exec("ROLLBACK");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    const cancelled = repository.finishClaim({
+      id: IDS.claimFenceCancelJob,
+      leaseOwner: "claim-fence-cancel-worker",
+      attempt: 1,
+      event: {
+        type: "cancel",
+        at: "2026-07-15T02:00:04.000Z",
+        reason: "claim fence cancellation fixture",
+      },
+    });
+    assert.equal(cancelled.status, "cancelled");
+  } finally {
+    database.close();
   }
 }
 
@@ -704,6 +1177,7 @@ async function auditRuntimeRepositoryAndAdapter() {
 async function main() {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
   await auditPersistenceAcrossReopen();
+  await auditTransactionlessClaimFence();
   await auditRuntimeRepositoryAndAdapter();
   console.log(
     JSON.stringify(
@@ -719,6 +1193,9 @@ async function main() {
           "duplicate idempotency races re-check compatibility and conflict on mismatches",
           "workflow_run adapter ignores workflow idempotency keys instead of pretending workflow jobs are idempotent",
           "transactionless adapter supports enqueue and transition inside caller-owned transactions",
+          "transactionless claim fence validates identity payload lease attempt expiry and cancellation without leaking payloads",
+          "domain sentinel writes and claim terminal state roll back or commit atomically in one caller-owned transaction",
+          "expired and superseded claims cannot write while the current attempt can commit",
           "runtime persists success failure cancellation and missing-handler outcomes without leaking secrets",
           "transaction failures roll back partial claim updates",
         ],

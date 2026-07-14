@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { WorkspaceDatabaseAdapter } from "../migrations";
 import {
   assertWorkspaceJobRecord,
@@ -135,6 +137,25 @@ export interface FinishWorkspaceJobClaimInput {
   id: string;
   leaseOwner: string;
   attempt: number;
+  event: WorkspaceJobEvent;
+}
+
+export interface AssertWorkspaceJobClaimInput {
+  id: string;
+  type: WorkspaceJobType;
+  resourceType: WorkspaceJobResourceType;
+  resourceId: string;
+  leaseOwner: string;
+  attempt: number;
+  at: string;
+  /** When present, the persisted payload must match exactly. */
+  payload?: unknown;
+}
+
+export interface FinishWorkspaceJobClaimInCurrentTransactionInput extends Omit<
+  AssertWorkspaceJobClaimInput,
+  "at"
+> {
   event: WorkspaceJobEvent;
 }
 
@@ -673,6 +694,41 @@ export class WorkspaceJobsRepository {
     }
   }
 
+  private assertClaimInCurrentTransactionWithPolicy(
+    input: AssertWorkspaceJobClaimInput,
+    allowCancellationRequested: boolean,
+  ): WorkspaceJobStoredRecord {
+    const id = assertNonEmptyString(input.id, "id");
+    const leaseOwner = assertNonEmptyString(input.leaseOwner, "leaseOwner");
+    const attempt = parseInteger(input.attempt, "attempt");
+    const at = assertTimestamp(input.at, "at");
+    const resourceId = assertNonEmptyString(input.resourceId, "resourceId");
+    const row = this.selectRowById(id);
+    if (!row) throw new WorkspaceJobLeaseLostError();
+    const current = this.rowToRecord(row);
+    this.assertClaimLeaseHeld(current, leaseOwner, attempt, at);
+    const expectsPayload = Object.prototype.hasOwnProperty.call(
+      input,
+      "payload",
+    );
+    if (
+      current.type !== input.type ||
+      current.resourceType !== input.resourceType ||
+      current.resourceId !== resourceId ||
+      (!allowCancellationRequested && current.cancelRequestedAt !== null) ||
+      (expectsPayload && !isDeepStrictEqual(current.payload, input.payload))
+    ) {
+      throw new WorkspaceJobLeaseLostError();
+    }
+    return current;
+  }
+
+  assertClaimInCurrentTransaction(
+    input: AssertWorkspaceJobClaimInput,
+  ): WorkspaceJobStoredRecord {
+    return this.assertClaimInCurrentTransactionWithPolicy(input, false);
+  }
+
   private finalizeRecoveredRunningJob(
     current: WorkspaceJobStoredRecord,
     at: string,
@@ -1037,86 +1093,151 @@ export class WorkspaceJobsRepository {
     });
   }
 
-  finishClaim(input: FinishWorkspaceJobClaimInput): WorkspaceJobStoredRecord {
-    const id = assertNonEmptyString(input.id, "id");
-    const leaseOwner = assertNonEmptyString(input.leaseOwner, "leaseOwner");
-    const attempt = parseInteger(input.attempt, "attempt");
+  private finishValidatedClaimInCurrentTransaction(
+    current: WorkspaceJobStoredRecord,
+    input: FinishWorkspaceJobClaimInCurrentTransactionInput,
+    at: string,
+    allowCancellationRequested: boolean,
+  ): WorkspaceJobStoredRecord {
+    const next = transitionWorkspaceJob(current, input.event);
+    const cancelRequestedAt =
+      input.event.type === "cancel"
+        ? (current.cancelRequestedAt ?? next.cancellation?.requestedAt ?? at)
+        : current.cancelRequestedAt;
+    const cancellationReason =
+      input.event.type === "cancel"
+        ? (next.cancellation?.reason ?? current.cancellationReason ?? null)
+        : null;
+    const queuedAt =
+      next.status === "queued" ? next.queuedAt : current.queuedAt;
+    const result = this.database
+      .prepare(
+        `UPDATE jobs
+            SET status = ?,
+                attempt = ?,
+                max_attempts = ?,
+                retryable = ?,
+                payload_json = ?,
+                result_json = ?,
+                error_json = ?,
+                error_code = ?,
+                scheduled_at = ?,
+                queued_at = ?,
+                locked_at = ?,
+                lease_owner = ?,
+                lease_expires_at = ?,
+                started_at = ?,
+                completed_at = ?,
+                cancel_requested_at = ?,
+                cancellation_reason = ?,
+                updated_at = ?
+          WHERE id = ?
+            AND type = ?
+            AND resource_type = ?
+            AND resource_id = ?
+            AND status = 'running'
+            AND lease_owner = ?
+            AND attempt = ?
+            AND lease_expires_at IS NOT NULL
+            AND lease_expires_at > ?
+            AND (? = 1 OR cancel_requested_at IS NULL)`,
+      )
+      .run(
+        next.status,
+        next.attempt,
+        next.maxAttempts,
+        retryableFromJob(next) ? 1 : 0,
+        stringifyJson(next.payload) ?? "{}",
+        stringifyJson(next.result),
+        stringifyJson(next.error),
+        next.error?.code ?? null,
+        queuedAt,
+        queuedAt,
+        null,
+        null,
+        null,
+        next.startedAt,
+        next.completedAt,
+        cancelRequestedAt,
+        cancellationReason,
+        next.updatedAt,
+        current.id,
+        current.type,
+        current.resourceType,
+        current.resourceId,
+        input.leaseOwner,
+        input.attempt,
+        at,
+        allowCancellationRequested ? 1 : 0,
+      ) as { changes?: unknown };
+    if (Number(result?.changes ?? 0) !== 1) {
+      throw new WorkspaceJobLeaseLostError();
+    }
+    const updated = this.selectRowById(current.id);
+    if (!updated) throw new WorkspaceJobLeaseLostError();
+    return this.rowToRecord(updated);
+  }
+
+  private finishClaimInCurrentTransactionWithPolicy(
+    input: FinishWorkspaceJobClaimInCurrentTransactionInput,
+    allowCancellationRequested: boolean,
+  ): WorkspaceJobStoredRecord {
     const at = assertTimestamp(input.event.at, `${input.event.type}.at`);
-    return this.transaction(() => {
-      const row = this.selectRowById(id);
-      if (!row) throw new WorkspaceJobLeaseLostError();
-      const current = this.rowToRecord(row);
-      this.assertClaimLeaseHeld(current, leaseOwner, attempt, at);
-      const next = transitionWorkspaceJob(current, input.event);
-      const cancelRequestedAt =
-        input.event.type === "cancel"
-          ? (current.cancelRequestedAt ?? next.cancellation?.requestedAt ?? at)
-          : current.cancelRequestedAt;
-      const cancellationReason =
-        input.event.type === "cancel"
-          ? (next.cancellation?.reason ?? current.cancellationReason ?? null)
-          : null;
-      const queuedAt =
-        next.status === "queued" ? next.queuedAt : current.queuedAt;
-      const result = this.database
-        .prepare(
-          `UPDATE jobs
-              SET status = ?,
-                  attempt = ?,
-                  max_attempts = ?,
-                  retryable = ?,
-                  payload_json = ?,
-                  result_json = ?,
-                  error_json = ?,
-                  error_code = ?,
-                  scheduled_at = ?,
-                  queued_at = ?,
-                  locked_at = ?,
-                  lease_owner = ?,
-                  lease_expires_at = ?,
-                  started_at = ?,
-                  completed_at = ?,
-                  cancel_requested_at = ?,
-                  cancellation_reason = ?,
-                  updated_at = ?
-            WHERE id = ?
-              AND status = 'running'
-              AND lease_owner = ?
-              AND attempt = ?
-              AND lease_expires_at IS NOT NULL
-              AND lease_expires_at > ?`,
-        )
-        .run(
-          next.status,
-          next.attempt,
-          next.maxAttempts,
-          retryableFromJob(next) ? 1 : 0,
-          stringifyJson(next.payload) ?? "{}",
-          stringifyJson(next.result),
-          stringifyJson(next.error),
-          next.error?.code ?? null,
-          queuedAt,
-          queuedAt,
-          null,
-          null,
-          null,
-          next.startedAt,
-          next.completedAt,
-          cancelRequestedAt,
-          cancellationReason,
-          next.updatedAt,
-          id,
-          leaseOwner,
-          attempt,
-          at,
-        ) as { changes?: unknown };
-      if (Number(result?.changes ?? 0) !== 1) {
-        throw new WorkspaceJobLeaseLostError();
-      }
-      const updated = this.selectRowById(id);
-      if (!updated) throw new WorkspaceJobLeaseLostError();
-      return this.rowToRecord(updated);
-    });
+    const claimInput: AssertWorkspaceJobClaimInput = {
+      id: input.id,
+      type: input.type,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      leaseOwner: input.leaseOwner,
+      attempt: input.attempt,
+      at,
+    };
+    if (Object.prototype.hasOwnProperty.call(input, "payload")) {
+      claimInput.payload = input.payload;
+    }
+    const current = this.assertClaimInCurrentTransactionWithPolicy(
+      claimInput,
+      allowCancellationRequested,
+    );
+    return this.finishValidatedClaimInCurrentTransaction(
+      current,
+      input,
+      at,
+      allowCancellationRequested,
+    );
+  }
+
+  finishClaimInCurrentTransaction(
+    input: FinishWorkspaceJobClaimInCurrentTransactionInput,
+  ): WorkspaceJobStoredRecord {
+    return this.finishClaimInCurrentTransactionWithPolicy(input, false);
+  }
+
+  private finishLegacyClaimInCurrentTransaction(
+    input: FinishWorkspaceJobClaimInput,
+  ): WorkspaceJobStoredRecord {
+    const id = assertNonEmptyString(input.id, "id");
+    const row = this.selectRowById(id);
+    if (!row) throw new WorkspaceJobLeaseLostError();
+    const current = this.rowToRecord(row);
+    return this.finishClaimInCurrentTransactionWithPolicy(
+      {
+        id,
+        type: current.type,
+        resourceType: current.resourceType,
+        resourceId: current.resourceId,
+        leaseOwner: input.leaseOwner,
+        attempt: input.attempt,
+        event: input.event,
+      },
+      input.event.type === "cancel",
+    );
+  }
+
+  finishClaim(input: FinishWorkspaceJobClaimInput): WorkspaceJobStoredRecord {
+    return this.transaction(() =>
+      this.finishLegacyClaimInCurrentTransaction(input),
+    );
   }
 
   renewLease(
