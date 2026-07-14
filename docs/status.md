@@ -140,6 +140,17 @@ header. A representative two-conclusion opinion was rendered page by page with
 LibreOffice during QA; its source, limiting conditions and footer remained
 legible with no clipping or overlap.
 
+An accepted, current research memo now also has its own protected local DOCX
+export/download path. It is intentionally separate from the legal-opinion
+builder: no second review is created, but the memo export fails closed unless
+the input manifest, source snapshots, issue tree, case context, Gate, review
+decision, and approval audit are still current. Each export is stored as a
+hash-bound `legal_research_memo_docx` export record and is rechecked on download.
+The Matter workbench shows this action only for an accepted non-stale research
+memo. Sol passed the desktop and 393px states; see
+docs/legal_research_memo_docx_sol_review.md and
+docs/screenshots/ui-audit-2026-07-13-research-memo-docx/.
+
 **Next:** configure one authorized legal-source API and prove live controlled
 retrieval against its license; add an offline anonymized demo Matter; then run
 a measured evaluation set. The dedicated legal-opinion DOCX has already had

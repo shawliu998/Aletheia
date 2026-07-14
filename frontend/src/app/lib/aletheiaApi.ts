@@ -811,6 +811,13 @@ export interface AletheiaLegalOpinionExport {
   contentHash: string;
 }
 
+export interface AletheiaLegalResearchMemoExport {
+  exportId: string;
+  memoId: string;
+  version: number;
+  contentHash: string;
+}
+
 export type AletheiaLegalOpinionCover = {
   title?: string;
   addressee?: string;
@@ -864,6 +871,39 @@ export async function downloadAletheiaLegalOpinionDocx(
   );
   if (!response.ok) {
     throw await toApiError(response, "legal opinion DOCX download");
+  }
+  return response.blob();
+}
+
+export async function exportAletheiaLegalResearchMemoDocx(
+  matterId: string,
+  memoId: string,
+): Promise<AletheiaLegalResearchMemoExport> {
+  return apiRequest<AletheiaLegalResearchMemoExport>(
+    `/aletheia/matters/${matterId}/legal-research-memos/${memoId}/docx`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+}
+
+export async function downloadAletheiaLegalResearchMemoDocx(
+  matterId: string,
+  exportId: string,
+): Promise<Blob> {
+  const authHeaders = await getAuthHeader();
+  const apiBase = await getAletheiaApiBase();
+  const response = await fetch(
+    `${apiBase}/aletheia/matters/${matterId}/legal-research-memo-exports/${exportId}/download`,
+    {
+      cache: "no-store",
+      headers: {
+        Accept:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ...authHeaders,
+      },
+    },
+  );
+  if (!response.ok) {
+    throw await toApiError(response, "legal research memo DOCX download");
   }
   return response.blob();
 }

@@ -895,6 +895,11 @@ async function main() {
       product.id === contextStaleCandidate.id,
     );
     assert.match(contextStaleMemo.stale_reason, /case context changed/i);
+    (repo as any).db.prepare("update aletheia_work_products set status = 'accepted' where id = ?").run(contextStaleCandidate.id);
+    await assert.rejects(
+      () => repo.exportLegalResearchMemoDocx(ctx, matter.id, contextStaleCandidate.id),
+      /research memo/i,
+    );
 
     const actions = new Set(contextStaleDetail.auditEvents.map((event: Record<string, unknown>) => event.action));
     for (const action of [
@@ -939,6 +944,7 @@ async function main() {
         "source-change stale approval block",
         "issue-tree-change stale approval block",
         "case-context-change stale approval block",
+        "case-context-change stale memo DOCX export block",
         "matter-scoped audit trail",
       ],
     })}\n`);

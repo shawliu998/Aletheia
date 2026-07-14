@@ -190,6 +190,23 @@ export type LegalOpinionDownload = {
   bytes: Buffer;
 };
 
+export type LegalResearchMemoDownload = {
+  exportId: string;
+  workProductId: string;
+  title: string;
+  version: number;
+  contentHash: string;
+  mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  bytes: Buffer;
+};
+
+export type LegalResearchMemoExport = {
+  exportId: string;
+  memoId: string;
+  version: number;
+  contentHash: string;
+};
+
 export type MatterOriginalDocumentDownload = {
   bytes: Buffer;
   filename: string;
@@ -453,6 +470,16 @@ export interface AletheiaRepository {
     matterId: string,
     exportId: string,
   ): Promise<LegalOpinionDownload | null>;
+  exportLegalResearchMemoDocx(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    memoId: string,
+  ): Promise<LegalResearchMemoExport | null>;
+  downloadLegalResearchMemoDocx(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    exportId: string,
+  ): Promise<LegalResearchMemoDownload | null>;
   approveWordAddinHandoff(
     ctx: AletheiaUserContext,
     matterId: string,

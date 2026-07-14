@@ -25,7 +25,10 @@ async function captureScreenshot(page: Page, filePath: string) {
 
 async function captureViewportScreenshot(page: Page, filePath: string) {
   if (!uiCaptureEnabled()) return;
-  await page.waitForTimeout(150);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+  await page.waitForTimeout(300);
   await page.screenshot({ path: filePath });
 }
 
@@ -245,9 +248,14 @@ test("法律研究 imports manual sources through the real local backend and fai
   await expect(page.getByTestId("legal-research-issue-tree").getByLabel("子争点")).toHaveValue("解除通知的到达与生效时间");
 });
 
-test("法律研究 renders persisted snapshots, exact excerpts, conclusions, and 依据不足", async ({ page, request }, testInfo) => {
+test("法律研究 renders persisted conclusions and exports only an accepted current memo", async ({ page, request }, testInfo) => {
   const state = smokeState();
   const matterId = state.projects[testInfo.project.name].litigation.matterId;
+  if (testInfo.project.name.startsWith("desktop")) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  } else {
+    expect(page.viewportSize()?.width).toBe(393);
+  }
   const api = `http://127.0.0.1:${state.backendPort}/aletheia/matters/${matterId}`;
   const baseResponse = await request.get(api);
   expect(baseResponse.ok()).toBeTruthy();
@@ -255,7 +263,7 @@ test("法律研究 renders persisted snapshots, exact excerpts, conclusions, and
   const sourceText = "一般保证的债权人未在保证期间对债务人提起诉讼或者申请仲裁的，保证人不再承担保证责任。";
   const contentHash = `sha256:${createHash("sha256").update(sourceText).digest("hex")}`;
   const quoteHash = `sha256:${createHash("sha256").update(sourceText).digest("hex")}`;
-  const ids = { request: "visual-request", issues: "visual-issues", plan: "visual-plan", result: "visual-result", snapshot: "visual-snapshot", excerpt: "visual-excerpt", manifest: "visual-manifest", memo: "visual-memo", blocked: "visual-blocked" };
+  const ids = { request: "visual-request", issues: "visual-issues", plan: "visual-plan", result: "visual-result", snapshot: "visual-snapshot", excerpt: "visual-excerpt", manifest: "visual-manifest", memo: "visual-memo", pendingMemo: "visual-memo-pending", staleMemo: "visual-memo-stale", blocked: "visual-blocked" };
   const record = (id: string, kind: string, title: string, status: string, content: Record<string, unknown>, createdAt: string) => ({
     id, matter_id: matterId, user_id: "local-user", kind, title, status,
     schema_version: textSchema(content), content, validation_errors: [], generated_by: "human", model: null,
@@ -272,6 +280,12 @@ test("法律研究 renders persisted snapshots, exact excerpts, conclusions, and
     record(ids.excerpt, "legal_research_excerpt", "律师确认摘录：民法典第六百八十七条", "accepted", { schemaVersion: "vera-legal-research-excerpt-v1", requestId: ids.request, queryPlanId: ids.plan, snapshotId: ids.snapshot, sourceIdentity: "pkulaw:civil-code-687", sourceContentHash: contentHash, quote: sourceText, quoteHash, confirmedComment: "已与本地法规快照逐字核对。" }, "2026-07-12T09:04:00.000Z"),
     record(ids.manifest, "legal_research_input_manifest", "研究输入清单", "accepted", { schemaVersion: "vera-legal-research-input-manifest-v1", requestId: ids.request, excerpts: [{ excerptId: ids.excerpt, snapshotId: ids.snapshot }], bindingHash: `sha256:${"b".repeat(64)}` }, "2026-07-12T09:05:00.000Z"),
     record(ids.memo, "legal_qa_answer", "法律研究备忘录：保证责任期间法律研究", "accepted", { schemaVersion: "vera-legal-research-memo-v1", requestId: ids.request, inputManifestId: ids.manifest, findings: [{ conclusion: "一般保证的债权人应在保证期间内依法提起诉讼或申请仲裁。", confidence: "high", position: "supporting" }], gate: { status: "ready_for_review", reasons: [] }, finalization: "human_review_required" }, "2026-07-12T09:06:00.000Z"),
+    record(ids.pendingMemo, "legal_qa_answer", "待采纳研究备忘录", "needs_review", { schemaVersion: "vera-legal-research-memo-v1", requestId: ids.request, inputManifestId: ids.manifest, findings: [{ conclusion: "该结论尚未完成复核与采纳。", confidence: "medium", position: "neutral" }], gate: { status: "ready_for_review", reasons: [] }, finalization: "human_review_required" }, "2026-07-12T09:06:30.000Z"),
+    {
+      ...record(ids.staleMemo, "legal_qa_answer", "已过期研究备忘录", "accepted", { schemaVersion: "vera-legal-research-memo-v1", requestId: ids.request, inputManifestId: ids.manifest, findings: [{ conclusion: "该结论绑定的来源已更新。", confidence: "low", position: "neutral" }], gate: { status: "ready_for_review", reasons: [] }, finalization: "human_review_required" }, "2026-07-12T09:06:45.000Z"),
+      stale_at: "2026-07-12T09:07:00.000Z",
+      stale_reason: "来源快照已更新。",
+    },
     record(ids.blocked, "legal_research_memo", "研究备忘录（依据不足）：保证责任期间法律研究", "draft", { schemaVersion: "vera-legal-research-memo-v1", requestId: ids.request, inputManifestId: ids.manifest, findings: [], gate: { status: "insufficient_basis", reasons: ["尚无足以支持该子问题的律师确认原文。"] }, finalization: "blocked" }, "2026-07-12T09:07:00.000Z"),
   ];
   let projected = {
@@ -287,6 +301,45 @@ test("法律研究 renders persisted snapshots, exact excerpts, conclusions, and
   await page.route(`**/aletheia/matters/${matterId}`, async (route) => {
     if (route.request().method() === "GET") await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projected) });
     else await route.continue();
+  });
+  let releaseFailClosed!: () => void;
+  const failClosedGate = new Promise<void>((resolve) => {
+    releaseFailClosed = resolve;
+  });
+  let memoExportAttempts = 0;
+  await page.route(`**/aletheia/matters/${matterId}/legal-research-memos/${ids.memo}/docx`, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    memoExportAttempts += 1;
+    if (memoExportAttempts === 1) {
+      await failClosedGate;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "approval_required",
+          detail: "The accepted legal research memo has no exact approval audit record.",
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        exportId: "visual-memo-export",
+        memoId: ids.memo,
+        version: 1,
+        contentHash,
+      }),
+    });
+  });
+  await page.route(`**/aletheia/matters/${matterId}/legal-research-memo-exports/visual-memo-export/download`, async (route) => {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      body: Buffer.from("PK\u0003\u0004visual-research-memo-docx"),
+    });
   });
   await page.route(`**/aletheia/matters/${matterId}/legal-opinions`, async (route) => {
     expect(route.request().postDataJSON()).toEqual({
@@ -321,6 +374,62 @@ test("法律研究 renders persisted snapshots, exact excerpts, conclusions, and
   await expect(page.getByTestId("legal-research-workbench")).toContainText(sourceText);
   await expect(page.getByTestId("legal-research-workbench")).toContainText("依据不足");
   await expect(page.getByTestId("legal-research-workbench")).toContainText("已采纳");
+
+  const workbench = page.getByTestId("legal-research-workbench");
+  const acceptedMemoRow = workbench.locator("article").filter({ hasText: "法律研究备忘录：保证责任期间法律研究" });
+  const pendingMemoRow = workbench.locator("article").filter({ hasText: "待采纳研究备忘录" });
+  const staleMemoRow = workbench.locator("article").filter({ hasText: "已过期研究备忘录" });
+  const blockedMemoRow = workbench.locator("article").filter({ hasText: "研究备忘录（依据不足）" });
+  const memoExportButton = acceptedMemoRow.getByRole("button", { name: "导出备忘录 DOCX" });
+  await expect(memoExportButton).toBeVisible();
+  await expect(workbench.getByRole("button", { name: "导出备忘录 DOCX" })).toHaveCount(1);
+  await expect(pendingMemoRow.getByRole("button", { name: "导出备忘录 DOCX" })).toHaveCount(0);
+  await expect(staleMemoRow.getByRole("button", { name: "导出备忘录 DOCX" })).toHaveCount(0);
+  await expect(blockedMemoRow.getByRole("button", { name: "导出备忘录 DOCX" })).toHaveCount(0);
+  await expect(pendingMemoRow).toContainText("待复核");
+  await expect(staleMemoRow).toContainText("已过期");
+  await expect(blockedMemoRow).toContainText("依据不足");
+
+  const memoScreenshotDir = path.resolve(
+    process.cwd(),
+    "../docs/screenshots/ui-audit-2026-07-13-research-memo-docx",
+  );
+  if (uiCaptureEnabled()) mkdirSync(memoScreenshotDir, { recursive: true });
+  const memoSuffix = testInfo.project.name.startsWith("mobile")
+    ? "narrow-393"
+    : "desktop-1440";
+  await memoExportButton.click();
+  await expect(acceptedMemoRow.getByRole("button", { name: "正在导出" })).toBeDisabled();
+  await acceptedMemoRow.scrollIntoViewIfNeeded();
+  await captureViewportScreenshot(
+    page,
+    path.join(memoScreenshotDir, `01-export-loading-${memoSuffix}.png`),
+  );
+  releaseFailClosed();
+  await expect(acceptedMemoRow.getByRole("alert")).toHaveText(
+    "The accepted legal research memo has no exact approval audit record.",
+  );
+  await expect(memoExportButton).toBeEnabled();
+  await expect(workbench).toContainText("待采纳研究备忘录");
+  await expect(workbench).toContainText("已过期研究备忘录");
+  await expect(workbench).toContainText("研究备忘录（依据不足）");
+  await captureViewportScreenshot(
+    page,
+    path.join(memoScreenshotDir, `02-export-fail-closed-${memoSuffix}.png`),
+  );
+
+  const memoDownloadPromise = page.waitForEvent("download");
+  await memoExportButton.click();
+  const memoDownload = await memoDownloadPromise;
+  expect(memoDownload.suggestedFilename()).toMatch(/法律研究备忘录：保证责任期间法律研究-v1\.docx$/);
+  await expect(acceptedMemoRow.getByRole("status")).toHaveText("备忘录 v1 已导出并下载。");
+  expect(memoExportAttempts).toBe(2);
+  await captureViewportScreenshot(
+    page,
+    path.join(memoScreenshotDir, `03-export-success-${memoSuffix}.png`),
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await acceptedMemoRow.locator("xpath=ancestor::section[1]").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 
   const opinionStep = page.getByTestId("legal-opinion-step");
   await opinionStep.getByLabel("已采纳研究结论").selectOption(ids.memo);

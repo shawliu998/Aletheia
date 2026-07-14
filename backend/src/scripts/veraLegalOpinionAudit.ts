@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -108,7 +108,7 @@ async function createAcceptedResearchAnswer(
   });
   const accepted = await repository.approveLegalQaAnswer(ctx, matter.id, answer.id) as Row;
   assert.equal(accepted.status, "accepted");
-  return { matter, request, tree, issueTree, source, sourceText, answer: accepted };
+  return { matter, request, tree, issueTree, source, sourceText, answer: accepted, answerReview };
 }
 
 async function approveOpinion(repository: LocalAletheiaRepository, ctx: { userId: string; userEmail: string }, research: Awaited<ReturnType<typeof createAcceptedResearchAnswer>>) {
@@ -149,6 +149,31 @@ async function main() {
       content: {}, validationErrors: [], generatedBy: "human", model: null,
     }) as Row;
     await mustReject(() => repository.createLegalOpinion(ctx, research.matter.id, { answerId: unaccepted.id, cover: {} }), "unaccepted answer must be rejected");
+    await mustReject(() => repository.exportLegalResearchMemoDocx(ctx, research.matter.id, unaccepted.id), "unaccepted memo DOCX export must be rejected");
+
+    const insufficient = await repository.createWorkProduct(ctx, research.matter.id, {
+      kind: "legal_qa_answer", title: "依据不足备忘录", status: "needs_review", schemaVersion: "vera-legal-research-memo-v1",
+      content: { ...research.answer.content, findings: [] }, validationErrors: [], generatedBy: "human", model: null,
+    }) as Row;
+    const insufficientReview = await repository.addReview(ctx, research.matter.id, {
+      targetType: "work_product", targetId: insufficient.id, workProductId: insufficient.id,
+      evidenceItemId: null, reviewerName: "审核律师", tag: "needs_human_judgment", comment: "依据不足备忘录复核。",
+    }) as Row;
+    await repository.resolveReview(ctx, research.matter.id, insufficientReview.id, { status: "accepted", comment: "仅验证导出阻断。" });
+    await repository.appendAuditEvent(ctx, research.matter.id, {
+      actor: "human", action: "human_note.legal_qa_answer_persisted", workflowVersion: "vera-legal-research-memo-v1", model: null,
+      details: { workpaperId: insufficient.id },
+    });
+    await repository.approveLegalQaAnswer(ctx, research.matter.id, insufficient.id);
+    await mustReject(() => repository.exportLegalResearchMemoDocx(ctx, research.matter.id, insufficient.id), "memo without accepted findings must be rejected");
+
+    const researchReviewChanged = await createAcceptedResearchAnswer(repository, ctx, "research-review-changed");
+    await repository.exportLegalResearchMemoDocx(ctx, researchReviewChanged.matter.id, researchReviewChanged.answer.id);
+    await repository.resolveReview(ctx, researchReviewChanged.matter.id, researchReviewChanged.answerReview.id, { status: "rejected", comment: "批准后复核意见已改变。" });
+    await mustReject(() => repository.exportLegalResearchMemoDocx(ctx, researchReviewChanged.matter.id, researchReviewChanged.answer.id), "changed research review must block memo export");
+    await repository.resolveReview(ctx, researchReviewChanged.matter.id, researchReviewChanged.answerReview.id, { status: "accepted", comment: "重新接受仍需新的研究结论批准。" });
+    await mustReject(() => repository.exportLegalResearchMemoDocx(ctx, researchReviewChanged.matter.id, researchReviewChanged.answer.id), "re-accepted research review must not reuse the old approval audit");
+    await mustReject(() => repository.createLegalOpinion(ctx, researchReviewChanged.matter.id, { answerId: researchReviewChanged.answer.id, cover: {} }), "re-accepted research review must not support a new opinion without a new exact approval");
 
     const pending = await repository.createLegalOpinion(ctx, research.matter.id, { answerId: research.answer.id, cover: {} }) as Row;
     await mustReject(() => repository.approveLegalOpinion(ctx, research.matter.id, pending.id), "open opinion review must block approval");
@@ -167,6 +192,27 @@ async function main() {
     assert.match(documentXml ?? "", /民法典第五百六十三条/, "DOCX must retain the accepted exact quotation");
     assert.match(headerXml ?? "", /Vera/, "DOCX must use the Vera running header");
     assert.doesNotMatch(documentXml ?? "", /Local litigation workspace/, "DOCX must not fall back to the generic litigation-workpaper renderer");
+
+    const opinionReviewChanged = await createAcceptedResearchAnswer(repository, ctx, "opinion-review-changed");
+    const changedOpinion = await approveOpinion(repository, ctx, opinionReviewChanged);
+    await repository.exportLegalOpinionDocx(ctx, opinionReviewChanged.matter.id, changedOpinion.opinion.id);
+    await repository.resolveReview(ctx, opinionReviewChanged.matter.id, changedOpinion.opinion.review.id, { status: "rejected", comment: "批准后意见书复核已改变。" });
+    await mustReject(() => repository.exportLegalOpinionDocx(ctx, opinionReviewChanged.matter.id, changedOpinion.opinion.id), "changed opinion review must block export");
+    await repository.resolveReview(ctx, opinionReviewChanged.matter.id, changedOpinion.opinion.review.id, { status: "accepted", comment: "重新接受仍需新的意见书批准。" });
+    await mustReject(() => repository.exportLegalOpinionDocx(ctx, opinionReviewChanged.matter.id, changedOpinion.opinion.id), "re-accepted opinion review must not reuse the old approval audit");
+
+    const memoExport = await repository.exportLegalResearchMemoDocx(ctx, research.matter.id, research.answer.id) as Row;
+    const memoDownloaded = await repository.downloadLegalResearchMemoDocx(ctx, research.matter.id, memoExport.exportId);
+    assert.ok(memoDownloaded?.bytes.subarray(0, 2).equals(Buffer.from("PK")), "accepted memo DOCX must be readable");
+    const memoDocx = await JSZip.loadAsync(memoDownloaded!.bytes);
+    const memoDocumentXml = await memoDocx.file("word/document.xml")?.async("string");
+    const memoHeaderXml = await memoDocx.file("word/header1.xml")?.async("string");
+    assert.match(memoDocumentXml ?? "", /法律研究备忘录/, "DOCX must use the dedicated legal-research-memo title");
+    assert.match(memoDocumentXml ?? "", /迟延履行致使合同目的不能实现/, "memo DOCX must retain only the accepted conclusion");
+    assert.match(memoDocumentXml ?? "", /民法典第五百六十三条/, "memo DOCX must retain the accepted exact quotation");
+    assert.match(memoDocumentXml ?? "", /使用限制/, "memo DOCX must visibly state its limitation");
+    assert.doesNotMatch(memoDocumentXml ?? "", /法律意见书/, "memo DOCX must not be rendered as a legal opinion");
+    assert.match(memoHeaderXml ?? "", /Vera/, "memo DOCX must use the Vera running header");
 
     const app = express();
     app.use(express.json({ limit: "1mb" }));
@@ -193,19 +239,29 @@ async function main() {
     assert.equal(routeDownload.status, 200, "legal-opinion route must serve its exact approved export");
     assert.equal(routeDownload.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     assert.deepEqual(new Uint8Array((await routeDownload.arrayBuffer()).slice(0, 2)), Uint8Array.from([0x50, 0x4b]));
+    const routeMemoExport = await routeRequest(baseUrl, `${rootPath}/legal-research-memos/${research.answer.id}/docx`);
+    assert.equal(routeMemoExport.response.status, 201, "legal-research-memo route must create its own approval-bound DOCX export");
+    const routeMemoDownload = await fetch(`${baseUrl}${rootPath}/legal-research-memo-exports/${String(routeMemoExport.body.exportId)}/download`);
+    assert.equal(routeMemoDownload.status, 200, "legal-research-memo route must serve its exact approved export");
+    assert.equal(routeMemoDownload.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert.deepEqual(new Uint8Array((await routeMemoDownload.arrayBuffer()).slice(0, 2)), Uint8Array.from([0x50, 0x4b]));
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = null;
 
     const restarted = new LocalAletheiaRepository();
     const afterRestart = await restarted.downloadLegalOpinionDocx(ctx, research.matter.id, exported.exportId);
     assert.equal(afterRestart?.contentHash, lifecycle.accepted.content_hash, "export must survive repository restart");
+    const memoAfterRestart = await restarted.downloadLegalResearchMemoDocx(ctx, research.matter.id, memoExport.exportId);
+    assert.equal(memoAfterRestart?.contentHash, research.answer.content_hash, "memo export must survive repository restart");
 
     const otherMatter = await restarted.createMatter(ctx, {
       title: "隔离事项", objective: "隔离", template: "civil_litigation", status: "in_progress", riskLevel: "low",
       clientOrProject: null, sourceProjectId: null, sharedWith: [], metadata: {},
     }) as Row;
     await mustReject(() => restarted.createLegalOpinion(ctx, otherMatter.id, { answerId: research.answer.id, cover: {} }), "cross-matter answer binding must fail");
+    await mustReject(() => restarted.exportLegalResearchMemoDocx(ctx, otherMatter.id, research.answer.id), "cross-matter memo DOCX export must fail");
     assert.equal(await restarted.getMatterDetail({ userId: "another-user" }, research.matter.id), null, "cross-user matter access must remain isolated");
+    assert.equal(await restarted.downloadLegalResearchMemoDocx({ userId: "another-user" }, research.matter.id, memoExport.exportId), null, "cross-user memo export access must remain isolated");
 
     const bypass = await restarted.createLegalOpinion(ctx, research.matter.id, { answerId: research.answer.id, cover: {} }) as Row;
     (restarted as any).db.prepare("update aletheia_work_products set status = 'accepted' where id = ?").run(bypass.id);
@@ -217,6 +273,7 @@ async function main() {
       kind: "external_source_workpaper", title: "更新来源", status: "accepted", schemaVersion: "vera-legal-source-snapshot-v1",
       content: { sourceIdentity: `civil-code-563-source-change`, snapshot: { contentHash: hash("changed"), content: "changed" } }, validationErrors: [], generatedBy: "human", model: null,
     });
+    await mustReject(() => restarted.exportLegalResearchMemoDocx(ctx, sourceChanged.matter.id, sourceChanged.answer.id), "changed legal source must block memo DOCX export");
     await mustReject(() => restarted.exportLegalOpinionDocx(ctx, sourceChanged.matter.id, sourceOpinion.opinion.id), "changed legal source must block export");
 
     const treeChanged = await createAcceptedResearchAnswer(restarted, ctx, "tree-change");
@@ -228,7 +285,24 @@ async function main() {
       kind: "legal_research_issue_tree", title: "更新争点树", status: "accepted", schemaVersion: "vera-legal-research-issue-tree-v1",
       content: { schemaVersion: "vera-legal-research-issue-tree-v1", requestId: treeChanged.request.id, tree: replacementTree }, validationErrors: [], generatedBy: "human", model: null,
     });
+    await mustReject(() => restarted.exportLegalResearchMemoDocx(ctx, treeChanged.matter.id, treeChanged.answer.id), "changed issue tree must block memo DOCX export");
     await mustReject(() => restarted.exportLegalOpinionDocx(ctx, treeChanged.matter.id, treeOpinion.opinion.id), "changed issue tree must block export");
+
+    const dbHashTamper = await createAcceptedResearchAnswer(restarted, ctx, "memo-db-hash-tamper");
+    const dbHashExport = await restarted.exportLegalResearchMemoDocx(ctx, dbHashTamper.matter.id, dbHashTamper.answer.id) as Row;
+    (restarted as any).db.prepare("update aletheia_exports set export_hash = 'sha256:deadbeef' where id = ?").run(dbHashExport.exportId);
+    await mustReject(() => restarted.downloadLegalResearchMemoDocx(ctx, dbHashTamper.matter.id, dbHashExport.exportId), "tampered memo export DB hash must block download");
+
+    const fileHashTamper = await createAcceptedResearchAnswer(restarted, ctx, "memo-file-hash-tamper");
+    const fileHashExport = await restarted.exportLegalResearchMemoDocx(ctx, fileHashTamper.matter.id, fileHashTamper.answer.id) as Row;
+    const fileHashRow = (restarted as any).db.prepare("select export_path from aletheia_exports where id = ?").get(fileHashExport.exportId) as Row;
+    writeFileSync(String(fileHashRow.export_path), Buffer.from("tampered memo export", "utf8"));
+    await mustReject(() => restarted.downloadLegalResearchMemoDocx(ctx, fileHashTamper.matter.id, fileHashExport.exportId), "tampered memo export file hash must block download");
+
+    const pathTamper = await createAcceptedResearchAnswer(restarted, ctx, "memo-path-tamper");
+    const pathExport = await restarted.exportLegalResearchMemoDocx(ctx, pathTamper.matter.id, pathTamper.answer.id) as Row;
+    (restarted as any).db.prepare("update aletheia_exports set export_path = ? where id = ?").run(path.join(root, "outside-memo.docx"), pathExport.exportId);
+    await mustReject(() => restarted.downloadLegalResearchMemoDocx(ctx, pathTamper.matter.id, pathExport.exportId), "memo export path escape must block download");
 
     (restarted as any).db.prepare("update aletheia_work_products set content_hash = 'sha256:deadbeef' where id = ?").run(lifecycle.opinion.id);
     await mustReject(() => restarted.downloadLegalOpinionDocx(ctx, research.matter.id, exported.exportId), "tampered opinion hash must block download");

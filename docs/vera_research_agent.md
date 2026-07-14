@@ -60,13 +60,14 @@ It does not fall back to another source.
    fabricated conclusion.
 8. A memo requires a human review item before it can be accepted. A later
    snapshot with changed source bytes marks the memo stale and blocks approval.
-9. Only accepted research conclusions are eligible for the legal-opinion
-   builder. It deterministically assembles the accepted findings, exact quoted
-   citations and stated limitations; it does not ask a model to add analysis.
-   The opinion has its own lawyer review and approval, then produces a
-   hash-bound, protected local DOCX export. A changed answer, issue tree,
-   reviewed input, source snapshot or review decision blocks approval, export
-   and download.
+9. An accepted, current research memo can produce its own hash-bound protected
+   local DOCX without a second review. An accepted research conclusion is also
+   eligible for the legal-opinion builder. It deterministically assembles the
+   accepted findings, exact quoted citations and stated limitations; it does not
+   ask a model to add analysis. The opinion has its own lawyer review and
+   approval, then produces a hash-bound, protected local DOCX export. A changed
+   answer, issue tree, reviewed input, source snapshot or review decision blocks
+   memo export, opinion approval, export and download.
 
 ## Data and runtime
 

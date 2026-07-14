@@ -27,8 +27,10 @@ import {
   createAletheiaLegalOpinion,
   decideAletheiaApproval,
   downloadAletheiaLegalOpinionDocx,
+  downloadAletheiaLegalResearchMemoDocx,
   executeLegalResearchSearch,
   exportAletheiaLegalOpinionDocx,
+  exportAletheiaLegalResearchMemoDocx,
   fetchLegalResearchSource,
   getAletheiaMatter,
   getLitigationWorkspace,
@@ -135,6 +137,11 @@ export function LegalResearchWorkbench({ matterId }: { matterId: string }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [memoExportFeedback, setMemoExportFeedback] = useState<{
+    memoId: string;
+    status: "success" | "error";
+    message: string;
+  } | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [queryApprovals, setQueryApprovals] = useState<Record<string, ApprovalState>>({});
   const [sourceApprovals, setSourceApprovals] = useState<Record<string, ApprovalState>>({});
@@ -413,9 +420,49 @@ export function LegalResearchWorkbench({ matterId }: { matterId: string }) {
       anchor.href = url;
       anchor.download = `${opinion.title}-v${opinion.version}.docx`;
       anchor.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setNotice("已导出并下载当前批准版本 DOCX。");
     });
+  }
+
+  async function exportMemo(memo: AletheiaWorkProductRecord) {
+    const key = `memo-export-${memo.id}`;
+    setBusy(key);
+    setError("");
+    setNotice("");
+    setMemoExportFeedback(null);
+    try {
+      const exported = await exportAletheiaLegalResearchMemoDocx(
+        matterId,
+        memo.id,
+      );
+      const blob = await downloadAletheiaLegalResearchMemoDocx(
+        matterId,
+        exported.exportId,
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${memo.title}-v${exported.version}.docx`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMemoExportFeedback({
+        memoId: memo.id,
+        status: "success",
+        message: `备忘录 v${exported.version} 已导出并下载。`,
+      });
+    } catch (exportError) {
+      setMemoExportFeedback({
+        memoId: memo.id,
+        status: "error",
+        message:
+          exportError instanceof Error
+            ? exportError.message
+            : "法律研究备忘录 DOCX 导出失败。",
+      });
+    } finally {
+      setBusy("");
+    }
   }
 
   async function addRequest() {
@@ -846,9 +893,9 @@ export function LegalResearchWorkbench({ matterId }: { matterId: string }) {
                 <div className="mt-3 flex flex-wrap items-end gap-3"><label><span className={labelClass}>立场</span><select className={fieldClass} value={position} onChange={(e) => setPosition(e.target.value as typeof position)}><option value="supporting">支持</option><option value="adverse">不利</option><option value="neutral">中性</option></select></label><label><span className={labelClass}>把握程度</span><select className={fieldClass} value={confidence} onChange={(e) => setConfidence(e.target.value as typeof confidence)}><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label><button type="button" className={primaryButton} disabled={!manifests[0] || !conclusion.trim() || !selectedExcerptsAreBound || busy === "memo"} onClick={() => void saveMemo(false)}><FileCheck2 className="h-3.5 w-3.5" />形成待复核结论</button><button type="button" className={secondaryButton} disabled={!manifests[0] || busy === "insufficient"} onClick={() => void saveMemo(true)}>记录依据不足</button></div>
                 {selectedExcerptIds.length > 0 && !selectedExcerptsAreBound && <p className="mt-2 text-xs text-amber-800">所选摘录与当前输入清单不一致，请先重新绑定所选摘录。</p>}
 
-                <div className="mt-6 border-t border-gray-300"><div className="grid grid-cols-[minmax(0,1fr)_100px_120px] gap-3 border-b border-gray-200 py-2 text-[11px] font-semibold text-gray-500"><span>研究工作产品</span><span>状态</span><span>复核</span></div>{memos.length === 0 ? <p className="py-6 text-xs text-gray-500">尚未形成研究结论；“依据不足”是可记录的正常结果。</p> : memos.map((memo) => {
-                  const gate = object(memo.content.gate); const blocked = gate.status === "insufficient_basis" || memo.kind === "legal_research_memo"; const stale = Boolean(memo.stale_at); const review = detail?.reviews.find((item) => item.work_product_id === memo.id); const canAccept = !stale && memo.kind === "legal_qa_answer" && review?.resolution_status === "accepted" && memo.status !== "accepted";
-                  return <article key={memo.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_100px_120px] gap-3 border-b border-gray-100 py-3 text-xs"><div className="min-w-0"><div className="font-medium text-gray-900">{memo.title}</div>{stale ? <div className="mt-1 text-amber-800">来源已更新，此结论已过期。需重新确认摘录并形成结论。</div> : blocked ? <div className="mt-1 text-amber-800">依据不足{array(gate.reasons).length ? `：${array(gate.reasons).join("；")}` : ""}</div> : <div className="mt-1 text-gray-600">{array(memo.content.findings).length} 项律师结论 · 等待人工复核</div>}<div className="mt-1 text-[10px] text-gray-500">{formatTime(memo.created_at)}{memo.stale_reason ? ` · ${memo.stale_reason}` : ""}</div></div><div className={stale || blocked ? "text-amber-800" : memo.status === "accepted" ? "text-emerald-700" : "text-gray-600"}>{stale ? "已过期" : blocked ? "依据不足" : memo.status === "accepted" ? "已采纳" : "待复核"}</div><div>{stale ? <span className="text-gray-500">需重做研究链</span> : review && review.resolution_status !== "accepted" ? <button className={secondaryButton} type="button" onClick={() => void mutate(`review-${memo.id}`, async () => { await resolveAletheiaReview(matterId, review.id, { status: "accepted", comment: "律师已核对问题拆解、精确摘录、适用日期及不确定性。" }); })}>完成复核</button> : canAccept ? <button className={primaryButton} type="button" onClick={() => void mutate(`accept-${memo.id}`, async () => { await approveAletheiaLegalQaAnswer(matterId, memo.id); })}>采纳结论</button> : <span className="text-gray-500">{blocked ? "无需采纳" : review ? "已复核" : "待创建复核"}</span>}</div></article>;
+                <div className="mt-6 border-t border-gray-300"><div className="grid grid-cols-[minmax(0,1fr)_72px] gap-3 border-b border-gray-200 py-2 text-[11px] font-semibold text-gray-500 sm:grid-cols-[minmax(0,1fr)_86px_168px]"><span>研究工作产品</span><span>状态</span><span className="hidden sm:block">操作</span></div>{memos.length === 0 ? <p className="py-6 text-xs text-gray-500">尚未形成研究结论；“依据不足”是可记录的正常结果。</p> : memos.map((memo) => {
+                  const gate = object(memo.content.gate); const blocked = gate.status === "insufficient_basis" || memo.kind === "legal_research_memo"; const stale = Boolean(memo.stale_at); const review = detail?.reviews.find((item) => item.work_product_id === memo.id); const canAccept = !stale && memo.kind === "legal_qa_answer" && review?.resolution_status === "accepted" && memo.status !== "accepted"; const canExport = !stale && memo.kind === "legal_qa_answer" && memo.status === "accepted"; const exportKey = `memo-export-${memo.id}`; const feedback = memoExportFeedback?.memoId === memo.id ? memoExportFeedback : null;
+                  return <article key={memo.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_72px] gap-3 border-b border-gray-100 py-3 text-xs sm:grid-cols-[minmax(0,1fr)_86px_168px]"><div className="min-w-0"><div className="break-words font-medium text-gray-900">{memo.title}</div>{stale ? <div className="mt-1 text-amber-800">来源已更新，此结论已过期。需重新确认摘录并形成结论。</div> : blocked ? <div className="mt-1 text-amber-800">依据不足{array(gate.reasons).length ? `：${array(gate.reasons).join("；")}` : ""}</div> : <div className="mt-1 text-gray-600">{array(memo.content.findings).length} 项律师结论 · 等待人工复核</div>}<div className="mt-1 text-[10px] text-gray-500">{formatTime(memo.created_at)}{memo.stale_reason ? ` · ${memo.stale_reason}` : ""}</div>{feedback && <div role={feedback.status === "error" ? "alert" : "status"} className={`mt-2 border-l-2 pl-2 text-[11px] leading-5 ${feedback.status === "error" ? "border-red-500 text-red-800" : "border-emerald-600 text-emerald-700"}`}>{feedback.message}</div>}</div><div className={stale || blocked ? "text-amber-800" : memo.status === "accepted" ? "text-emerald-700" : "text-gray-600"}>{stale ? "已过期" : blocked ? "依据不足" : memo.status === "accepted" ? "已采纳" : "待复核"}</div><div className="col-span-2 flex flex-wrap items-center gap-2 sm:col-span-1">{stale ? <span className="text-gray-500">需重做研究链</span> : review && review.resolution_status !== "accepted" ? <button className={secondaryButton} type="button" onClick={() => void mutate(`review-${memo.id}`, async () => { await resolveAletheiaReview(matterId, review.id, { status: "accepted", comment: "律师已核对问题拆解、精确摘录、适用日期及不确定性。" }); })}>完成复核</button> : canAccept ? <button className={primaryButton} type="button" onClick={() => void mutate(`accept-${memo.id}`, async () => { await approveAletheiaLegalQaAnswer(matterId, memo.id); })}>采纳结论</button> : canExport ? <button className={secondaryButton} type="button" disabled={busy.startsWith("memo-export-")} onClick={() => void exportMemo(memo)}>{busy === exportKey ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{busy === exportKey ? "正在导出" : "导出备忘录 DOCX"}</button> : <span className="text-gray-500">{blocked ? "无需采纳" : review ? "已复核" : "待创建复核"}</span>}</div></article>;
                 })}</div>
               </section>
 

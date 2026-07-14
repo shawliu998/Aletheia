@@ -25,6 +25,7 @@ import {
   renderLitigationArtifactPlainText,
 } from "./litigationDocxExport";
 import { buildLegalOpinionDocx } from "./legalOpinionDocxExport";
+import { buildLegalResearchMemoDocx } from "./legalResearchMemoDocxExport";
 import {
   DEFAULT_LITIGATION_DOCUMENT_TEMPLATE_ID,
   DEFAULT_LITIGATION_DOCUMENT_TEMPLATE_VERSION,
@@ -135,6 +136,7 @@ import type {
   DecideApprovalInput,
   LitigationArtifactExportApprovalProjection,
   LitigationArtifactDownload,
+  LegalResearchMemoDownload,
   LegalOpinionDownload,
   MatterOriginalDocumentDownload,
   LitigationApprovalVoteBlockReason,
@@ -5144,6 +5146,11 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         "Every Legal Q&A review item must be explicitly accepted by a recorded reviewer before approval.",
       );
     }
+    const reviewBindings = this.exactReviewResolutionBindings(
+      ctx,
+      matterId,
+      reviews,
+    );
     const answerAudit = (
       this.db
         .prepare(
@@ -5169,11 +5176,14 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       model: null,
       details: {
         answerWorkProductId: answerId,
+        answerContentHash: answer.content_hash,
+        version: Number(answer.version),
         answerPersistenceAuditEventId: answerAudit.id,
         reviewIds: reviews.map((review) => review.id),
         reviewStatuses: reviews.map(
           (review) => review.resolution_status ?? "open",
         ),
+        reviewBindings,
       },
     });
     this.touchMatter(ctx.userId, matterId);
@@ -5191,10 +5201,11 @@ export class LocalAletheiaRepository implements AletheiaRepository {
   ) {
     const matter = this.loadOwnedMatter(ctx, matterId);
     if (!matter) return null;
-    const answer = this.assertEligibleLegalOpinionAnswer(
+    const answer = this.assertEligibleAcceptedLegalResearchMemo(
       ctx,
       matterId,
       input.answerId,
+      { requireExactApprovalAudit: false },
     );
     const cover = this.legalOpinionCover(input.cover);
     const answerContent = parseObject(answer.content);
@@ -5349,6 +5360,11 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         "Every legal-opinion review item must be explicitly accepted by a recorded lawyer before approval.",
       );
     }
+    const reviewBindings = this.exactReviewResolutionBindings(
+      ctx,
+      matterId,
+      reviews,
+    );
     const timestamp = now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -5368,6 +5384,7 @@ export class LocalAletheiaRepository implements AletheiaRepository {
           opinionContentHash: opinion.content_hash,
           version: Number(opinion.version),
           reviewIds: reviews.map((review) => review.id),
+          reviewBindings,
           answerId: parseObject(parseObject(opinion.content).answerBinding).answerId ?? null,
         },
       });
@@ -5476,45 +5493,42 @@ export class LocalAletheiaRepository implements AletheiaRepository {
     this.assertCurrentLegalOpinion(ctx, matterId, opinion);
     const approvalAudit = this.assertLegalOpinionApprovalAudit(ctx, matterId, opinion);
     const fail = (): never => { throw new ApprovalRequiredError("Legal opinion DOCX export integrity verification failed."); };
+    const expectedSourceIndexManifest = {
+      answerId: parseObject(parseObject(opinion.content).answerBinding).answerId ?? null,
+    };
+    const expectedMetadata = {
+      opinionId,
+      version: Number(opinion.version),
+      contentHash: opinion.content_hash,
+      approvalAuditEventId: approvalAudit.id,
+      fileSha256: exported.export_hash,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    };
     if (
+      exported.schema_version !== "vera-legal-opinion-docx-export-v1" ||
       exported.gate_authorization_status !== "approved" ||
-      metadata.contentHash !== opinion.content_hash ||
-      Number(metadata.version) !== Number(opinion.version) ||
-      metadata.approvalAuditEventId !== approvalAudit.id ||
-      metadata.fileSha256 !== exported.export_hash ||
-      metadata.mimeType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      stableJson(parseObject(exported.source_index_manifest)) !== stableJson(expectedSourceIndexManifest) ||
+      stableJson(metadata) !== stableJson(expectedMetadata)
     ) fail();
     const audit = this.db.prepare(
       `select * from aletheia_audit_events where id = ? and matter_id = ? and user_id = ? and action = 'legal_opinion_docx_exported'`,
     ).get(exported.audit_event_id, matterId, ctx.userId) as Record<string, any> | undefined;
     const auditDetails = parseObject(audit?.details);
-    if (!audit || auditDetails.exportId !== exportId || auditDetails.opinionId !== opinionId || auditDetails.contentHash !== opinion.content_hash || auditDetails.fileSha256 !== exported.export_hash) fail();
-    let stored: Buffer;
-    let exportPath: string;
-    try {
-      const directory = path.resolve(dataDir(), "exports", matterId);
-      exportPath = path.resolve(String(exported.export_path ?? ""));
-      const relative = path.relative(directory, exportPath);
-      const directoryStat = lstatSync(directory);
-      const fileStat = lstatSync(exportPath);
-      if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || path.dirname(exportPath) !== directory || path.extname(exportPath).toLowerCase() !== ".docx" || directoryStat.isSymbolicLink() || !directoryStat.isDirectory() || fileStat.isSymbolicLink() || !fileStat.isFile() || path.dirname(realpathSync(exportPath)) !== realpathSync(directory)) fail();
-      stored = readFileSync(exportPath);
-    } catch (error) {
-      if (error instanceof ApprovalRequiredError) throw error;
-      return fail();
-    }
-    const storedHash = `sha256:${createHash("sha256").update(stored).digest("hex")}`;
-    if (storedHash !== exported.export_hash) fail();
-    let bytes: Buffer;
-    try {
-      bytes = isAletheiaEnvelope(stored)
-        ? decryptLocalBuffer({ envelope: stored, filePath: exportPath, purpose: "local_export" })
-        : applicationEncryptionMode() === "required" ? fail() : stored;
-    } catch (error) {
-      if (error instanceof ApprovalRequiredError) throw error;
-      return fail();
-    }
-    if (bytes.length < 4 || bytes.subarray(0, 2).toString("ascii") !== "PK") fail();
+    const expectedAuditDetails = {
+      exportId,
+      opinionId,
+      version: Number(opinion.version),
+      contentHash: opinion.content_hash,
+      approvalAuditEventId: approvalAudit.id,
+      fileSha256: exported.export_hash,
+    };
+    if (!audit || stableJson(auditDetails) !== stableJson(expectedAuditDetails)) fail();
+    const bytes = this.readVerifiedLocalDocxExport(
+      matterId,
+      exported.export_path,
+      exported.export_hash,
+      "Legal opinion DOCX export integrity verification failed.",
+    );
     this.writeAuditEvent(ctx.userId, matterId, {
       actor: "human", action: "legal_opinion_docx_downloaded", workflowVersion: "vera-legal-opinion-docx-export-v1", model: null,
       details: { exportId, opinionId, version: Number(opinion.version), contentHash: opinion.content_hash, exportHash: exported.export_hash },
@@ -5523,6 +5537,157 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       exportId, workProductId: opinionId, title: String(opinion.title), version: Number(opinion.version),
       contentHash: String(opinion.content_hash),
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes,
+    };
+  }
+
+  async exportLegalResearchMemoDocx(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    memoId: string,
+  ) {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const memo = this.assertEligibleAcceptedLegalResearchMemo(ctx, matterId, memoId);
+    const binding = this.legalResearchMemoExportBinding(memo);
+    const exportedAt = now();
+    const exportId = randomUUID();
+    const bytes = await buildLegalResearchMemoDocx({
+      title: String(memo.title),
+      matterId,
+      version: Number(memo.version),
+      contentHash: String(memo.content_hash),
+      exportedAt,
+      content: parseObject(memo.content),
+    });
+    const exportPath = localExportPath({
+      root: dataDir(),
+      matterId,
+      exportId,
+      kind: "legal_research_memo",
+      title: String(memo.title),
+      extension: "docx",
+    });
+    writeProtectedLocalFileSync({ filePath: exportPath, plaintext: bytes, purpose: "local_export" });
+    const fileHash = `sha256:${createHash("sha256").update(readFileSync(exportPath)).digest("hex")}`;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const lockedMemo = this.assertEligibleAcceptedLegalResearchMemo(ctx, matterId, memoId);
+      const lockedBinding = this.legalResearchMemoExportBinding(lockedMemo);
+      if (
+        lockedMemo.content_hash !== memo.content_hash ||
+        Number(lockedMemo.version) !== Number(memo.version) ||
+        stableJson(lockedBinding) !== stableJson(binding)
+      ) {
+        throw new ApprovalRequiredError("The legal research memo changed before DOCX export could be persisted.");
+      }
+      this.insertExportRecord({
+        id: exportId,
+        matterId,
+        userId: ctx.userId,
+        exportType: "legal_research_memo_docx",
+        schemaVersion: "vera-legal-research-memo-docx-export-v1",
+        exportHash: fileHash,
+        exportPath,
+        approvalCheckpointId: null,
+        gateAuthorizationStatus: "accepted_current_memo",
+        sourceIndexManifest: lockedBinding,
+        metadata: {
+          ...lockedBinding,
+          fileSha256: fileHash,
+          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        createdAt: exportedAt,
+      });
+      const audit = this.writeAuditEvent(ctx.userId, matterId, {
+        actor: "human",
+        action: "legal_research_memo_docx_exported",
+        workflowVersion: "vera-legal-research-memo-docx-export-v1",
+        model: null,
+        details: {
+          exportId,
+          ...lockedBinding,
+          fileSha256: fileHash,
+        },
+      });
+      this.attachExportAuditEvent(exportId, audit.id);
+      this.touchMatter(ctx.userId, matterId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      if (existsSync(exportPath)) unlinkSync(exportPath);
+      throw error;
+    }
+    return {
+      exportId,
+      memoId,
+      version: Number(memo.version),
+      contentHash: String(memo.content_hash),
+    };
+  }
+
+  async downloadLegalResearchMemoDocx(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    exportId: string,
+  ): Promise<LegalResearchMemoDownload | null> {
+    const matter = this.loadOwnedMatter(ctx, matterId);
+    if (!matter) return null;
+    const exported = this.db.prepare(
+      `select * from aletheia_exports where id = ? and matter_id = ? and user_id = ? and export_type = 'legal_research_memo_docx'`,
+    ).get(exportId, matterId, ctx.userId) as Record<string, any> | undefined;
+    if (!exported) return null;
+    const metadata = parseObject(exported.metadata);
+    const memoId = typeof metadata.memoId === "string" ? metadata.memoId : "";
+    const memo = this.assertEligibleAcceptedLegalResearchMemo(ctx, matterId, memoId);
+    const binding = this.legalResearchMemoExportBinding(memo);
+    const expectedMetadata = {
+      ...binding,
+      fileSha256: exported.export_hash,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    };
+    const fail = (): never => {
+      throw new ApprovalRequiredError("Legal research memo DOCX export integrity verification failed.");
+    };
+    if (
+      exported.schema_version !== "vera-legal-research-memo-docx-export-v1" ||
+      exported.gate_authorization_status !== "accepted_current_memo" ||
+      stableJson(parseObject(exported.source_index_manifest)) !== stableJson(binding) ||
+      stableJson(metadata) !== stableJson(expectedMetadata)
+    ) {
+      fail();
+    }
+    const audit = this.db.prepare(
+      `select * from aletheia_audit_events where id = ? and matter_id = ? and user_id = ? and action = 'legal_research_memo_docx_exported'`,
+    ).get(exported.audit_event_id, matterId, ctx.userId) as Record<string, any> | undefined;
+    const expectedAuditDetails = { exportId, ...binding, fileSha256: exported.export_hash };
+    if (!audit || stableJson(parseObject(audit.details)) !== stableJson(expectedAuditDetails)) {
+      fail();
+    }
+    const bytes = this.readVerifiedLocalDocxExport(
+      matterId,
+      exported.export_path,
+      exported.export_hash,
+      "Legal research memo DOCX export integrity verification failed.",
+    );
+    this.writeAuditEvent(ctx.userId, matterId, {
+      actor: "human",
+      action: "legal_research_memo_docx_downloaded",
+      workflowVersion: "vera-legal-research-memo-docx-export-v1",
+      model: null,
+      details: {
+        exportId,
+        ...binding,
+        exportHash: exported.export_hash,
+      },
+    });
+    return {
+      exportId,
+      workProductId: memoId,
+      title: String(memo.title),
+      version: Number(memo.version),
+      contentHash: String(memo.content_hash),
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      bytes,
     };
   }
 
@@ -14557,6 +14722,60 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       .run(auditEventId, exportId);
   }
 
+  private readVerifiedLocalDocxExport(
+    matterId: string,
+    exportPathValue: unknown,
+    expectedHash: unknown,
+    integrityMessage: string,
+  ) {
+    const fail = (): never => {
+      throw new ApprovalRequiredError(integrityMessage);
+    };
+    if (!/^sha256:[a-f0-9]{64}$/.test(String(expectedHash ?? ""))) fail();
+    let stored: Buffer;
+    let exportPath: string;
+    try {
+      const directory = path.resolve(dataDir(), "exports", matterId);
+      exportPath = path.resolve(String(exportPathValue ?? ""));
+      const relative = path.relative(directory, exportPath);
+      const directoryStat = lstatSync(directory);
+      const fileStat = lstatSync(exportPath);
+      if (
+        !relative ||
+        relative.startsWith("..") ||
+        path.isAbsolute(relative) ||
+        path.dirname(exportPath) !== directory ||
+        path.extname(exportPath).toLowerCase() !== ".docx" ||
+        directoryStat.isSymbolicLink() ||
+        !directoryStat.isDirectory() ||
+        fileStat.isSymbolicLink() ||
+        !fileStat.isFile() ||
+        path.dirname(realpathSync(exportPath)) !== realpathSync(directory)
+      ) {
+        fail();
+      }
+      stored = readFileSync(exportPath);
+    } catch (error) {
+      if (error instanceof ApprovalRequiredError) throw error;
+      return fail();
+    }
+    const storedHash = `sha256:${createHash("sha256").update(stored).digest("hex")}`;
+    if (storedHash !== expectedHash) fail();
+    let bytes: Buffer;
+    try {
+      bytes = isAletheiaEnvelope(stored)
+        ? decryptLocalBuffer({ envelope: stored, filePath: exportPath, purpose: "local_export" })
+        : applicationEncryptionMode() === "required"
+          ? fail()
+          : stored;
+    } catch (error) {
+      if (error instanceof ApprovalRequiredError) throw error;
+      return fail();
+    }
+    if (bytes.length < 4 || bytes.subarray(0, 2).toString("ascii") !== "PK") fail();
+    return bytes;
+  }
+
   private all(table: string, matterId: string, order = "created_at asc") {
     return this.db
       .prepare(`select * from ${table} where matter_id = ? order by ${order}`)
@@ -14868,15 +15087,66 @@ export class LocalAletheiaRepository implements AletheiaRepository {
     }>;
   }
 
-  private assertEligibleLegalOpinionAnswer(
+  private exactReviewResolutionBindings(
+    ctx: AletheiaUserContext,
+    matterId: string,
+    reviews: Array<{
+      id: string;
+      resolution_status?: string | null;
+      resolved_by?: string | null;
+      resolved_at?: string | null;
+    }>,
+  ) {
+    const resolutionAudits = this.db.prepare(
+      `select id, details, rowid as audit_rowid from aletheia_audit_events
+         where matter_id = ? and user_id = ? and action = 'review_resolution_recorded'
+         order by rowid desc`,
+    ).all(matterId, ctx.userId) as Array<{
+      id: string;
+      details: string;
+      audit_rowid: number;
+    }>;
+    return reviews.map((review) => {
+      const resolutionAudit = resolutionAudits.find((event) => {
+        const details = parseObject(event.details);
+        return details.reviewId === review.id;
+      });
+      const resolutionDetails = parseObject(resolutionAudit?.details);
+      if (
+        !resolutionAudit ||
+        resolutionDetails.status !== review.resolution_status ||
+        !review.resolved_by ||
+        !review.resolved_at
+      ) {
+        throw new ApprovalRequiredError(
+          "Every accepted review must match its latest recorded resolution audit.",
+        );
+      }
+      return {
+        reviewId: review.id,
+        status: review.resolution_status,
+        resolvedBy: review.resolved_by,
+        resolvedAt: review.resolved_at,
+        resolutionAuditEventId: resolutionAudit.id,
+        resolutionAuditRowId: Number(resolutionAudit.audit_rowid),
+      };
+    });
+  }
+
+  private assertEligibleAcceptedLegalResearchMemo(
     ctx: AletheiaUserContext,
     matterId: string,
     answerId: string,
-  ): Record<string, any> & { reviewIds: string[]; approvalAuditEventId: string } {
+    options: { requireExactApprovalAudit?: boolean } = {},
+  ): Record<string, any> & {
+    reviewIds: string[];
+    reviewBindings: Array<Record<string, unknown>>;
+    approvalAuditEventId: string;
+  } {
     const answer = this.db.prepare(
       `select * from aletheia_work_products where id = ? and matter_id = ? and user_id = ? and kind = 'legal_qa_answer'`,
     ).get(answerId, matterId, ctx.userId) as Record<string, any> | undefined;
-    if (!answer) throw new ApprovalRequiredError("A matter-scoped accepted Legal Q&A answer is required.");
+    if (!answer) throw new ApprovalRequiredError("A matter-scoped accepted legal research memo is required.");
     const content = parseObject(answer.content);
     if (
       answer.status !== "accepted" || answer.stale_at ||
@@ -14886,7 +15156,7 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       !/^sha256:[a-f0-9]{64}$/.test(String(answer.content_hash ?? "")) ||
       exportHash(content) !== answer.content_hash
     ) {
-      throw new ApprovalRequiredError("The Legal Q&A answer is not an accepted, current, hash-verified research memo.");
+      throw new ApprovalRequiredError("The legal research memo is not accepted, current, and hash-verified.");
     }
     this.assertCurrentLegalResearchMemo(ctx, matterId, answerId, answer);
     const reviews = this.db.prepare(
@@ -14896,19 +15166,88 @@ export class LocalAletheiaRepository implements AletheiaRepository {
       id: string; resolution_status?: string | null; resolved_by?: string | null; resolved_at?: string | null;
     }>;
     if (!reviews.length || reviews.some((review) => review.resolution_status !== "accepted" || !review.resolved_by || !review.resolved_at)) {
-      throw new ApprovalRequiredError("Every Legal Q&A review must be explicitly accepted before it can support a legal opinion.");
+      throw new ApprovalRequiredError("Every legal research memo review must be explicitly accepted before DOCX export or opinion use.");
     }
-    const approvalAudit = (this.db.prepare(
-      `select id, details from aletheia_audit_events where matter_id = ? and user_id = ? and action = 'legal_qa_answer_approved' order by created_at desc`,
-    ).all(matterId, ctx.userId) as Array<{ id: string; details: string }>).find(
-      (event) => parseObject(event.details).answerWorkProductId === answerId,
+    const reviewIds = reviews.map((review) => review.id);
+    const reviewBindings = this.exactReviewResolutionBindings(ctx, matterId, reviews);
+    const approvalAudits = this.db.prepare(
+      `select id, details, rowid as audit_rowid from aletheia_audit_events where matter_id = ? and user_id = ? and action = 'legal_qa_answer_approved' order by rowid desc`,
+    ).all(matterId, ctx.userId) as Array<{
+      id: string;
+      details: string;
+      audit_rowid: number;
+    }>;
+    const exactApprovalAudit = approvalAudits.find((event) => {
+      const details = parseObject(event.details);
+      return (
+        details.answerWorkProductId === answerId &&
+        details.answerContentHash === answer.content_hash &&
+        Number(details.version) === Number(answer.version) &&
+        stableJson(details.reviewIds) === stableJson(reviewIds) &&
+        stableJson(details.reviewStatuses) === stableJson(reviews.map((review) => review.resolution_status)) &&
+        stableJson(details.reviewBindings) === stableJson(reviewBindings)
+      );
+    });
+    const approvalAudit = exactApprovalAudit ?? (
+      options.requireExactApprovalAudit === false
+        ? approvalAudits.find((event) => {
+            const details = parseObject(event.details);
+            return (
+              details.answerWorkProductId === answerId &&
+              details.answerContentHash === undefined &&
+              details.version === undefined &&
+              details.reviewBindings === undefined &&
+              stableJson(details.reviewIds) === stableJson(reviewIds) &&
+              Number(event.audit_rowid) > Math.max(
+                ...reviewBindings.map((binding) => Number(binding.resolutionAuditRowId)),
+              )
+            );
+          })
+        : undefined
     );
-    if (!approvalAudit) throw new ApprovalRequiredError("The accepted Legal Q&A answer has no approval audit record.");
+    if (!approvalAudit) throw new ApprovalRequiredError("The accepted legal research memo has no exact approval audit record.");
     return {
       ...answer,
-      reviewIds: reviews.map((review) => review.id),
+      reviewIds,
+      reviewBindings,
       approvalAuditEventId: approvalAudit.id,
-    } as Record<string, any> & { reviewIds: string[]; approvalAuditEventId: string };
+    } as Record<string, any> & {
+      reviewIds: string[];
+      reviewBindings: Array<Record<string, unknown>>;
+      approvalAuditEventId: string;
+    };
+  }
+
+  private legalResearchMemoExportBinding(
+    memo: Record<string, any> & {
+      reviewIds: string[];
+      reviewBindings: Array<Record<string, unknown>>;
+      approvalAuditEventId: string;
+    },
+  ) {
+    const content = parseObject(memo.content);
+    const stringOrNull = (value: unknown) =>
+      typeof value === "string" && value ? value : null;
+    return {
+      memoId: String(memo.id),
+      version: Number(memo.version),
+      contentHash: String(memo.content_hash),
+      gateStatus: stringOrNull(parseObject(content.gate).status),
+      requestId: stringOrNull(content.requestId),
+      inputManifestId: stringOrNull(content.inputManifestId),
+      inputBindingHash: stringOrNull(content.inputBindingHash),
+      issueTreeId: stringOrNull(content.issueTreeId),
+      issueTreeHash: stringOrNull(content.issueTreeHash),
+      caseContextId: stringOrNull(content.caseContextId),
+      caseContextHash: stringOrNull(content.caseContextHash),
+      caseContextContentHash: stringOrNull(content.caseContextContentHash),
+      sourceSnapshots: Array.isArray(content.sourceSnapshots)
+        ? content.sourceSnapshots
+        : [],
+      reviewIds: memo.reviewIds,
+      reviewBindings: memo.reviewBindings,
+      approvalAuditEventId: memo.approvalAuditEventId,
+    };
   }
 
   private loadLegalOpinion(
@@ -14954,7 +15293,9 @@ export class LocalAletheiaRepository implements AletheiaRepository {
     if (!answerId) stale("The answer binding is missing.");
     let answer: Record<string, any> & { reviewIds?: string[]; approvalAuditEventId?: string };
     try {
-      answer = this.assertEligibleLegalOpinionAnswer(ctx, matterId, answerId);
+      answer = this.assertEligibleAcceptedLegalResearchMemo(ctx, matterId, answerId, {
+        requireExactApprovalAudit: false,
+      });
     } catch {
       stale("The answer, source, input manifest, issue tree, review, or approval binding is no longer valid.");
     }
@@ -14992,11 +15333,28 @@ export class LocalAletheiaRepository implements AletheiaRepository {
         "The legal opinion review binding is incomplete, changed, or not explicitly accepted.",
       );
     }
+    const reviewBindings = this.exactReviewResolutionBindings(ctx, matterId, reviews);
     const audit = (this.db.prepare(
-      `select id, details from aletheia_audit_events where matter_id = ? and user_id = ? and action = 'legal_opinion_approved' order by created_at desc`,
-    ).all(matterId, ctx.userId) as Array<{ id: string; details: string }>).find((event) => {
+      `select id, details, rowid as audit_rowid from aletheia_audit_events where matter_id = ? and user_id = ? and action = 'legal_opinion_approved' order by rowid desc`,
+    ).all(matterId, ctx.userId) as Array<{
+      id: string;
+      details: string;
+      audit_rowid: number;
+    }>).find((event) => {
       const details = parseObject(event.details);
-      return details.opinionId === opinion.id && details.opinionContentHash === opinion.content_hash && Number(details.version) === Number(opinion.version) && stableJson(details.reviewIds) === stableJson(reviews.map((review) => review.id));
+      const baseBindingMatches =
+        details.opinionId === opinion.id &&
+        details.opinionContentHash === opinion.content_hash &&
+        Number(details.version) === Number(opinion.version) &&
+        stableJson(details.reviewIds) === stableJson(reviews.map((review) => review.id));
+      if (!baseBindingMatches) return false;
+      if (stableJson(details.reviewBindings) === stableJson(reviewBindings)) return true;
+      return (
+        details.reviewBindings === undefined &&
+        Number(event.audit_rowid) > Math.max(
+          ...reviewBindings.map((binding) => Number(binding.resolutionAuditRowId)),
+        )
+      );
     });
     if (!audit) throw new ApprovalRequiredError("The legal opinion has no exact lawyer-approval audit record.");
     return audit;

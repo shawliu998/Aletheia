@@ -37,17 +37,17 @@ function cover(value: unknown) {
   };
 }
 
-function disposition(title: string, version: number) {
-  const base = (title.normalize("NFKD").replace(/[^A-Za-z0-9._ -]+/g, "-").replace(/\s+/g, "-").slice(0, 90) || "legal-opinion").replace(/^-+|-+$/g, "");
-  const unicode = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").trim().slice(0, 90) || "legal-opinion"}-v${version}.docx`;
-  return `attachment; filename="${base || "legal-opinion"}-v${version}.docx"; filename*=UTF-8''${encodeURIComponent(unicode)}`;
+function disposition(title: string, version: number, fallback: string) {
+  const base = (title.normalize("NFKD").replace(/[^A-Za-z0-9._ -]+/g, "-").replace(/\s+/g, "-").slice(0, 90) || fallback).replace(/^-+|-+$/g, "");
+  const unicode = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").trim().slice(0, 90) || fallback}-v${version}.docx`;
+  return `attachment; filename="${base || fallback}-v${version}.docx"; filename*=UTF-8''${encodeURIComponent(unicode)}`;
 }
 
 function routeError(res: any, error: unknown) {
   if (error instanceof ApprovalRequiredError) {
     return void res.status(409).json({ code: "approval_required", detail: error.message });
   }
-  res.status(400).json({ code: "invalid_input", detail: error instanceof Error ? error.message : "The legal opinion request could not be completed." });
+  res.status(400).json({ code: "invalid_input", detail: error instanceof Error ? error.message : "The legal document request could not be completed." });
 }
 
 export function createLegalOpinionsRouter(options: LegalOpinionRouterOptions = {}) {
@@ -95,7 +95,34 @@ export function createLegalOpinionsRouter(options: LegalOpinionRouterOptions = {
       if (!result) return void res.status(404).json({ code: "not_found", detail: "Legal opinion export not found." });
       res.status(200);
       res.setHeader("Content-Type", result.mimeType);
-      res.setHeader("Content-Disposition", disposition(result.title, result.version));
+      res.setHeader("Content-Disposition", disposition(result.title, result.version, "legal-opinion"));
+      res.setHeader("Content-Length", String(result.bytes.length));
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(result.bytes);
+    } catch (error) {
+      routeError(res, error);
+    }
+  });
+
+  router.post("/matters/:matterId/legal-research-memos/:memoId/docx", requireAuth, async (req, res) => {
+    try {
+      const result = await repository().exportLegalResearchMemoDocx(context(res), req.params.matterId, req.params.memoId);
+      if (!result) return void res.status(404).json({ code: "not_found", detail: "Legal research memo not found." });
+      res.status(201).json(result);
+    } catch (error) {
+      routeError(res, error);
+    }
+  });
+
+  router.get("/matters/:matterId/legal-research-memo-exports/:exportId/download", requireAuth, async (req, res) => {
+    try {
+      const result = await repository().downloadLegalResearchMemoDocx(context(res), req.params.matterId, req.params.exportId);
+      if (!result) return void res.status(404).json({ code: "not_found", detail: "Legal research memo export not found." });
+      res.status(200);
+      res.setHeader("Content-Type", result.mimeType);
+      res.setHeader("Content-Disposition", disposition(result.title, result.version, "legal-research-memo"));
       res.setHeader("Content-Length", String(result.bytes.length));
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("Pragma", "no-cache");
