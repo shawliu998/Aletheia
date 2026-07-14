@@ -44,6 +44,7 @@ import {
 import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
 import { WORKFLOW_RUNTIME_V6_MIGRATION } from "../lib/workspace/migrations/v6WorkflowRuntime";
 import { isWorkspaceConnectionSqlcipherEncrypted } from "../lib/workspace/migrations/encryptionPolicy";
+import { TABULAR_MIKE_SEMANTICS_V7_MIGRATION } from "../lib/workspace/migrations/v7TabularMikeSemantics";
 import { MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION } from "../lib/workspace/migrations/v8ModelCredentialOrigin";
 import { ModelProfilesRepository } from "../lib/workspace/repositories/modelProfiles";
 import { ProjectsRepository } from "../lib/workspace/repositories/projects";
@@ -74,76 +75,6 @@ import {
   type WorkspaceSettingsWire,
   type WorkspaceStatusWire,
 } from "../routes/workspaceSettingsV1";
-
-function loadTabularMikeSemanticsV7Migration() {
-  const backendRoot = realpathSync(path.resolve(__dirname, "..", ".."));
-  const tscBinary = path.join(backendRoot, "node_modules", ".bin", "tsc");
-  const compileRoot = mkdtempSync(
-    path.join(os.tmpdir(), "vera-v7-migration-runtime-"),
-  );
-  const compileConfigPath = path.join(compileRoot, "tsconfig.json");
-  const outDir = path.join(compileRoot, "dist");
-  writeFileSync(
-    compileConfigPath,
-    `${JSON.stringify(
-      {
-        extends: path.join(backendRoot, "tsconfig.build.json"),
-        compilerOptions: {
-          rootDir: path.join(backendRoot, "src"),
-          typeRoots: [path.join(backendRoot, "node_modules", "@types")],
-          noEmitOnError: false,
-        },
-        files: [
-          path.join(
-            backendRoot,
-            "src/lib/workspace/migrations/v7TabularMikeSemantics.ts",
-          ),
-        ],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  const nodeModuleApi = require("node:module") as {
-    Module: { _initPaths(): void };
-  };
-  const previousNodePath = process.env.NODE_PATH;
-  const compiledMigrationPath = path.join(
-    outDir,
-    "lib/workspace/migrations/v7TabularMikeSemantics.js",
-  );
-  try {
-    try {
-      execFileSync(tscBinary, ["-p", compileConfigPath, "--outDir", outDir], {
-        cwd: backendRoot,
-        stdio: "pipe",
-      });
-    } catch (error) {
-      if (!existsSync(compiledMigrationPath)) {
-        throw error;
-      }
-    }
-    process.env.NODE_PATH = [
-      path.join(backendRoot, "node_modules"),
-      previousNodePath,
-    ]
-      .filter(Boolean)
-      .join(path.delimiter);
-    nodeModuleApi.Module._initPaths();
-    const compiledModule = require(compiledMigrationPath) as {
-      TABULAR_MIKE_SEMANTICS_V7_MIGRATION: WorkspaceMigration;
-    };
-    return compiledModule.TABULAR_MIKE_SEMANTICS_V7_MIGRATION;
-  } finally {
-    process.env.NODE_PATH = previousNodePath;
-    nodeModuleApi.Module._initPaths();
-    rmSync(compileRoot, { recursive: true, force: true });
-  }
-}
-
-const TABULAR_MIKE_SEMANTICS_V7_MIGRATION =
-  loadTabularMikeSemanticsV7Migration();
 
 function buildFullMigrations() {
   const prefixCandidates = [
@@ -2979,12 +2910,17 @@ async function auditBoundedReaderPreAbortCancelFailure() {
   assert.equal(response.body?.locked ?? false, false);
 }
 
-async function auditMigrationChecksumParity() {
+async function auditCompiledMigrationGraphParity() {
   const backendRoot = realpathSync(path.resolve(__dirname, "..", ".."));
   const tscBinary = path.join(backendRoot, "node_modules", ".bin", "tsc");
   const parityRoot = mkdtempSync(path.join(root, "migration-checksum-parity-"));
   const outDir = path.join(parityRoot, "dist");
   const parityConfigPath = path.join(parityRoot, "tsconfig.json");
+  const compiledDatabasePath = path.join(outDir, "lib/workspace/database.js");
+  const compiledRuntimeDatabasePath = path.join(
+    parityRoot,
+    "compiled-runtime.db",
+  );
   const migrationFiles = [
     "src/lib/workspace/migrations/v1InitialWorkspace.ts",
     "src/lib/workspace/migrations/v2WorkspaceIntegrity.ts",
@@ -3019,7 +2955,10 @@ async function auditMigrationChecksumParity() {
           rootDir: path.join(backendRoot, "src"),
           typeRoots: [path.join(backendRoot, "node_modules", "@types")],
         },
-        files: migrationFiles.map((file) => path.join(backendRoot, file)),
+        files: [
+          path.join(backendRoot, "src/lib/workspace/database.ts"),
+          ...migrationFiles.map((file) => path.join(backendRoot, file)),
+        ],
       },
       null,
       2,
@@ -3033,16 +2972,24 @@ async function auditMigrationChecksumParity() {
         stdio: "pipe",
       });
     } catch (error) {
-      if (!compiledMigrationPaths.every((file) => existsSync(file))) {
+      if (
+        !existsSync(compiledDatabasePath) ||
+        !compiledMigrationPaths.every((file) => existsSync(file))
+      ) {
         throw error;
       }
     }
-    const compiledChecksums = JSON.parse(
+    const compiledGraph = JSON.parse(
       execFileSync(
         process.execPath,
         [
           "-e",
           `
+const { randomBytes } = require("node:crypto");
+process.env.ALETHEIA_DATABASE_ENCRYPTION = "sqlcipher_required";
+process.env.ALETHEIA_DATABASE_KEY_SOURCE = "env";
+process.env.ALETHEIA_DATABASE_KEY_BASE64 = randomBytes(32).toString("base64");
+const { WorkspaceDatabase } = require(${JSON.stringify(compiledDatabasePath)});
 const migrations = [
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v1InitialWorkspace.js"))}).INITIAL_WORKSPACE_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v2WorkspaceIntegrity.js"))}).WORKSPACE_INTEGRITY_MIGRATION,
@@ -3053,10 +3000,30 @@ const migrations = [
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v7TabularMikeSemantics.js"))}).TABULAR_MIKE_SEMANTICS_V7_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v8ModelCredentialOrigin.js"))}).MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
 ];
-process.stdout.write(JSON.stringify(migrations.map((migration) => ({
-  version: migration.version,
-  checksumMaterial: migration.checksumMaterial,
-}))));
+const database = new WorkspaceDatabase(
+  ${JSON.stringify(compiledRuntimeDatabasePath)},
+  { migrations },
+);
+try {
+  process.stdout.write(JSON.stringify({
+    migrations: migrations.map((migration) => ({
+      version: migration.version,
+      checksumMaterial: migration.checksumMaterial,
+    })),
+    runtime: {
+      currentVersion: database.migration.currentVersion,
+      appliedVersions: database
+        .prepare("SELECT version FROM workspace_schema_migrations ORDER BY version")
+        .all()
+        .map((row) => Number(row.version)),
+      sqlcipherEncrypted:
+        database.migration.capabilities.sqlcipherEncrypted,
+      status: database.status(),
+    },
+  }));
+} finally {
+  database.close();
+}
         `,
         ],
         {
@@ -3074,12 +3041,28 @@ process.stdout.write(JSON.stringify(migrations.map((migration) => ({
           stdio: ["ignore", "pipe", "pipe"],
         },
       ),
-    ) as Array<{ version: number; checksumMaterial: string }>;
+    ) as {
+      migrations: Array<{ version: number; checksumMaterial: string }>;
+      runtime: {
+        currentVersion: number;
+        appliedVersions: number[];
+        sqlcipherEncrypted: boolean;
+        status: { driver: string; encrypted: boolean };
+      };
+    };
     const currentChecksums = FULL_MIGRATIONS.map((migration) => ({
       version: migration.version,
       checksumMaterial: migration.checksumMaterial,
     }));
-    assert.deepEqual(compiledChecksums, currentChecksums);
+    assert.deepEqual(compiledGraph.migrations, currentChecksums);
+    assert.equal(compiledGraph.runtime.currentVersion, 8);
+    assert.deepEqual(
+      compiledGraph.runtime.appliedVersions,
+      FULL_MIGRATIONS.map((migration) => migration.version),
+    );
+    assert.equal(compiledGraph.runtime.sqlcipherEncrypted, true);
+    assert.equal(compiledGraph.runtime.status.driver, "signal-sqlcipher");
+    assert.equal(compiledGraph.runtime.status.encrypted, true);
   } finally {
     rmSync(parityRoot, { recursive: true, force: true });
   }
@@ -3622,7 +3605,7 @@ async function main() {
     await auditSettingsDefaultModelDormantGate();
     await auditReusedCredentialReferenceRejected();
     await auditBoundedReaderPreAbortCancelFailure();
-    await auditMigrationChecksumParity();
+    await auditCompiledMigrationGraphParity();
     await auditV8ChecksumStrategyBinding();
     await auditActiveJobCoverageAndBindingBarrier();
     await auditModelGateway();
