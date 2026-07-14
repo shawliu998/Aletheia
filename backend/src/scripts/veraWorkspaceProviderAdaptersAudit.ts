@@ -61,6 +61,7 @@ function profile(
     credentialState: "configured",
     migrationIssueCode: null,
     executionRevision: 7,
+    connectionRevision: 7,
     contextWindowTokens: 128_000,
     maxOutputTokens: 8192,
     enabled: true,

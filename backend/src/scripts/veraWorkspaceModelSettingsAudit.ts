@@ -4068,6 +4068,7 @@ async function auditCompiledMigrationGraphParity() {
     "src/lib/workspace/migrations/v6WorkflowRuntime.ts",
     "src/lib/workspace/migrations/v7TabularMikeSemantics.ts",
     "src/lib/workspace/migrations/v8ModelCredentialOrigin.ts",
+    "src/lib/workspace/migrations/v9ModelConnectionReadiness.ts",
   ];
   const relativeParityConfigPath = path.relative(backendRoot, parityConfigPath);
   assert.ok(
@@ -4137,6 +4138,7 @@ const migrations = [
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v6WorkflowRuntime.js"))}).WORKFLOW_RUNTIME_V6_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v7TabularMikeSemantics.js"))}).TABULAR_MIKE_SEMANTICS_V7_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v8ModelCredentialOrigin.js"))}).MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
+  require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v9ModelConnectionReadiness.js"))}).MODEL_CONNECTION_READINESS_V9_MIGRATION,
 ];
 const database = new WorkspaceDatabase(
   ${JSON.stringify(compiledRuntimeDatabasePath)},
@@ -4188,15 +4190,15 @@ try {
         status: { driver: string; encrypted: boolean };
       };
     };
-    const currentChecksums = FULL_MIGRATIONS.map((migration) => ({
+    const currentChecksums = WORKSPACE_MIGRATIONS.map((migration) => ({
       version: migration.version,
       checksumMaterial: migration.checksumMaterial,
     }));
     assert.deepEqual(compiledGraph.migrations, currentChecksums);
-    assert.equal(compiledGraph.runtime.currentVersion, 8);
+    assert.equal(compiledGraph.runtime.currentVersion, 9);
     assert.deepEqual(
       compiledGraph.runtime.appliedVersions,
-      FULL_MIGRATIONS.map((migration) => migration.version),
+      WORKSPACE_MIGRATIONS.map((migration) => migration.version),
     );
     assert.equal(compiledGraph.runtime.sqlcipherEncrypted, true);
     assert.equal(compiledGraph.runtime.status.driver, "signal-sqlcipher");
@@ -4498,6 +4500,7 @@ async function auditModelGateway() {
     credentialState: "configured" as const,
     migrationIssueCode: null as string | null,
     executionRevision: 0,
+    connectionRevision: 0,
     contextWindowTokens: null,
     maxOutputTokens: null,
     enabled: true,

@@ -26,6 +26,7 @@ import { searchSafeFtsQuery } from "../lib/searchSafeFtsQuery";
 import { ASSISTANT_RUNTIME_MIGRATION } from "../lib/workspace/migrations/v5AssistantRuntime";
 import { TABULAR_MIKE_SEMANTICS_V7_MIGRATION } from "../lib/workspace/migrations/v7TabularMikeSemantics";
 import { MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION } from "../lib/workspace/migrations/v8ModelCredentialOrigin";
+import { MODEL_CONNECTION_READINESS_V9_MIGRATION } from "../lib/workspace/migrations/v9ModelConnectionReadiness";
 import { AssistantRetrievalRepository } from "../lib/workspace/repositories/assistantRetrieval";
 import { ChatsRepository } from "../lib/workspace/repositories/chats";
 import { ModelProfilesRepository } from "../lib/workspace/repositories/modelProfiles";
@@ -56,6 +57,7 @@ const CHECKSUM_PARITY_MIGRATIONS = [
   ...WORKSPACE_MIGRATIONS.filter((migration) => migration.version <= 6),
   TABULAR_MIKE_SEMANTICS_V7_MIGRATION,
   MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
+  MODEL_CONNECTION_READINESS_V9_MIGRATION,
 ] as const;
 const CHECKSUM_PARITY_MODULES = [
   ["v1InitialWorkspace", "INITIAL_WORKSPACE_MIGRATION"],
@@ -66,6 +68,7 @@ const CHECKSUM_PARITY_MODULES = [
   ["v6WorkflowRuntime", "WORKFLOW_RUNTIME_V6_MIGRATION"],
   ["v7TabularMikeSemantics", "TABULAR_MIKE_SEMANTICS_V7_MIGRATION"],
   ["v8ModelCredentialOrigin", "MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION"],
+  ["v9ModelConnectionReadiness", "MODEL_CONNECTION_READINESS_V9_MIGRATION"],
 ] as const;
 const BACKEND_ROOT = path.resolve(__dirname, "../..");
 const root = mkdtempSync(path.join(os.tmpdir(), "vera-assistant-audit-"));
@@ -97,7 +100,7 @@ function sha(value: string) {
 function assertMigrationChecksumRuntimeParity() {
   assert.deepEqual(
     CHECKSUM_PARITY_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
   );
   const compiledRoot = path.join(root, "checksum-parity-commonjs");
   const tscPath = path.join(

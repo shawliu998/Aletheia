@@ -16,6 +16,18 @@ const map = (r: Row): WorkspaceSettings => ({
 });
 export class SettingsRepository {
   constructor(readonly database: WorkspaceDatabaseAdapter) {}
+  private connectionReadinessGateEnabled() {
+    return Boolean(
+      this.database
+        .prepare(
+          `SELECT 1 AS present
+             FROM sqlite_schema
+            WHERE type = 'table'
+              AND name = 'model_profile_connection_tests' COLLATE NOCASE`,
+        )
+        .get(),
+    );
+  }
   get() {
     const r = this.database
       .prepare("SELECT * FROM workspace_settings WHERE id='workspace'")
@@ -36,7 +48,10 @@ export class SettingsRepository {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const current = this.get();
-      if (input.defaultProjectId) {
+      if (
+        input.defaultProjectId !== undefined &&
+        input.defaultProjectId !== null
+      ) {
         const project = this.database
           .prepare("SELECT id FROM projects WHERE id=? AND status='active'")
           .get(input.defaultProjectId);
@@ -47,15 +62,33 @@ export class SettingsRepository {
             "Default project must be active.",
           );
       }
-      if (input.defaultModelProfileId) {
-        const profile = this.database
-          .prepare("SELECT id FROM model_profiles WHERE id=? AND enabled=1")
-          .get(input.defaultModelProfileId);
+      if (
+        input.defaultModelProfileId !== undefined &&
+        input.defaultModelProfileId !== null
+      ) {
+        const profile = this.connectionReadinessGateEnabled()
+          ? this.database
+              .prepare(
+                `SELECT profile.id
+                   FROM model_profiles profile
+                   JOIN model_profile_connection_tests test
+                     ON test.profile_id = profile.id
+                  WHERE profile.id = ?
+                    AND profile.enabled = 1
+                    AND test.connection_revision = profile.connection_revision
+                    AND test.status = 'passed'
+                    AND test.error_code IS NULL
+                    AND test.retryable = 0`,
+              )
+              .get(input.defaultModelProfileId)
+          : this.database
+              .prepare("SELECT id FROM model_profiles WHERE id=? AND enabled=1")
+              .get(input.defaultModelProfileId);
         if (!profile)
           throw new WorkspaceApiError(
             409,
             "CONFLICT",
-            "Default model profile must be enabled.",
+            "Default model profile must be enabled with a current passed connection test.",
           );
       }
       if (input.defaultModelProfileId !== undefined) {

@@ -6,6 +6,7 @@ import {
   tryNormalizeModelEndpoint,
   type CredentialState,
 } from "../modelCompatibility";
+import { MAX_MODEL_CONNECTION_REVISION } from "../modelConnectionReadiness";
 import type { ModelProfile } from "../types";
 import {
   assertStoredCredentialReference,
@@ -22,6 +23,7 @@ export type StoredModelProfileRecord = ModelProfile & {
   credentialState: CredentialState;
   migrationIssueCode: string | null;
   executionRevision: number;
+  connectionRevision: number;
 };
 
 export type CredentialCleanupIntent = {
@@ -47,6 +49,7 @@ type ModelProfilesSchema = {
   hasCredentialState: boolean;
   hasMigrationIssueCode: boolean;
   hasExecutionRevision: boolean;
+  hasConnectionRevision: boolean;
 };
 
 function capabilities(raw: unknown): Caps {
@@ -90,6 +93,25 @@ function mapStored(
     : credentialStateFromPublicStatus(
         row.credential_status as ModelProfile["credentialStatus"],
       );
+  const executionRevision = schema.hasExecutionRevision
+    ? Number(row.execution_revision ?? 0)
+    : 0;
+  const connectionRevision = schema.hasConnectionRevision
+    ? Number(row.connection_revision ?? Number.NaN)
+    : executionRevision;
+  if (
+    !Number.isSafeInteger(executionRevision) ||
+    executionRevision < 0 ||
+    !Number.isSafeInteger(connectionRevision) ||
+    connectionRevision < 0 ||
+    connectionRevision > MAX_MODEL_CONNECTION_REVISION
+  ) {
+    throw new WorkspaceApiError(
+      500,
+      "INTERNAL_ERROR",
+      "Model profile revision state is corrupt.",
+    );
+  }
   return {
     id: String(row.id),
     name: String(row.name),
@@ -105,9 +127,8 @@ function mapStored(
     migrationIssueCode: schema.hasMigrationIssueCode
       ? nullableString(row.migration_issue_code)
       : null,
-    executionRevision: schema.hasExecutionRevision
-      ? Number(row.execution_revision ?? 0)
-      : 0,
+    executionRevision,
+    connectionRevision,
     contextWindowTokens:
       row.context_window_tokens == null
         ? null
@@ -186,6 +207,7 @@ export class ModelProfilesRepository {
       hasCredentialState: columns.has("credential_state"),
       hasMigrationIssueCode: columns.has("migration_issue_code"),
       hasExecutionRevision: columns.has("execution_revision"),
+      hasConnectionRevision: columns.has("connection_revision"),
     };
     return this.schemaCache;
   }
@@ -220,6 +242,79 @@ export class ModelProfilesRepository {
       .some((row) => String(row.name) === column);
     this.columnCache.set(key, exists);
     return exists;
+  }
+
+  private connectionReadinessGateEnabled() {
+    if (!this.hasTable("model_profile_connection_tests")) return false;
+    if (!this.schema().hasConnectionRevision) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Model connection readiness schema is incomplete.",
+      );
+    }
+    return true;
+  }
+
+  private requireCurrentConnectionPassedInternal(id: string) {
+    if (!this.connectionReadinessGateEnabled()) return;
+    const passed = this.database
+      .prepare(
+        `SELECT 1 AS present
+           FROM model_profiles profile
+           JOIN model_profile_connection_tests test
+             ON test.profile_id = profile.id
+          WHERE profile.id = ?
+            AND test.connection_revision = profile.connection_revision
+            AND test.status = 'passed'
+            AND test.error_code IS NULL
+            AND test.retryable = 0
+          LIMIT 1`,
+      )
+      .get(id);
+    if (!passed) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Model profile requires a current passed connection test.",
+      );
+    }
+  }
+
+  private requireEnabledInternal(id: string) {
+    const record = this.requireStoredInternal(id);
+    if (!record.enabled) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Model profile is disabled.",
+      );
+    }
+    this.requireCurrentConnectionPassedInternal(id);
+    return record;
+  }
+
+  private clearDefaultSelectionsForProfileInternal(id: string, now: string) {
+    this.database
+      .prepare("UPDATE model_profiles SET is_default = 0 WHERE id = ?")
+      .run(id);
+    this.database
+      .prepare(
+        `UPDATE workspace_settings
+            SET default_model_profile_id = NULL,
+                updated_at = ?
+          WHERE id = 'workspace'
+            AND default_model_profile_id = ?`,
+      )
+      .run(now, id);
+    this.database
+      .prepare(
+        `UPDATE projects
+            SET default_model_profile_id = NULL,
+                updated_at = ?
+          WHERE default_model_profile_id = ?`,
+      )
+      .run(now, id);
   }
 
   private currentOrigin(record: StoredModelProfileRecord) {
@@ -447,18 +542,22 @@ export class ModelProfilesRepository {
     if (options.requireNoActiveJobs) {
       this.ensureNoActiveJobs(id, options.requireNoActiveJobs);
     }
-    const enabled = input.enabled ?? current.enabled;
-    if (input.isDefault === true && !enabled) {
-      throw new WorkspaceApiError(
-        409,
-        "CONFLICT",
-        "Default model profile must be enabled.",
-      );
-    }
-    const nextCredentialRef =
+    const schema = this.schema();
+    const requestedCredentialRef =
       input.credentialRef === undefined
         ? current.credentialRef
         : input.credentialRef;
+    const nextCredentialRef =
+      requestedCredentialRef === null
+        ? null
+        : canonicalizeStoredCredentialReference(requestedCredentialRef, id);
+    if (requestedCredentialRef !== null && nextCredentialRef === null) {
+      throw new WorkspaceApiError(
+        400,
+        "VALIDATION_ERROR",
+        "Credential reference is invalid.",
+      );
+    }
     const nextCredentialState =
       input.credentialState ?? current.credentialState;
     const nextCredentialOrigin =
@@ -469,19 +568,43 @@ export class ModelProfilesRepository {
       input.migrationIssueCode === undefined
         ? current.migrationIssueCode
         : input.migrationIssueCode;
+    this.validateCredentialBinding(id, nextCredentialRef, nextCredentialState);
+    const connectionChanged =
+      schema.hasConnectionRevision &&
+      ((input.provider !== undefined && input.provider !== current.provider) ||
+        (input.model !== undefined && input.model !== current.model) ||
+        (input.baseUrl !== undefined && input.baseUrl !== current.baseUrl) ||
+        (input.credentialRef !== undefined &&
+          this.credentialReferenceIdentity(nextCredentialRef) !==
+            this.credentialReferenceIdentity(current.credentialRef)) ||
+        (input.credentialOrigin !== undefined &&
+          input.credentialOrigin !== current.credentialOrigin) ||
+        (input.credentialState !== undefined &&
+          input.credentialState !== current.credentialState));
+    const enabled = connectionChanged
+      ? false
+      : (input.enabled ?? current.enabled);
+    if (input.isDefault === true && !connectionChanged && !enabled) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Default model profile must be enabled.",
+      );
+    }
+    if (input.enabled === true && !connectionChanged) {
+      this.requireCurrentConnectionPassedInternal(id);
+    }
     const executionRevisionChanged =
       (input.provider !== undefined && input.provider !== current.provider) ||
       (input.model !== undefined && input.model !== current.model) ||
       (input.baseUrl !== undefined && input.baseUrl !== current.baseUrl) ||
       (input.credentialRef !== undefined &&
-        input.credentialRef !== current.credentialRef) ||
+        nextCredentialRef !== current.credentialRef) ||
       (input.credentialOrigin !== undefined &&
         input.credentialOrigin !== current.credentialOrigin) ||
       (input.credentialState !== undefined &&
         input.credentialState !== current.credentialState) ||
       (input.enabled !== undefined && input.enabled !== current.enabled);
-    this.validateCredentialBinding(id, nextCredentialRef, nextCredentialState);
-    const schema = this.schema();
     const nextCredentialStatus =
       publicStatusFromCredentialState(nextCredentialState);
     const nextExecutionRevision =
@@ -490,7 +613,74 @@ export class ModelProfilesRepository {
         : schema.hasExecutionRevision && executionRevisionChanged
           ? current.executionRevision + 1
           : current.executionRevision;
+    const nextConnectionRevision = connectionChanged
+      ? current.connectionRevision + 1
+      : current.connectionRevision;
     if (
+      !Number.isSafeInteger(nextExecutionRevision) ||
+      nextExecutionRevision < 0 ||
+      !Number.isSafeInteger(nextConnectionRevision) ||
+      nextConnectionRevision < 0 ||
+      nextConnectionRevision > MAX_MODEL_CONNECTION_REVISION
+    ) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Model profile revision limit was exceeded.",
+      );
+    }
+    if (
+      schema.hasCredentialOrigin &&
+      schema.hasCredentialState &&
+      schema.hasMigrationIssueCode &&
+      schema.hasExecutionRevision &&
+      schema.hasConnectionRevision
+    ) {
+      this.database
+        .prepare(
+          `UPDATE model_profiles
+              SET name = ?,
+                  provider = ?,
+                  model = ?,
+                  base_url = ?,
+                  credential_ref = ?,
+                  credential_origin = ?,
+                  credential_state = ?,
+                  credential_status = ?,
+                  migration_issue_code = ?,
+                  execution_revision = ?,
+                  connection_revision = ?,
+                  context_window_tokens = ?,
+                  max_output_tokens = ?,
+                  enabled = ?,
+                  capabilities_json = ?,
+                  updated_at = ?
+            WHERE id = ?`,
+        )
+        .run(
+          input.name ?? current.name,
+          input.provider ?? current.provider,
+          input.model ?? current.model,
+          input.baseUrl === undefined ? current.baseUrl : input.baseUrl,
+          nextCredentialRef,
+          nextCredentialOrigin,
+          nextCredentialState,
+          nextCredentialStatus,
+          nextMigrationIssueCode,
+          nextExecutionRevision,
+          nextConnectionRevision,
+          input.contextWindowTokens === undefined
+            ? current.contextWindowTokens
+            : input.contextWindowTokens,
+          input.maxOutputTokens === undefined
+            ? current.maxOutputTokens
+            : input.maxOutputTokens,
+          enabled ? 1 : 0,
+          JSON.stringify(input.capabilities ?? current.capabilities),
+          input.now,
+          id,
+        );
+    } else if (
       schema.hasCredentialOrigin &&
       schema.hasCredentialState &&
       schema.hasMigrationIssueCode &&
@@ -613,21 +803,12 @@ export class ModelProfilesRepository {
           id,
         );
     }
-    if (input.isDefault === true) {
+    if (connectionChanged) {
+      this.clearDefaultSelectionsForProfileInternal(id, input.now);
+    } else if (input.isDefault === true) {
       this.setDefaultInTransaction(id, input.now);
-    }
-    if (
-      (input.isDefault === false || input.enabled === false) &&
-      current.isDefault
-    ) {
-      this.database
-        .prepare("UPDATE model_profiles SET is_default = 0 WHERE id = ?")
-        .run(id);
-      this.database
-        .prepare(
-          "UPDATE workspace_settings SET default_model_profile_id = NULL, updated_at = ? WHERE id = 'workspace'",
-        )
-        .run(input.now);
+    } else if (input.isDefault === false || input.enabled === false) {
+      this.clearDefaultSelectionsForProfileInternal(id, input.now);
     }
     return toPublic(this.requireStoredInternal(id));
   }
@@ -685,7 +866,66 @@ export class ModelProfilesRepository {
     const publicStatus = publicStatusFromCredentialState(input.state);
     const nextExecutionRevision =
       input.executionRevision ?? current.executionRevision + 1;
+    const connectionChanged =
+      schema.hasConnectionRevision &&
+      (this.credentialReferenceIdentity(reference) !==
+        this.credentialReferenceIdentity(current.credentialRef) ||
+        input.origin !== current.credentialOrigin ||
+        input.state !== current.credentialState);
+    const nextConnectionRevision = connectionChanged
+      ? current.connectionRevision + 1
+      : current.connectionRevision;
     if (
+      !Number.isSafeInteger(nextExecutionRevision) ||
+      nextExecutionRevision < 0 ||
+      !Number.isSafeInteger(nextConnectionRevision) ||
+      nextConnectionRevision < 0 ||
+      nextConnectionRevision > MAX_MODEL_CONNECTION_REVISION
+    ) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Model profile revision limit was exceeded.",
+      );
+    }
+    if (
+      schema.hasCredentialOrigin &&
+      schema.hasCredentialState &&
+      schema.hasMigrationIssueCode &&
+      schema.hasExecutionRevision &&
+      schema.hasConnectionRevision
+    ) {
+      this.database
+        .prepare(
+          `UPDATE model_profiles
+              SET credential_ref = ?,
+                  credential_origin = ?,
+                  credential_state = ?,
+                  credential_status = ?,
+                  migration_issue_code = ?,
+                  execution_revision = ?,
+                  connection_revision = ?,
+                  enabled = ?,
+                  is_default = ?,
+                  updated_at = ?
+            WHERE id = ?`,
+        )
+        .run(
+          reference,
+          input.origin,
+          input.state,
+          publicStatus,
+          input.migrationIssueCode === undefined
+            ? current.migrationIssueCode
+            : input.migrationIssueCode,
+          nextExecutionRevision,
+          nextConnectionRevision,
+          connectionChanged ? 0 : current.enabled ? 1 : 0,
+          connectionChanged ? 0 : current.isDefault ? 1 : 0,
+          input.now,
+          id,
+        );
+    } else if (
       schema.hasCredentialOrigin &&
       schema.hasCredentialState &&
       schema.hasMigrationIssueCode &&
@@ -721,6 +961,9 @@ export class ModelProfilesRepository {
           "UPDATE model_profiles SET credential_ref = ?, credential_status = ?, updated_at = ? WHERE id = ?",
         )
         .run(reference, publicStatus, input.now, id);
+    }
+    if (connectionChanged) {
+      this.clearDefaultSelectionsForProfileInternal(id, input.now);
     }
     return this.requireStoredInternal(id);
   }
@@ -776,6 +1019,16 @@ export class ModelProfilesRepository {
     now: string;
   }) {
     return this.tx(() => {
+      if (
+        this.hasTable("model_profile_connection_tests") &&
+        (input.enabled || input.isDefault)
+      ) {
+        throw new WorkspaceApiError(
+          409,
+          "CONFLICT",
+          "Model profiles must be created disabled until their connection test passes.",
+        );
+      }
       if (input.isDefault && !input.enabled) {
         throw new WorkspaceApiError(
           409,
@@ -787,6 +1040,39 @@ export class ModelProfilesRepository {
       const credentialState = input.credentialState ?? "missing";
       const credentialStatus = publicStatusFromCredentialState(credentialState);
       if (
+        schema.hasCredentialOrigin &&
+        schema.hasCredentialState &&
+        schema.hasMigrationIssueCode &&
+        schema.hasExecutionRevision &&
+        schema.hasConnectionRevision
+      ) {
+        this.database
+          .prepare(
+            `INSERT INTO model_profiles
+              (id, name, provider, model, base_url, credential_ref, credential_origin,
+               credential_state, credential_status, migration_issue_code,
+               execution_revision, connection_revision, context_window_tokens, max_output_tokens,
+               enabled, is_default, capabilities_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0, ?, ?, ?)`,
+          )
+          .run(
+            input.id,
+            input.name,
+            input.provider,
+            input.model,
+            input.baseUrl,
+            input.credentialOrigin,
+            credentialState,
+            credentialStatus,
+            input.migrationIssueCode ?? null,
+            input.contextWindowTokens,
+            input.maxOutputTokens,
+            input.enabled ? 1 : 0,
+            JSON.stringify(input.capabilities),
+            input.now,
+            input.now,
+          );
+      } else if (
         schema.hasCredentialOrigin &&
         schema.hasCredentialState &&
         schema.hasMigrationIssueCode &&
@@ -945,13 +1231,13 @@ export class ModelProfilesRepository {
 
   setDefault(id: string, now: string) {
     return this.tx(() => {
-      this.requireEnabled(id);
       this.setDefaultInTransaction(id, now);
       return toPublic(this.requireStoredInternal(id));
     });
   }
 
   private setDefaultInTransaction(id: string, now: string) {
+    this.requireEnabledInternal(id);
     this.database
       .prepare("UPDATE model_profiles SET is_default = 0 WHERE is_default = 1")
       .run();
@@ -1303,14 +1589,6 @@ export class ModelProfilesRepository {
   }
 
   requireEnabled(id: string) {
-    const record = this.requireStoredInternal(id);
-    if (!record.enabled) {
-      throw new WorkspaceApiError(
-        409,
-        "CONFLICT",
-        "Model profile is disabled.",
-      );
-    }
-    return toPublic(record);
+    return this.tx(() => toPublic(this.requireEnabledInternal(id)));
   }
 }
