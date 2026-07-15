@@ -57,6 +57,7 @@ import {
   createWorkspaceRuntime,
   type WorkspaceRuntimeHealth,
 } from "./lib/workspace/runtime";
+import type { MatterProfileModule } from "./matter/profile";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 3001;
@@ -86,11 +87,50 @@ export interface VeraWorkspaceRuntime
   readonly modelSettings: WorkspaceModelSettingsRuntimePort;
   readonly chats: WorkspaceChatsV1Port;
   readonly tabular: WorkspaceTabularV1RuntimePort;
+  readonly matterProfiles?: Pick<
+    MatterProfileModule,
+    "createRouter" | "health"
+  >;
   assistantGenerationAvailable(): boolean;
   tabularGenerationAvailable(): boolean;
   start(): Promise<void>;
   stop(): Promise<void>;
   health(): WorkspaceRuntimeHealth;
+}
+
+function configuredMatterRuntime(runtime: VeraWorkspaceRuntime) {
+  if (!("matterProfiles" in runtime)) return null;
+  const candidate = runtime.matterProfiles;
+  return candidate &&
+    typeof candidate.createRouter === "function" &&
+    typeof candidate.health === "function"
+    ? candidate
+    : null;
+}
+
+function matterHealth(runtime: VeraWorkspaceRuntime): Record<string, unknown> {
+  const matter = configuredMatterRuntime(runtime);
+  if (!matter) return { status: "not_configured" };
+  try {
+    const health = matter.health();
+    if (
+      health &&
+      typeof health === "object" &&
+      !Array.isArray(health) &&
+      health.status === "ready" &&
+      health.schemaVersion === 16 &&
+      health.inferencePolicy === "gate_closed"
+    ) {
+      return {
+        status: "ready",
+        schemaVersion: 16,
+        inferencePolicy: "gate_closed",
+      };
+    }
+    return { status: "unavailable" };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 export type VeraListeningServer = Pick<Server, "close" | "listening"> & {
@@ -512,9 +552,9 @@ export function createVeraApplication(
   }
 
   // Workspace API composition is intentionally singular: authenticate before
-  // the audit mutation guard, then place the fixed Mike workflow namespace
-  // before the broader v1 router.  This prevents a generic :id route from
-  // ever consuming /workflows while keeping one /api/v1 security boundary.
+  // the audit mutation guard, then place fixed Workflow and Matter namespaces
+  // before the broader v1 router. This prevents generic :id routes from
+  // consuming bounded module paths while keeping one /api/v1 boundary.
   const workspaceApi = Router();
   workspaceApi.use(createWorkspaceAuthMiddleware(env));
   workspaceApi.use(mutationGuard);
@@ -556,6 +596,10 @@ export function createVeraApplication(
       requireAuthentication: true,
     }),
   );
+  const matterRuntime = configuredMatterRuntime(options.runtime);
+  if (matterRuntime) {
+    workspaceApi.use(matterRuntime.createRouter());
+  }
   workspaceApi.use(
     createWorkspaceV1Router(options.runtime, { requireAuthentication: true }),
   );
@@ -580,8 +624,12 @@ export function createVeraApplication(
       const isLegacyRuntimeConfigured =
         legacyRuntimeIsEnabled && options.legacyRuntimeConfigured?.() === true;
       const draining = isDraining() || workspace.draining;
+      const matter = matterHealth(options.runtime);
       const healthy =
-        workspace.started && !draining && (!audit.enabled || audit.healthy);
+        workspace.started &&
+        !draining &&
+        matter.status !== "unavailable" &&
+        (!audit.enabled || audit.healthy);
       response.status(healthy ? 200 : 503).json({
         ok: healthy,
         vera: {
@@ -599,7 +647,7 @@ export function createVeraApplication(
             healthy: audit.healthy,
             protectionActive: audit.protection_active === true,
           },
-          matter: { status: "not_configured" },
+          matter,
           conversation: { status: "not_configured" },
           legacy: legacyHealth(isLegacyRuntimeConfigured),
         },

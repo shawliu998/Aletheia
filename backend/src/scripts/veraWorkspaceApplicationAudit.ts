@@ -215,6 +215,7 @@ function fakeRuntime(
     startError?: Error;
     health?: ReturnType<VeraWorkspaceRuntime["health"]>;
     onListProjects?: () => void;
+    matterProfiles?: VeraWorkspaceRuntime["matterProfiles"];
   } = {},
 ): VeraWorkspaceRuntime {
   const base = {
@@ -263,6 +264,9 @@ function fakeRuntime(
       },
     ),
     workflowCrud: fakeWorkflowCrud(),
+    ...(options.matterProfiles
+      ? { matterProfiles: options.matterProfiles }
+      : {}),
   };
   return new Proxy(base, {
     get(target, property, receiver) {
@@ -526,6 +530,101 @@ async function auditApplicationSurface(): Promise<void> {
         retryable: false,
       },
     });
+  });
+
+  let matterListCalls = 0;
+  let matterCreateCalls = 0;
+  const matterRouter = Router();
+  matterRouter.get("/matters", (_request, response) => {
+    matterListCalls += 1;
+    response.json({ items: [], next_cursor: null });
+  });
+  matterRouter.post("/matters", (_request, response) => {
+    matterCreateCalls += 1;
+    response.status(201).json({ created: true });
+  });
+  const matterProfiles = {
+    createRouter: () => matterRouter,
+    health: () => ({
+      status: "ready" as const,
+      schemaVersion: 16 as const,
+      inferencePolicy: "gate_closed" as const,
+      internalPath: "/private/matter.db",
+    }),
+  } as NonNullable<VeraWorkspaceRuntime["matterProfiles"]>;
+  const matterToken = "m".repeat(64);
+  const matterApp = createVeraApplication({
+    runtime: fakeRuntime({ matterProfiles }),
+    env: testEnvironment({
+      ALETHEIA_AUTH_MODE: "private_token",
+      ALETHEIA_PRIVATE_AUTH_TOKEN: matterToken,
+    }),
+    auditAnchorStatus: () => ({ enabled: false, healthy: true }),
+  });
+  await withHttpServer(matterApp, async (baseUrl) => {
+    const unauthenticated = await fetch(`${baseUrl}/api/v1/matters`);
+    assert.equal(unauthenticated.status, 401);
+    assert.equal(matterListCalls, 0, "Matter router must run after auth");
+    const list = await fetch(`${baseUrl}/api/v1/matters`, {
+      headers: { authorization: `Bearer ${matterToken}` },
+    });
+    assert.equal(list.status, 200);
+    assert.equal(matterListCalls, 1, "Matter route must dispatch exactly once");
+    assertWorkspaceNoStore(list);
+    const health = await fetch(`${baseUrl}/health`);
+    assert.equal(health.status, 200);
+    const payload = (await health.json()) as {
+      vera: { matter: Record<string, unknown> };
+    };
+    assert.deepEqual(payload.vera.matter, {
+      status: "ready",
+      schemaVersion: 16,
+      inferencePolicy: "gate_closed",
+    });
+  });
+
+  const blockedMatterApp = createVeraApplication({
+    runtime: fakeRuntime({ matterProfiles }),
+    env: testEnvironment(),
+    auditAnchorStatus: () => ({ enabled: true, healthy: false }),
+    auditWriteBlocked: () => true,
+  });
+  await withHttpServer(blockedMatterApp, async (baseUrl) => {
+    const blocked = await fetch(`${baseUrl}/api/v1/matters`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(blocked.status, 503);
+    assert.equal(matterCreateCalls, 0, "audit guard must precede Matter routes");
+    const readable = await fetch(`${baseUrl}/api/v1/matters`);
+    assert.equal(readable.status, 200);
+    assert.equal(matterListCalls, 2);
+  });
+
+  const unavailableMatterApp = createVeraApplication({
+    runtime: fakeRuntime({
+      matterProfiles: {
+        createRouter: () => matterRouter,
+        health: () => {
+          throw new Error("/private/matter.db secret");
+        },
+      } as NonNullable<VeraWorkspaceRuntime["matterProfiles"]>,
+    }),
+    env: testEnvironment(),
+    auditAnchorStatus: () => ({ enabled: false, healthy: true }),
+  });
+  await withHttpServer(unavailableMatterApp, async (baseUrl) => {
+    const health = await fetch(`${baseUrl}/health`);
+    assert.equal(health.status, 503);
+    const text = await health.text();
+    assert(!text.includes("matter.db"));
+    assert(!text.includes("secret"));
+    assert.equal(
+      (JSON.parse(text) as { vera: { matter: { status: string } } }).vera
+        .matter.status,
+      "unavailable",
+    );
   });
 
   let enabledLegacyFactoryCalls = 0;
