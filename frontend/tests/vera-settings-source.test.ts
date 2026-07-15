@@ -48,6 +48,7 @@ test("Settings keeps the locked Mike layout and component provenance", () => {
   assert.match(layout, /md:grid-cols-\[224px_minmax\(0,1fr\)\]/);
   assert.match(layout, /href: "\/settings"/);
   assert.match(layout, /href: "\/settings\/models"/);
+  assert.match(layout, /href: "\/settings\/legal-sources"/);
   assert.match(layout, /href: "\/settings\/data"/);
   assert.doesNotMatch(layout, /AuthContext|useAuth|billing|cloud/);
 });
@@ -57,6 +58,7 @@ test("Settings implementation contains no cloud-auth or browser-storage fallback
     "src/app/(pages)/settings/layout.tsx",
     "src/app/(pages)/settings/page.tsx",
     "src/app/(pages)/settings/models/page.tsx",
+    "src/app/(pages)/settings/legal-sources/page.tsx",
     "src/app/(pages)/settings/data/page.tsx",
     "src/app/(pages)/settings/AccountSection.tsx",
     "src/app/(pages)/settings/AccountToggle.tsx",

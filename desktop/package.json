@@ -16,6 +16,7 @@
     "test:packaged-restore-fail-closed": "node scripts/packagedRestoreFailClosedAudit.js",
     "test:native-ocr": "node scripts/nativeOcrAudit.js",
     "test:packaged-native-ocr": "node scripts/packagedNativeOcrAudit.js",
+    "test:packaged-p1-convergence": "node scripts/packagedNativeOcrAudit.js",
     "test:packaged-ocr": "node scripts/packagedNativeOcrAudit.js",
     "test:packaged-notifications": "node scripts/packagedNotificationAudit.js",
     "test:product-rename": "node scripts/productRenameAudit.js",

@@ -24,6 +24,11 @@ const TABS: TabDef[] = [
         href: "/settings/models",
     },
     {
+        id: "legal-sources",
+        labelKey: "settings.tabs.legalSources",
+        href: "/settings/legal-sources",
+    },
+    {
         id: "data",
         labelKey: "settings.tabs.data",
         href: "/settings/data",

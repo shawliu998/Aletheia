@@ -1,3 +1,5 @@
+import type { DocumentChunkMetadata } from "./documentChunkMetadata";
+
 /**
  * Stable product types for Vera's local-first port of Mike.
  *
@@ -172,6 +174,7 @@ export interface DocumentChunk {
   endOffset: number;
   pageStart: number | null;
   pageEnd: number | null;
+  metadata: DocumentChunkMetadata;
   createdAt: IsoDateTime;
 }
 

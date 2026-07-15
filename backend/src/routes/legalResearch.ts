@@ -13,13 +13,15 @@ import {
   validateLegalIssueTree,
 } from "../lib/aletheia/legalIssues";
 import {
-  createPkulawLegalSourceAdapterFromEnvironment,
-  createOfficialPublicLegalSourceAdapterFromEnvironment,
-  createWoltersLegalSourceAdapterFromEnvironment,
   LegalSourceAdapterError,
   type LegalSourceAdapter,
   type LegalSourceProvider,
 } from "../lib/aletheia/legalSourceAdapter";
+import {
+  createOfficialPublicLegalResearchProviderFromEnvironment,
+  createPkulawLegalResearchProviderFromEnvironment,
+  createWoltersLegalResearchProviderFromEnvironment,
+} from "../lib/aletheia/legalResearchProvider";
 import {
   LocalControlError,
   LocalControlRepository,
@@ -940,12 +942,12 @@ function controls() {
 
 function productionAdapter(args: { provider: LegalSourceProvider; userId: string }) {
   if (args.provider === "official") {
-    return createOfficialPublicLegalSourceAdapterFromEnvironment();
+    return createOfficialPublicLegalResearchProviderFromEnvironment();
   }
   const resolveCredential = async () => readLocalLegalSourceCredential(controls(), args.userId, args.provider);
   return args.provider === "pkulaw"
-    ? createPkulawLegalSourceAdapterFromEnvironment({ resolveCredential })
-    : createWoltersLegalSourceAdapterFromEnvironment({ resolveCredential });
+    ? createPkulawLegalResearchProviderFromEnvironment({ resolveCredential })
+    : createWoltersLegalResearchProviderFromEnvironment({ resolveCredential });
 }
 
 function routeError(res: { status: (status: number) => { json: (body: unknown) => void } }, error: unknown) {

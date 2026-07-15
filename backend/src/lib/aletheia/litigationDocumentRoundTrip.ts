@@ -11,13 +11,15 @@ import {
 } from "docx";
 import { XMLParser } from "fast-xml-parser";
 import PizZip from "pizzip";
+import {
+  DocxPackageSafetyError,
+  inspectDocxPackage,
+} from "../docxPackageSafety";
 import type { LitigationDocumentDraftSection } from "./litigationDomain";
 
 export const DOCUMENT_DRAFT_ROUND_TRIP_PROTOCOL =
   "vera-litigation-document-round-trip-v1";
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 40 * 1024 * 1024;
 const MAX_SECTION_BODY = 50_000;
 const MAX_TOTAL_BODY = 200_000;
 const PROPERTY_PREFIX = "Vera";
@@ -233,76 +235,25 @@ function parseXml(xml: string, label: string, ordered = false) {
 }
 
 function safeZip(buffer: Buffer) {
-  if (buffer.length < 1 || buffer.length > MAX_FILE_BYTES) {
-    throw new DocumentDraftRoundTripError(
-      "DOCX must be between 1 byte and 10 MB.",
-      "DOCX_TOO_LARGE",
-    );
-  }
-  let archive: PizZip;
   try {
-    archive = new PizZip(buffer);
-  } catch {
-    throw new DocumentDraftRoundTripError(
-      "The uploaded file is not a valid DOCX package.",
-      "DOCX_INVALID",
-    );
-  }
-  const names = Object.keys(archive.files);
-  if (
-    !names.includes("[Content_Types].xml") ||
-    !names.includes("word/document.xml") ||
-    !names.includes("docProps/custom.xml")
-  ) {
-    throw new DocumentDraftRoundTripError(
-      "The DOCX is missing required Vera binding parts.",
-      "DOCX_BINDING_MISSING",
-    );
-  }
-  let expanded = 0;
-  for (const name of names) {
-    if (
-      name.startsWith("/") ||
-      name.includes("\\") ||
-      name.split("/").some((part) => part === ".." || part === ".")
-    ) {
+    return inspectDocxPackage(buffer, {
+      requiredParts: [
+        "[Content_Types].xml",
+        "word/document.xml",
+        "docProps/custom.xml",
+      ],
+      drawingPolicy: "reject",
+    }).archive;
+  } catch (error) {
+    if (!(error instanceof DocxPackageSafetyError)) throw error;
+    if (error.code === "DOCX_REQUIRED_PART_MISSING") {
       throw new DocumentDraftRoundTripError(
-        "The DOCX contains an unsafe package path.",
-        "DOCX_UNSAFE_PATH",
+        "The DOCX is missing required Vera binding parts.",
+        "DOCX_BINDING_MISSING",
       );
     }
-    const file = archive.file(name);
-    if (!file) continue;
-    expanded += file.asUint8Array().byteLength;
-    if (expanded > MAX_EXPANDED_BYTES) {
-      throw new DocumentDraftRoundTripError(
-        "The DOCX expands beyond the 40 MB safety limit.",
-        "DOCX_TOO_LARGE",
-      );
-    }
+    throw new DocumentDraftRoundTripError(error.message, error.code);
   }
-  if (names.some((name) => /(^|\/)(EncryptionInfo|EncryptedPackage)$/i.test(name))) {
-    throw new DocumentDraftRoundTripError(
-      "Encrypted DOCX packages cannot be inspected safely.",
-      "DOCX_ACTIVE_CONTENT",
-    );
-  }
-  if (
-    names.some(
-      (name) =>
-        /(^|\/)vbaProject\.bin$/i.test(name) ||
-        name.startsWith("word/activeX/") ||
-        name.startsWith("word/embeddings/") ||
-        name.startsWith("word/oleObject") ||
-        name.startsWith("customXml/"),
-    )
-  ) {
-    throw new DocumentDraftRoundTripError(
-      "Macros, ActiveX, embedded objects, OLE, and custom XML are not allowed.",
-      "DOCX_ACTIVE_CONTENT",
-    );
-  }
-  return archive;
 }
 
 function walkObject(value: unknown, visit: (key: string, value: unknown) => void) {
@@ -314,37 +265,6 @@ function walkObject(value: unknown, visit: (key: string, value: unknown) => void
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     visit(key, item);
     walkObject(item, visit);
-  }
-}
-
-function inspectRelationships(archive: PizZip) {
-  for (const name of Object.keys(archive.files).filter((item) => item.endsWith(".rels"))) {
-    const file = archive.file(name);
-    if (!file) continue;
-    const parsed = parseXml(file.asText(), name);
-    walkObject(parsed, (key, value) => {
-      if (key !== "Relationship") return;
-      const rows = Array.isArray(value) ? value : [value];
-      for (const row of rows) {
-        if (!row || typeof row !== "object") continue;
-        const relation = row as Record<string, unknown>;
-        if (String(relation["@_TargetMode"] ?? "").toLowerCase() === "external") {
-          throw new DocumentDraftRoundTripError(
-            "External DOCX relationships are not allowed.",
-            "DOCX_EXTERNAL_RELATIONSHIP",
-          );
-        }
-        const relationshipType = String(relation["@_Type"] ?? "")
-          .split("/")
-          .at(-1);
-        if (["attachedTemplate", "oleObject", "package"].includes(relationshipType ?? "")) {
-          throw new DocumentDraftRoundTripError(
-            "Attached templates and embedded packages are not allowed.",
-            "DOCX_ACTIVE_CONTENT",
-          );
-        }
-      }
-    });
   }
 }
 
@@ -390,17 +310,6 @@ function tagChildren(node: OrderedNode, tag: string) {
   return orderedChildren(node[tag]);
 }
 
-function recursiveTagNames(value: unknown, output = new Set<string>()) {
-  for (const node of orderedChildren(value)) {
-    for (const [key, child] of Object.entries(node)) {
-      if (key === ":@") continue;
-      output.add(key);
-      recursiveTagNames(child, output);
-    }
-  }
-  return output;
-}
-
 function paragraphText(nodes: OrderedNode[]): string {
   let result = "";
   const visit = (items: OrderedNode[]) => {
@@ -444,30 +353,6 @@ function paragraphBookmark(nodes: OrderedNode[]) {
 function documentParagraphs(archive: PizZip) {
   const xml = archive.file("word/document.xml")?.asText() ?? "";
   const parsed = parseXml(xml, "DOCX document", true) as OrderedNode[];
-  const tags = recursiveTagNames(parsed);
-  if (["w:ins", "w:del", "w:moveFrom", "w:moveTo"].some((tag) => tags.has(tag))) {
-    throw new DocumentDraftRoundTripError(
-      "Accept or reject all tracked changes in Word before importing this DOCX.",
-      "DOCX_TRACKED_CHANGES",
-    );
-  }
-  if (
-    [
-      "w:altChunk",
-      "w:object",
-      "w:oleObject",
-      "w:fldSimple",
-      "w:instrText",
-      "w:drawing",
-      "w:pict",
-      "w:txbxContent",
-    ].some((tag) => tags.has(tag))
-  ) {
-    throw new DocumentDraftRoundTripError(
-      "Alternate content and embedded objects are not allowed.",
-      "DOCX_ACTIVE_CONTENT",
-    );
-  }
   const paragraphs: Array<{ text: string; bookmarks: string[] }> = [];
   const visit = (items: OrderedNode[]) => {
     for (const node of items) {
@@ -543,7 +428,6 @@ export function parseBoundDocumentDraftDocx(args: {
 }) {
   const currentSections = normalizeSections(args.currentSections);
   const archive = safeZip(args.bytes);
-  inspectRelationships(archive);
   const properties = customProperties(archive);
   const expectedPayload = bindingPayload(args.expected, currentSections);
   const actual = {

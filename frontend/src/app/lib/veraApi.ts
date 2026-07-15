@@ -64,6 +64,11 @@ export interface VeraApiRequestOptions extends Omit<
 export interface VeraBlobResponse {
   blob: Blob;
   filename: string | null;
+  warningCodes?: string[];
+}
+
+export interface VeraBlobResponseOptions {
+  warningCodeAllowlist?: readonly string[];
 }
 
 function safeHeaderEntries(input?: HeadersInit): Headers {
@@ -311,6 +316,7 @@ function safeDownloadFilename(response: Response): string | null {
 export async function veraApiBlobRequest(
   path: string,
   options: VeraApiRequestOptions = {},
+  responseOptions: VeraBlobResponseOptions = {},
 ): Promise<VeraBlobResponse> {
   const headers = new Headers(options.headers);
   if (!headers.has("accept")) headers.set("Accept", "application/octet-stream");
@@ -323,9 +329,49 @@ export async function veraApiBlobRequest(
       message: "The Vera API returned an empty download.",
     });
   }
+  let warningCodes: string[] | undefined;
+  if (responseOptions.warningCodeAllowlist) {
+    const allowlist = responseOptions.warningCodeAllowlist;
+    if (
+      allowlist.length < 1 ||
+      allowlist.length > 32 ||
+      new Set(allowlist).size !== allowlist.length ||
+      allowlist.some((code) => !/^[A-Z][A-Z0-9_]{0,79}$/.test(code))
+    ) {
+      throw new VeraRuntimeConfigurationError(
+        "The Vera download warning allowlist is invalid.",
+      );
+    }
+    const header = response.headers.get("x-vera-warning-codes");
+    if (header === null || header === "") {
+      warningCodes = [];
+    } else {
+      if (header.length > 512) {
+        throw new VeraApiError({
+          status: response.status,
+          code: "INVALID_RESPONSE",
+          message: "The Vera API returned invalid download warnings.",
+        });
+      }
+      warningCodes = header.split(",").map((code) => code.trim());
+      const allowed = new Set(allowlist);
+      if (
+        warningCodes.length > allowlist.length ||
+        new Set(warningCodes).size !== warningCodes.length ||
+        warningCodes.some((code) => !allowed.has(code))
+      ) {
+        throw new VeraApiError({
+          status: response.status,
+          code: "INVALID_RESPONSE",
+          message: "The Vera API returned invalid download warnings.",
+        });
+      }
+    }
+  }
   return {
     blob: await response.blob(),
     filename: safeDownloadFilename(response),
+    ...(warningCodes === undefined ? {} : { warningCodes }),
   };
 }
 
@@ -471,6 +517,8 @@ function parseVeraDocumentWire(value: unknown): VeraDocumentWire {
       "updated_at",
       "active_version_number",
       "latest_version_number",
+      "ocr_summary",
+      "studio_capability",
     ],
     "document response",
   );
@@ -516,6 +564,109 @@ function parseVeraDocumentWire(value: unknown): VeraDocumentWire {
     wire.latest_version_number,
     "document latest version",
   );
+  if (wire.ocr_summary !== undefined && wire.ocr_summary !== null) {
+    const summary = wireRecord(wire.ocr_summary, "document OCR summary");
+    exactWireKeys(
+      summary,
+      [
+        "engine",
+        "ocr_page_count",
+        "low_confidence_pages",
+        "low_confidence_page_count",
+        "low_confidence_pages_truncated",
+        "review_required",
+      ],
+      "document OCR summary",
+    );
+    if (summary.engine !== "apple-vision") {
+      invalidWire("document OCR engine");
+    }
+    const ocrPageCount = wireNonNegativeInteger(
+      summary.ocr_page_count,
+      "document OCR page count",
+    );
+    if (ocrPageCount === 0) invalidWire("document OCR page count");
+    const rawLowConfidencePages = summary.low_confidence_pages;
+    if (
+      !Array.isArray(rawLowConfidencePages) ||
+      rawLowConfidencePages.length > 50
+    ) {
+      invalidWire("document low-confidence OCR pages");
+    }
+    const lowConfidencePages = rawLowConfidencePages.map(
+      (page, index) => {
+        const parsed = wireNonNegativeInteger(
+          page,
+          "document low-confidence OCR page",
+        );
+        if (
+          parsed < 1 ||
+          parsed > 500 ||
+          (index > 0 &&
+            parsed <= Number(rawLowConfidencePages[index - 1]))
+        ) {
+          invalidWire("document low-confidence OCR pages");
+        }
+        return parsed;
+      },
+    );
+    const lowConfidencePageCount = wireNonNegativeInteger(
+      summary.low_confidence_page_count,
+      "document low-confidence OCR page count",
+    );
+    const pagesTruncated = wireBoolean(
+      summary.low_confidence_pages_truncated,
+      "document low-confidence OCR page truncation",
+    );
+    const reviewRequired = wireBoolean(
+      summary.review_required,
+      "document OCR review requirement",
+    );
+    if (
+      lowConfidencePageCount > ocrPageCount ||
+      lowConfidencePageCount < lowConfidencePages.length ||
+      pagesTruncated !==
+        (lowConfidencePageCount > lowConfidencePages.length) ||
+      (pagesTruncated && lowConfidencePages.length !== 50) ||
+      reviewRequired !== (lowConfidencePageCount > 0)
+    ) {
+      invalidWire("document OCR summary");
+    }
+  }
+  if (wire.studio_capability !== undefined) {
+    const capability = wireRecord(
+      wire.studio_capability,
+      "document Studio capability",
+    );
+    exactWireKeys(
+      capability,
+      ["editable", "format", "docx_import", "docx_export"],
+      "document Studio capability",
+    );
+    const editable = wireBoolean(
+      capability.editable,
+      "document Studio edit capability",
+    );
+    if (capability.format !== null && capability.format !== "markdown") {
+      invalidWire("document Studio format");
+    }
+    const docxImport = wireBoolean(
+      capability.docx_import,
+      "document Studio DOCX import capability",
+    );
+    const docxExport = wireBoolean(
+      capability.docx_export,
+      "document Studio DOCX export capability",
+    );
+    if (
+      (editable &&
+        (capability.format !== "markdown" || !docxImport || !docxExport)) ||
+      (!editable &&
+        (capability.format !== null || docxImport || docxExport))
+    ) {
+      invalidWire("document Studio edit capability");
+    }
+  }
   return wire as unknown as VeraDocumentWire;
 }
 

@@ -362,7 +362,64 @@ test("legal source secrets fail closed and remain local to the settings form", a
 
   let pkulawHasSecret = false;
   let providersUnavailable = false;
-  const requests: Array<{ method: string; url: string; body: string | null }> = [];
+  const providerStatus = (
+    provider: "pkulaw" | "wolters",
+    options: { hasSecret: boolean; endpointConfigured?: boolean },
+  ) => {
+    const endpointConfigured = options.endpointConfigured ?? true;
+    const allowlisted = endpointConfigured;
+    const credentialReferenceConfigured = true;
+    const deploymentReady =
+      endpointConfigured && allowlisted && credentialReferenceConfigured;
+    return {
+      provider,
+      deploymentReady,
+      endpointConfigured,
+      allowlisted,
+      credentialReferenceConfigured,
+      hasSecret: options.hasSecret,
+      encryptionEnabled: true,
+      contractVersion: "vera-legal-research-provider-v1",
+      integration: "authorized_json_gateway",
+      capabilities: {
+        search: true,
+        fetchFullText: true,
+        pagination: false,
+        getByCitation: false,
+        jurisdictionFilter: false,
+        asOfDateFilter: false,
+        structuredFilters: false,
+        dynamicToolInvocation: false,
+        requiresExplicitEgressApproval: true,
+        documentKinds: ["statute", "judicial_interpretation", "case", "other"],
+      },
+      dataUsePolicy: {
+        basis: "not_declared",
+        retention: "not_declared",
+        export: "not_declared",
+        modelUse: "not_declared",
+      },
+      connectionStatus: deploymentReady
+        ? options.hasSecret
+          ? {
+              state: "configured_unverified",
+              reason: null,
+              connectionTested: false,
+            }
+          : {
+              state: "unavailable",
+              reason: "credential_unavailable",
+              connectionTested: false,
+            }
+        : {
+            state: "unavailable",
+            reason: "endpoint_missing",
+            connectionTested: false,
+          },
+    };
+  };
+  const requests: Array<{ method: string; url: string; body: string | null }> =
+    [];
   await page.route("**/aletheia/providers**", async (route) => {
     const request = route.request();
     requests.push({
@@ -383,24 +440,15 @@ test("legal source secrets fail closed and remain local to the settings form", a
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          schemaVersion: "vera-legal-source-provider-status-v1",
+          localOnly: true,
+          detail: "Authorized legal-source status.",
           providers: [
-            {
-              provider: "pkulaw",
-              hasSecret: pkulawHasSecret,
-              encryptionEnabled: true,
-              endpointConfigured: true,
-              allowlisted: true,
-              credentialReferenceConfigured: true,
-            },
-            {
-              provider: "wolters",
+            providerStatus("pkulaw", { hasSecret: pkulawHasSecret }),
+            providerStatus("wolters", {
               hasSecret: false,
-              encryptionEnabled: true,
               endpointConfigured: false,
-              allowlisted: true,
-              credentialReferenceConfigured: true,
-            },
-            { provider: "official", hasSecret: true },
+            }),
           ],
         }),
       });
@@ -408,7 +456,11 @@ test("legal source secrets fail closed and remain local to the settings form", a
     }
     if (request.method() === "PUT") {
       pkulawHasSecret = true;
-      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(providerStatus("pkulaw", { hasSecret: true })),
+      });
       return;
     }
     if (request.method() === "DELETE") {
@@ -440,7 +492,9 @@ test("legal source secrets fail closed and remain local to the settings form", a
   await expect(section).toContainText("已保存本地密钥");
   const put = requests.find((request) => request.method === "PUT");
   expect(put?.url).toMatch(/\/aletheia\/providers\/pkulaw\/secret$/);
-  expect(put?.body).toBe(JSON.stringify({ secret: "local-secret-not-for-display" }));
+  expect(put?.body).toBe(
+    JSON.stringify({ secret: "local-secret-not-for-display" }),
+  );
   expect(requests.some((request) => request.url.endsWith("/test"))).toBe(false);
 
   await section.getByRole("button", { name: "移除" }).first().click();

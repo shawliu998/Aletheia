@@ -907,9 +907,9 @@ export class LocalControlRepository {
         trimmed,
         providerContext(userId, provider),
       );
-    } catch (error) {
+    } catch {
       throw new LocalControlError(
-        `Encrypted provider-secret storage is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        "Encrypted provider-secret storage is unavailable.",
         "SECRET_STORAGE_UNAVAILABLE",
         503,
       );
@@ -962,9 +962,9 @@ export class LocalControlRepository {
         row.encrypted_secret,
         providerContext(userId, provider),
       );
-    } catch (error) {
+    } catch {
       throw new LocalControlError(
-        `Encrypted provider secret cannot be opened: ${error instanceof Error ? error.message : String(error)}`,
+        "Encrypted provider secret cannot be opened.",
         "SECRET_STORAGE_UNAVAILABLE",
         503,
       );

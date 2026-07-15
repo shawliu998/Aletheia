@@ -5,9 +5,7 @@ import {
   assertNoDurableDocumentHistory,
   hasExactAssistantDocumentBindings,
 } from "../documentDeletionPolicy";
-import {
-  workspaceBlobStorageKey,
-} from "./blobRecords";
+import { workspaceBlobStorageKey } from "./blobRecords";
 import type {
   Document,
   DocumentChunk,
@@ -16,6 +14,13 @@ import type {
   DocumentVersionSource,
   JobStatus,
 } from "../types";
+import {
+  assertDocumentChunkMetadataPageBinding,
+  parseDocumentChunkMetadata,
+  parseDocumentChunkMetadataJson,
+  serializeDocumentChunkMetadata,
+  type DocumentChunkMetadata,
+} from "../documentChunkMetadata";
 import type { WorkspaceDatabaseAdapter } from "../migrations/types";
 import type {
   RegisterWorkspaceBlobRecordInput,
@@ -106,6 +111,7 @@ export type ChunkWrite = {
   pageStart: number | null;
   pageEnd: number | null;
   contentSha256?: string;
+  metadata?: DocumentChunkMetadata;
 };
 
 export type ParseFailure = {
@@ -185,11 +191,13 @@ function assertUuid(value: string, name: string) {
 }
 
 function assertSha256(value: string) {
-  if (!SHA256.test(value)) throw new Error("contentSha256 must be lowercase SHA-256.");
+  if (!SHA256.test(value))
+    throw new Error("contentSha256 must be lowercase SHA-256.");
 }
 
 function asString(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`Workspace ${name} is invalid.`);
+  if (typeof value !== "string")
+    throw new Error(`Workspace ${name} is invalid.`);
   return value;
 }
 
@@ -199,7 +207,8 @@ function asNullableString(value: unknown): string | null {
 
 function asNumber(value: unknown, name: string): number {
   const result = Number(value);
-  if (!Number.isSafeInteger(result)) throw new Error(`Workspace ${name} is invalid.`);
+  if (!Number.isSafeInteger(result))
+    throw new Error(`Workspace ${name} is invalid.`);
   return result;
 }
 
@@ -221,7 +230,16 @@ function asJobStatus(value: unknown): JobStatus {
 
 function asSource(value: unknown): DocumentVersionSource {
   const source = String(value);
-  if (!["upload", "user_upload", "assistant_edit", "user_accept", "user_reject", "generated"].includes(source)) {
+  if (
+    ![
+      "upload",
+      "user_upload",
+      "assistant_edit",
+      "user_accept",
+      "user_reject",
+      "generated",
+    ].includes(source)
+  ) {
     throw new Error(`Workspace document version source is invalid: ${source}.`);
   }
   return source as DocumentVersionSource;
@@ -269,12 +287,14 @@ export class WorkspaceDocumentsRepository {
   }
 
   listDocumentBlobRecords(documentId: string): WorkspaceBlobRecord[] {
-    if (!this.blobRecords) throw new Error("Workspace blob records repository is required.");
+    if (!this.blobRecords)
+      throw new Error("Workspace blob records repository is required.");
     return this.blobRecords.listForDocument(documentId);
   }
 
   deleteBlobRecord(recordId: string, quarantineId: string) {
-    if (!this.blobRecords) throw new Error("Workspace blob records repository is required.");
+    if (!this.blobRecords)
+      throw new Error("Workspace blob records repository is required.");
     this.blobRecords.deleteQuarantined(recordId, quarantineId);
   }
 
@@ -286,12 +306,14 @@ export class WorkspaceDocumentsRepository {
     return row ? this.mapDocument(row) : null;
   }
 
-  listDocuments(options: {
-    projectId?: string | null;
-    folderId?: string | null;
-    status?: DocumentStatus;
-    limit?: number;
-  } = {}): Document[] {
+  listDocuments(
+    options: {
+      projectId?: string | null;
+      folderId?: string | null;
+      status?: DocumentStatus;
+      limit?: number;
+    } = {},
+  ): Document[] {
     if (options.projectId) assertUuid(options.projectId, "projectId");
     if (options.folderId) assertUuid(options.folderId, "folderId");
     if (options.status && !DOCUMENT_STATUSES.has(options.status)) {
@@ -348,23 +370,34 @@ export class WorkspaceDocumentsRepository {
 
   getJob(jobId: string): DocumentParseJob | null {
     assertUuid(jobId, "jobId");
-    const row = this.database.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId);
+    const row = this.database
+      .prepare("SELECT * FROM jobs WHERE id = ?")
+      .get(jobId);
     return row ? this.mapJob(row) : null;
   }
 
-  createPendingDocument(input: CreatePendingDocumentInput): StoredDocumentBundle {
+  createPendingDocument(
+    input: CreatePendingDocumentInput,
+  ): StoredDocumentBundle {
     const documentId = input.documentId ?? this.nextId();
     const versionId = input.versionId ?? this.nextId();
-    const jobId = input.enqueueParseJob === false ? null : input.jobId ?? this.nextId();
+    const jobId =
+      input.enqueueParseJob === false ? null : (input.jobId ?? this.nextId());
     const createdAt = input.createdAt ?? this.now();
     this.assertCreateInput(input, documentId, versionId, jobId);
     return this.transaction(() => {
       if (input.projectId) {
-        const project = this.database.prepare("SELECT id FROM projects WHERE id = ? AND status <> 'deleted'").get(input.projectId);
+        const project = this.database
+          .prepare(
+            "SELECT id FROM projects WHERE id = ? AND status <> 'deleted'",
+          )
+          .get(input.projectId);
         if (!project) throw new Error("Project was not found.");
       }
       if (input.folderId) {
-        const folder = this.database.prepare("SELECT project_id FROM project_subfolders WHERE id = ?").get(input.folderId);
+        const folder = this.database
+          .prepare("SELECT project_id FROM project_subfolders WHERE id = ?")
+          .get(input.folderId);
         if (!folder || folder.project_id !== input.projectId) {
           throw new Error("Folder does not belong to the requested project.");
         }
@@ -405,17 +438,24 @@ export class WorkspaceDocumentsRepository {
           createdAt,
         );
       this.database
-        .prepare("UPDATE documents SET current_version_id = ?, updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE documents SET current_version_id = ?, updated_at = ? WHERE id = ?",
+        )
         .run(versionId, createdAt, documentId);
       if (jobId) this.insertParseJob(jobId, documentId, versionId, createdAt);
       if (input.blobRecord) {
-        if (!this.blobRecords) throw new Error("Workspace blob records repository is required for blob-backed document writes.");
+        if (!this.blobRecords)
+          throw new Error(
+            "Workspace blob records repository is required for blob-backed document writes.",
+          );
         if (
           input.blobRecord.locator.kind !== "original" ||
           input.blobRecord.locator.documentId !== documentId ||
           input.blobRecord.locator.versionId !== versionId
         ) {
-          throw new Error("Original blob record locator is not bound to the document/version.");
+          throw new Error(
+            "Original blob record locator is not bound to the document/version.",
+          );
         }
         this.blobRecords.registerStoredInTransaction(input.blobRecord);
       }
@@ -429,22 +469,38 @@ export class WorkspaceDocumentsRepository {
 
   createPendingVersion(input: CreatePendingVersionInput): StoredDocumentBundle {
     const versionId = input.versionId ?? this.nextId();
-    const jobId = input.enqueueParseJob === false ? null : input.jobId ?? this.nextId();
+    const jobId =
+      input.enqueueParseJob === false ? null : (input.jobId ?? this.nextId());
     const createdAt = input.createdAt ?? this.now();
     assertUuid(input.documentId, "documentId");
     assertUuid(versionId, "versionId");
     if (jobId) assertUuid(jobId, "jobId");
-    if (!input.filename.trim() || input.filename.length > MAX_WORKSPACE_FILENAME_LENGTH || input.filename.includes("/") || input.filename.includes("\\")) throw new Error("filename must be a safe single file name.");
-    if (!input.mimeType.trim() || !Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0) throw new Error("document metadata is invalid.");
+    if (
+      !input.filename.trim() ||
+      input.filename.length > MAX_WORKSPACE_FILENAME_LENGTH ||
+      input.filename.includes("/") ||
+      input.filename.includes("\\")
+    )
+      throw new Error("filename must be a safe single file name.");
+    if (
+      !input.mimeType.trim() ||
+      !Number.isSafeInteger(input.sizeBytes) ||
+      input.sizeBytes < 0
+    )
+      throw new Error("document metadata is invalid.");
     assertSha256(input.contentSha256);
     if (input.storageKey !== documentStorageKey(input.documentId, versionId)) {
-      throw new Error("storageKey must match the deterministic document locator.");
+      throw new Error(
+        "storageKey must match the deterministic document locator.",
+      );
     }
     return this.transaction(() => {
       const document = this.getDocument(input.documentId);
       if (!document) throw new Error("Document was not found.");
       const row = this.database
-        .prepare("SELECT coalesce(max(version_number), 0) AS version_number FROM document_versions WHERE document_id = ?")
+        .prepare(
+          "SELECT coalesce(max(version_number), 0) AS version_number FROM document_versions WHERE document_id = ?",
+        )
         .get(input.documentId);
       const versionNumber = Number(row?.version_number ?? 0) + 1;
       this.database
@@ -472,16 +528,29 @@ export class WorkspaceDocumentsRepository {
              size_bytes = ?, parse_status = 'pending', updated_at = ?
            WHERE id = ? AND deleted_at IS NULL`,
         )
-        .run(versionId, input.filename, input.mimeType, input.sizeBytes, createdAt, input.documentId);
-      if (jobId) this.insertParseJob(jobId, input.documentId, versionId, createdAt);
+        .run(
+          versionId,
+          input.filename,
+          input.mimeType,
+          input.sizeBytes,
+          createdAt,
+          input.documentId,
+        );
+      if (jobId)
+        this.insertParseJob(jobId, input.documentId, versionId, createdAt);
       if (input.blobRecord) {
-        if (!this.blobRecords) throw new Error("Workspace blob records repository is required for blob-backed document writes.");
+        if (!this.blobRecords)
+          throw new Error(
+            "Workspace blob records repository is required for blob-backed document writes.",
+          );
         if (
           input.blobRecord.locator.kind !== "original" ||
           input.blobRecord.locator.documentId !== input.documentId ||
           input.blobRecord.locator.versionId !== versionId
         ) {
-          throw new Error("Original blob record locator is not bound to the document/version.");
+          throw new Error(
+            "Original blob record locator is not bound to the document/version.",
+          );
         }
         this.blobRecords.registerStoredInTransaction(input.blobRecord);
       }
@@ -496,26 +565,45 @@ export class WorkspaceDocumentsRepository {
   renameDocument(documentId: string, filename: string) {
     assertUuid(documentId, "documentId");
     const nextFilename = filename.trim();
-    if (!nextFilename || nextFilename.length > MAX_WORKSPACE_FILENAME_LENGTH || path.isAbsolute(nextFilename) || nextFilename.includes("/") || nextFilename.includes("\\")) {
+    if (
+      !nextFilename ||
+      nextFilename.length > MAX_WORKSPACE_FILENAME_LENGTH ||
+      path.isAbsolute(nextFilename) ||
+      nextFilename.includes("/") ||
+      nextFilename.includes("\\")
+    ) {
       throw new Error("filename must be a safe single file name.");
     }
     return this.transaction(() => {
       const document = this.getDocument(documentId);
       if (!document) throw new Error("Document was not found.");
       const current = this.database
-        .prepare("SELECT filename FROM document_versions WHERE document_id = ? AND id = ? AND deleted_at IS NULL")
+        .prepare(
+          "SELECT filename FROM document_versions WHERE document_id = ? AND id = ? AND deleted_at IS NULL",
+        )
         .get(documentId, document.currentVersionId);
       const currentFilename = String(current?.filename ?? document.filename);
       const extension = path.extname(currentFilename);
-      const candidate = path.extname(nextFilename) ? nextFilename : `${nextFilename}${extension}`;
+      const candidate = path.extname(nextFilename)
+        ? nextFilename
+        : `${nextFilename}${extension}`;
       if (path.extname(candidate).toLowerCase() !== extension.toLowerCase()) {
         throw new Error("filename extension cannot be changed.");
       }
       const nextTitle = candidate.replace(/\.[^.]+$/, "").trim();
-      if (!nextTitle || nextTitle.length > 500) throw new Error("Document title is invalid.");
+      if (!nextTitle || nextTitle.length > 500)
+        throw new Error("Document title is invalid.");
       const at = this.now();
-      this.database.prepare("UPDATE documents SET filename = ?, title = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(candidate, nextTitle, at, documentId);
-      this.database.prepare("UPDATE document_versions SET filename = ? WHERE document_id = ? AND id = ? AND deleted_at IS NULL").run(candidate, documentId, document.currentVersionId);
+      this.database
+        .prepare(
+          "UPDATE documents SET filename = ?, title = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(candidate, nextTitle, at, documentId);
+      this.database
+        .prepare(
+          "UPDATE document_versions SET filename = ? WHERE document_id = ? AND id = ? AND deleted_at IS NULL",
+        )
+        .run(candidate, documentId, document.currentVersionId);
       return this.mustGetDocument(documentId);
     });
   }
@@ -523,22 +611,37 @@ export class WorkspaceDocumentsRepository {
   renameDocumentTitle(documentId: string, title: string) {
     assertUuid(documentId, "documentId");
     const nextTitle = title.trim();
-    if (!nextTitle || nextTitle.length > 500) throw new Error("Document title is invalid.");
+    if (!nextTitle || nextTitle.length > 500)
+      throw new Error("Document title is invalid.");
     return this.transaction(() => {
-      if (!this.getDocument(documentId)) throw new Error("Document was not found.");
-      this.database.prepare("UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(nextTitle, this.now(), documentId);
+      if (!this.getDocument(documentId))
+        throw new Error("Document was not found.");
+      this.database
+        .prepare(
+          "UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(nextTitle, this.now(), documentId);
       return this.mustGetDocument(documentId);
     });
   }
 
-  moveDocument(documentId: string, projectId: string | null, folderId: string | null) {
+  moveDocument(
+    documentId: string,
+    projectId: string | null,
+    folderId: string | null,
+  ) {
     assertUuid(documentId, "documentId");
     if (projectId) assertUuid(projectId, "projectId");
     if (folderId) assertUuid(folderId, "folderId");
     return this.transaction(() => {
-      if (!this.getDocument(documentId)) throw new Error("Document was not found.");
+      if (!this.getDocument(documentId))
+        throw new Error("Document was not found.");
       this.assertActivePlacement(projectId, folderId);
-      this.database.prepare("UPDATE documents SET project_id = ?, folder_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(projectId, folderId, this.now(), documentId);
+      this.database
+        .prepare(
+          "UPDATE documents SET project_id = ?, folder_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(projectId, folderId, this.now(), documentId);
       return this.mustGetDocument(documentId);
     });
   }
@@ -572,7 +675,9 @@ export class WorkspaceDocumentsRepository {
     return this.transaction(() => {
       this.boundDocumentJob(jobId, documentId, versionId, "running", claim);
       this.database
-        .prepare("UPDATE documents SET parse_status = ?, updated_at = ? WHERE id = ? AND current_version_id = ?")
+        .prepare(
+          "UPDATE documents SET parse_status = ?, updated_at = ? WHERE id = ? AND current_version_id = ?",
+        )
         .run(status, this.now(), documentId, versionId);
       return this.mustGetVersion(documentId, versionId);
     });
@@ -606,47 +711,74 @@ export class WorkspaceDocumentsRepository {
         )
         .run(at, at, at, jobId);
       this.database
-        .prepare("UPDATE documents SET parse_status = 'processing', updated_at = ? WHERE id = ? AND current_version_id = ?")
+        .prepare(
+          "UPDATE documents SET parse_status = 'processing', updated_at = ? WHERE id = ? AND current_version_id = ?",
+        )
         .run(at, documentId, versionId);
       return this.mustGetVersion(documentId, versionId);
     });
   }
 
-  commitParseReady(input: ParseCommitInput, options: DocumentParseCommitOptions = {}) {
+  commitParseReady(
+    input: ParseCommitInput,
+    options: DocumentParseCommitOptions = {},
+  ) {
     const transitionJob = options.transitionJob !== false;
     this.assertParseInput(input);
     return this.transaction(() => {
       this.assertCommitClaim(transitionJob, options.claim);
-      this.boundDocumentJob(input.jobId, input.documentId, input.versionId, "running", options.claim);
+      this.boundDocumentJob(
+        input.jobId,
+        input.documentId,
+        input.versionId,
+        "running",
+        options.claim,
+      );
       if (!input.extractedBlob || !this.blobRecords) {
-        throw new Error("Extracted blob record metadata and repository are required before ready status.");
+        throw new Error(
+          "Extracted blob record metadata and repository are required before ready status.",
+        );
       }
       if (
         input.extractedBlob.locator.kind !== "extracted_text" ||
         input.extractedBlob.locator.documentId !== input.documentId ||
         input.extractedBlob.locator.versionId !== input.versionId
       ) {
-        throw new Error("Extracted blob record locator is not bound to the document/version.");
+        throw new Error(
+          "Extracted blob record locator is not bound to the document/version.",
+        );
       }
-      if (input.extractedBlob.storageKey !== workspaceBlobStorageKey(input.extractedBlob.locator)) {
-        throw new Error("Extracted blob record storage key is not deterministic.");
+      if (
+        input.extractedBlob.storageKey !==
+        workspaceBlobStorageKey(input.extractedBlob.locator)
+      ) {
+        throw new Error(
+          "Extracted blob record storage key is not deterministic.",
+        );
       }
-      const existingExtracted = this.blobRecords.getByLocator(input.extractedBlob.locator);
+      const existingExtracted = this.blobRecords.getByLocator(
+        input.extractedBlob.locator,
+      );
       if (input.reuseExistingExtractedRecord) {
         if (
           !existingExtracted ||
           existingExtracted.state !== "stored" ||
-          (input.extractedBlob.recordId !== undefined && existingExtracted.id !== input.extractedBlob.recordId) ||
+          (input.extractedBlob.recordId !== undefined &&
+            existingExtracted.id !== input.extractedBlob.recordId) ||
           existingExtracted.storageKey !== input.extractedBlob.storageKey ||
           existingExtracted.contentSha256 !== input.extractedBlob.sha256 ||
           existingExtracted.sizeBytes !== input.extractedBlob.size ||
           existingExtracted.storedSizeBytes !== input.extractedBlob.storedSize
         ) {
-          throw new Error("Existing extracted blob authority does not match the parse commit.");
+          throw new Error(
+            "Existing extracted blob authority does not match the parse commit.",
+          );
         }
       } else {
         if (existingExtracted) {
-          throw new Error("Extracted blob locator already has authoritative storage.");
+          throw new Error(
+            "Extracted blob locator already has authoritative storage.",
+          );
         }
         this.blobRecords.registerStoredInTransaction({
           id: input.extractedBlob.recordId,
@@ -656,7 +788,11 @@ export class WorkspaceDocumentsRepository {
           storedSizeBytes: input.extractedBlob.storedSize,
         });
       }
-      this.replaceChunksInTransaction(input.documentId, input.versionId, input.chunks);
+      this.replaceChunksInTransaction(
+        input.documentId,
+        input.versionId,
+        input.chunks,
+      );
       const at = this.now();
       this.database
         .prepare(
@@ -665,7 +801,9 @@ export class WorkspaceDocumentsRepository {
         )
         .run(input.pageCount, input.documentId, input.versionId);
       this.database
-        .prepare("UPDATE documents SET parse_status = 'ready', parse_error_code = NULL, parse_error_json = NULL, updated_at = ? WHERE id = ? AND current_version_id = ?")
+        .prepare(
+          "UPDATE documents SET parse_status = 'ready', parse_error_code = NULL, parse_error_json = NULL, updated_at = ? WHERE id = ? AND current_version_id = ?",
+        )
         .run(at, input.documentId, input.versionId);
       if (transitionJob) {
         this.database
@@ -673,21 +811,40 @@ export class WorkspaceDocumentsRepository {
             `UPDATE jobs SET status = 'complete', result_json = ?, error_json = NULL,
                error_code = NULL, completed_at = ?, updated_at = ? WHERE id = ?`,
           )
-          .run(JSON.stringify({ ...(input.result ?? { status: "ready" }), extractedBlob: input.extractedBlob ?? null }), at, at, input.jobId);
+          .run(
+            JSON.stringify({
+              ...(input.result ?? { status: "ready" }),
+              extractedBlob: input.extractedBlob ?? null,
+            }),
+            at,
+            at,
+            input.jobId,
+          );
       }
       return this.mustGetDocument(input.documentId);
     });
   }
 
-  commitTerminalParse(input: TerminalParseInput, options: DocumentParseCommitOptions = {}) {
+  commitTerminalParse(
+    input: TerminalParseInput,
+    options: DocumentParseCommitOptions = {},
+  ) {
     const transitionJob = options.transitionJob !== false;
     this.assertTerminalInput(input);
     return this.transaction(() => {
       this.assertCommitClaim(transitionJob, options.claim);
-      this.boundDocumentJob(input.jobId, input.documentId, input.versionId, "running", options.claim);
+      this.boundDocumentJob(
+        input.jobId,
+        input.documentId,
+        input.versionId,
+        "running",
+        options.claim,
+      );
       const at = this.now();
       this.database
-        .prepare("UPDATE documents SET parse_status = ?, parse_error_code = NULL, parse_error_json = NULL, updated_at = ? WHERE id = ? AND current_version_id = ?")
+        .prepare(
+          "UPDATE documents SET parse_status = ?, parse_error_code = NULL, parse_error_json = NULL, updated_at = ? WHERE id = ? AND current_version_id = ?",
+        )
         .run(input.status, at, input.documentId, input.versionId);
       if (transitionJob) {
         this.database
@@ -695,45 +852,100 @@ export class WorkspaceDocumentsRepository {
             `UPDATE jobs SET status = 'complete', result_json = ?, error_json = NULL,
                error_code = NULL, completed_at = ?, updated_at = ? WHERE id = ?`,
           )
-          .run(JSON.stringify(input.result ?? { status: input.status }), at, at, input.jobId);
+          .run(
+            JSON.stringify(input.result ?? { status: input.status }),
+            at,
+            at,
+            input.jobId,
+          );
       }
       return this.mustGetDocument(input.documentId);
     });
   }
 
-  commitParseFailure(documentId: string, versionId: string, jobId: string, failure: ParseFailure, options: DocumentParseCommitOptions = {}) {
+  commitParseFailure(
+    documentId: string,
+    versionId: string,
+    jobId: string,
+    failure: ParseFailure,
+    options: DocumentParseCommitOptions = {},
+  ) {
     const transitionJob = options.transitionJob !== false;
     assertUuid(documentId, "documentId");
     assertUuid(versionId, "versionId");
     assertUuid(jobId, "jobId");
-    const code = failure.code.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 120) || "document_parse_failed";
-    const message = failure.message.replace(/[\r\n]+/g, " ").slice(0, 500) || "Document parsing failed.";
+    const code =
+      failure.code.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 120) ||
+      "document_parse_failed";
+    const message =
+      failure.message.replace(/[\r\n]+/g, " ").slice(0, 500) ||
+      "Document parsing failed.";
     return this.transaction(() => {
       this.assertCommitClaim(transitionJob, options.claim);
-      this.boundDocumentJob(jobId, documentId, versionId, "running", options.claim);
+      this.boundDocumentJob(
+        jobId,
+        documentId,
+        versionId,
+        "running",
+        options.claim,
+      );
       const at = this.now();
       this.database
-        .prepare("UPDATE documents SET parse_status = 'failed', parse_error_code = ?, parse_error_json = ?, updated_at = ? WHERE id = ? AND current_version_id = ?")
-        .run(code, JSON.stringify({ code, message, retryable: failure.retryable, metadata: failure.metadata ?? null }), at, documentId, versionId);
+        .prepare(
+          "UPDATE documents SET parse_status = 'failed', parse_error_code = ?, parse_error_json = ?, updated_at = ? WHERE id = ? AND current_version_id = ?",
+        )
+        .run(
+          code,
+          JSON.stringify({
+            code,
+            message,
+            retryable: failure.retryable,
+            metadata: failure.metadata ?? null,
+          }),
+          at,
+          documentId,
+          versionId,
+        );
       if (transitionJob) {
         this.database
           .prepare(
             `UPDATE jobs SET status = 'failed', error_json = ?, error_code = ?,
                completed_at = ?, updated_at = ?, retryable = ? WHERE id = ?`,
           )
-          .run(JSON.stringify({ code, message, retryable: failure.retryable, metadata: failure.metadata ?? null }), code, at, at, failure.retryable ? 1 : 0, jobId);
+          .run(
+            JSON.stringify({
+              code,
+              message,
+              retryable: failure.retryable,
+              metadata: failure.metadata ?? null,
+            }),
+            code,
+            at,
+            at,
+            failure.retryable ? 1 : 0,
+            jobId,
+          );
       }
       return this.mustGetDocument(documentId);
     });
   }
 
-  replaceChunks(documentId: string, versionId: string, chunks: readonly ChunkWrite[]) {
+  replaceChunks(
+    documentId: string,
+    versionId: string,
+    chunks: readonly ChunkWrite[],
+  ) {
     assertUuid(documentId, "documentId");
     assertUuid(versionId, "versionId");
-    return this.transaction(() => this.replaceChunksInTransaction(documentId, versionId, chunks));
+    return this.transaction(() =>
+      this.replaceChunksInTransaction(documentId, versionId, chunks),
+    );
   }
 
-  searchChunks(query: string, options: { documentId?: string; limit?: number } = {}): DocumentChunk[] {
+  searchChunks(
+    query: string,
+    options: { documentId?: string; limit?: number } = {},
+  ): DocumentChunk[] {
     const text = query.trim();
     if (!text) return [];
     if (options.documentId) assertUuid(options.documentId, "documentId");
@@ -786,7 +998,8 @@ export class WorkspaceDocumentsRepository {
       if (!targetVersion) throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
       const version = this.getVersion(documentId, targetVersion);
       if (!version) throw new Error("DOCUMENT_RETRY_VERSION_NOT_FOUND");
-      if (document.currentVersionId !== targetVersion) throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
+      if (document.currentVersionId !== targetVersion)
+        throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
       const active = this.database
         .prepare(
           `SELECT id FROM jobs
@@ -796,7 +1009,8 @@ export class WorkspaceDocumentsRepository {
         )
         .get(documentId, targetVersion);
       if (active) throw new Error("DOCUMENT_RETRY_ACTIVE");
-      if (!["failed", "ocr_required", "unsupported"].includes(document.status)) throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
+      if (!["failed", "ocr_required", "unsupported"].includes(document.status))
+        throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
       const latest = this.database
         .prepare(
           `SELECT retryable FROM jobs
@@ -805,7 +1019,8 @@ export class WorkspaceDocumentsRepository {
             ORDER BY created_at DESC, id DESC LIMIT 1`,
         )
         .get(documentId, targetVersion);
-      if (latest && Number(latest.retryable) !== 1) throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
+      if (latest && Number(latest.retryable) !== 1)
+        throw new Error("DOCUMENT_RETRY_NOT_ALLOWED");
       const prior = this.database
         .prepare(
           `SELECT count(*) AS attempt_count, max(max_attempts) AS max_attempts
@@ -813,13 +1028,19 @@ export class WorkspaceDocumentsRepository {
             WHERE type = 'document_parse' AND resource_type = 'document'
               AND resource_id = ? AND json_extract(payload_json, '$.versionId') = ?`,
         )
-        .get(documentId, targetVersion) as { attempt_count?: number | null; max_attempts?: number | null };
-      if (Number(prior?.attempt_count ?? 0) >= Number(prior?.max_attempts ?? 3)) throw new Error("DOCUMENT_RETRY_EXHAUSTED");
+        .get(documentId, targetVersion) as {
+        attempt_count?: number | null;
+        max_attempts?: number | null;
+      };
+      if (Number(prior?.attempt_count ?? 0) >= Number(prior?.max_attempts ?? 3))
+        throw new Error("DOCUMENT_RETRY_EXHAUSTED");
       const jobId = this.nextId();
       const at = this.now();
       this.insertParseJob(jobId, documentId, targetVersion, at);
       this.database
-        .prepare("UPDATE documents SET parse_status = 'pending', updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE documents SET parse_status = 'pending', updated_at = ? WHERE id = ?",
+        )
         .run(at, documentId);
       return this.mustGetJob(jobId);
     });
@@ -839,7 +1060,10 @@ export class WorkspaceDocumentsRepository {
     return { activeJobs: this.listActiveDocumentDependentJobs(documentId) };
   }
 
-  deleteDocumentRows(documentId: string, stagedRecords: readonly QuarantineWorkspaceBlobRecord[] = []): DocumentVersionRow[] {
+  deleteDocumentRows(
+    documentId: string,
+    stagedRecords: readonly QuarantineWorkspaceBlobRecord[] = [],
+  ): DocumentVersionRow[] {
     assertUuid(documentId, "documentId");
     return this.transaction(() => {
       const versions = this.listVersions(documentId);
@@ -858,14 +1082,27 @@ export class WorkspaceDocumentsRepository {
       if (this.blobRecords) {
         const known = this.blobRecords.listForDocument(documentId);
         if (known.length !== stagedRecords.length) {
-          throw new Error("Document delete requires every authoritative blob record to be staged.");
+          throw new Error(
+            "Document delete requires every authoritative blob record to be staged.",
+          );
         }
         for (const staged of stagedRecords) {
-          const record = known.find((candidate) => candidate.id === staged.recordId);
-          if (!record || record.locator.kind === "export" || record.locator.documentId !== documentId) {
-            throw new Error("Document delete blob record set is not authoritative.");
+          const record = known.find(
+            (candidate) => candidate.id === staged.recordId,
+          );
+          if (
+            !record ||
+            record.locator.kind === "export" ||
+            record.locator.documentId !== documentId
+          ) {
+            throw new Error(
+              "Document delete blob record set is not authoritative.",
+            );
           }
-          this.blobRecords.quarantineInTransaction(staged.recordId, staged.quarantineId);
+          this.blobRecords.quarantineInTransaction(
+            staged.recordId,
+            staged.quarantineId,
+          );
         }
         const at = this.now();
         const reviewIds = this.database
@@ -914,10 +1151,14 @@ export class WorkspaceDocumentsRepository {
           .prepare("DELETE FROM document_chunks WHERE document_id = ?")
           .run(documentId);
         this.database
-          .prepare("UPDATE document_versions SET deleted_at = ? WHERE document_id = ? AND deleted_at IS NULL")
+          .prepare(
+            "UPDATE document_versions SET deleted_at = ? WHERE document_id = ? AND deleted_at IS NULL",
+          )
           .run(at, documentId);
         this.database
-          .prepare("UPDATE documents SET deleted_at = ?, current_version_id = NULL, parse_status = 'failed', updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+          .prepare(
+            "UPDATE documents SET deleted_at = ?, current_version_id = NULL, parse_status = 'failed', updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+          )
           .run(at, at, documentId);
         return versions;
       }
@@ -930,7 +1171,9 @@ export class WorkspaceDocumentsRepository {
                   ))`,
         )
         .run(documentId, documentId);
-      this.database.prepare("DELETE FROM documents WHERE id = ?").run(documentId);
+      this.database
+        .prepare("DELETE FROM documents WHERE id = ?")
+        .run(documentId);
       return versions;
     });
   }
@@ -1016,10 +1259,12 @@ export class WorkspaceDocumentsRepository {
       if (row.resource_type !== "chat" || row.chat_id == null) {
         throw new Error("DOCUMENT_DELETE_ASSISTANT_BUSY");
       }
-      const chatProjectId = row.chat_project_id == null ? null : String(row.chat_project_id);
-      const canAccessDocument = projectId === null
-        ? row.chat_scope === "global" && chatProjectId === null
-        : row.chat_scope === "project" && chatProjectId === projectId;
+      const chatProjectId =
+        row.chat_project_id == null ? null : String(row.chat_project_id);
+      const canAccessDocument =
+        projectId === null
+          ? row.chat_scope === "global" && chatProjectId === null
+          : row.chat_scope === "project" && chatProjectId === projectId;
       if (canAccessDocument) throw new Error("DOCUMENT_DELETE_ASSISTANT_BUSY");
     }
 
@@ -1046,10 +1291,15 @@ export class WorkspaceDocumentsRepository {
       )
       .all();
     for (const row of activeAccessibleMessage) {
-      const chatProjectId = row.project_id == null ? null : String(row.project_id);
+      const chatProjectId =
+        row.project_id == null ? null : String(row.project_id);
       if (
-        (projectId === null && row.scope === "global" && chatProjectId === null) ||
-        (projectId !== null && row.scope === "project" && chatProjectId === projectId)
+        (projectId === null &&
+          row.scope === "global" &&
+          chatProjectId === null) ||
+        (projectId !== null &&
+          row.scope === "project" &&
+          chatProjectId === projectId)
       ) {
         throw new Error("DOCUMENT_DELETE_ASSISTANT_BUSY");
       }
@@ -1072,7 +1322,12 @@ export class WorkspaceDocumentsRepository {
     if (activeReviewChat) throw new Error("DOCUMENT_DELETE_ASSISTANT_BUSY");
   }
 
-  private insertParseJob(jobId: string, documentId: string, versionId: string, at: string) {
+  private insertParseJob(
+    jobId: string,
+    documentId: string,
+    versionId: string,
+    at: string,
+  ) {
     this.database
       .prepare(
         `INSERT INTO jobs (
@@ -1080,40 +1335,71 @@ export class WorkspaceDocumentsRepository {
            retryable, payload_json, scheduled_at, created_at, updated_at
          ) VALUES (?, 'document_parse', 'queued', 'document', ?, 0, 3, 1, ?, ?, ?, ?)`,
       )
-      .run(jobId, documentId, JSON.stringify({ documentId, versionId }), at, at, at);
+      .run(
+        jobId,
+        documentId,
+        JSON.stringify({ documentId, versionId }),
+        at,
+        at,
+        at,
+      );
   }
 
-  private assertActivePlacement(projectId: string | null, folderId: string | null) {
-    if (!projectId && folderId) throw new Error("A folder requires an active project.");
+  private assertActivePlacement(
+    projectId: string | null,
+    folderId: string | null,
+  ) {
+    if (!projectId && folderId)
+      throw new Error("A folder requires an active project.");
     if (projectId) {
-      const project = this.database.prepare("SELECT id FROM projects WHERE id = ? AND status = 'active'").get(projectId);
+      const project = this.database
+        .prepare("SELECT id FROM projects WHERE id = ? AND status = 'active'")
+        .get(projectId);
       if (!project) throw new Error("Project was not found or is not active.");
     }
     if (folderId) {
-      const folder = this.database.prepare("SELECT project_id FROM project_subfolders WHERE id = ?").get(folderId);
-      if (!folder || folder.project_id !== projectId) throw new Error("Folder does not belong to the requested project.");
+      const folder = this.database
+        .prepare("SELECT project_id FROM project_subfolders WHERE id = ?")
+        .get(folderId);
+      if (!folder || folder.project_id !== projectId)
+        throw new Error("Folder does not belong to the requested project.");
     }
   }
 
-  private replaceChunksInTransaction(documentId: string, versionId: string, chunks: readonly ChunkWrite[]) {
+  private replaceChunksInTransaction(
+    documentId: string,
+    versionId: string,
+    chunks: readonly ChunkWrite[],
+  ) {
     this.database
-      .prepare("DELETE FROM document_chunks WHERE document_id = ? AND version_id = ?")
+      .prepare(
+        "DELETE FROM document_chunks WHERE document_id = ? AND version_id = ?",
+      )
       .run(documentId, versionId);
     const statement = this.database.prepare(
       `INSERT INTO document_chunks (
          id, document_id, version_id, ordinal, text, start_offset, end_offset,
-         page_start, page_end, content_sha256, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         page_start, page_end, content_sha256, metadata_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const at = this.now();
     for (const chunk of chunks) {
-      if (!Number.isSafeInteger(chunk.ordinal) || chunk.ordinal < 0) throw new Error("chunk ordinal is invalid.");
-      if (chunk.endOffset < chunk.startOffset || chunk.startOffset < 0) throw new Error("chunk offsets are invalid.");
+      if (!Number.isSafeInteger(chunk.ordinal) || chunk.ordinal < 0)
+        throw new Error("chunk ordinal is invalid.");
+      if (chunk.endOffset < chunk.startOffset || chunk.startOffset < 0)
+        throw new Error("chunk offsets are invalid.");
       if (!chunk.text.trim()) throw new Error("chunk text must not be empty.");
       const id = chunk.id ?? this.nextId();
       assertUuid(id, "chunkId");
       const contentSha256 = chunk.contentSha256 ?? hashChunk(chunk.text);
       assertSha256(contentSha256);
+      const metadata = parseDocumentChunkMetadata(chunk.metadata ?? {});
+      assertDocumentChunkMetadataPageBinding(
+        metadata,
+        chunk.pageStart,
+        chunk.pageEnd,
+        chunk.text,
+      );
       statement.run(
         id,
         documentId,
@@ -1125,6 +1411,7 @@ export class WorkspaceDocumentsRepository {
         chunk.pageStart,
         chunk.pageEnd,
         contentSha256,
+        serializeDocumentChunkMetadata(metadata),
         at,
       );
     }
@@ -1136,17 +1423,35 @@ export class WorkspaceDocumentsRepository {
       .map((row) => this.mapChunk(row));
   }
 
-  private assertCreateInput(input: CreatePendingDocumentInput, documentId: string, versionId: string, jobId: string | null) {
+  private assertCreateInput(
+    input: CreatePendingDocumentInput,
+    documentId: string,
+    versionId: string,
+    jobId: string | null,
+  ) {
     assertUuid(documentId, "documentId");
     assertUuid(versionId, "versionId");
     if (jobId) assertUuid(jobId, "jobId");
     if (input.projectId) assertUuid(input.projectId, "projectId");
     if (input.folderId) assertUuid(input.folderId, "folderId");
-    if (!input.filename.trim() || input.filename.length > MAX_WORKSPACE_FILENAME_LENGTH || input.filename.includes("/") || input.filename.includes("\\")) throw new Error("filename must be a safe single file name.");
-    if (!input.mimeType.trim() || !Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0) throw new Error("document metadata is invalid.");
+    if (
+      !input.filename.trim() ||
+      input.filename.length > MAX_WORKSPACE_FILENAME_LENGTH ||
+      input.filename.includes("/") ||
+      input.filename.includes("\\")
+    )
+      throw new Error("filename must be a safe single file name.");
+    if (
+      !input.mimeType.trim() ||
+      !Number.isSafeInteger(input.sizeBytes) ||
+      input.sizeBytes < 0
+    )
+      throw new Error("document metadata is invalid.");
     assertSha256(input.contentSha256);
     if (input.storageKey !== documentStorageKey(documentId, versionId)) {
-      throw new Error("storageKey must match the deterministic document locator.");
+      throw new Error(
+        "storageKey must match the deterministic document locator.",
+      );
     }
   }
 
@@ -1154,7 +1459,11 @@ export class WorkspaceDocumentsRepository {
     assertUuid(input.documentId, "documentId");
     assertUuid(input.versionId, "versionId");
     assertUuid(input.jobId, "jobId");
-    if (input.pageCount !== null && (!Number.isSafeInteger(input.pageCount) || input.pageCount < 0)) throw new Error("pageCount is invalid.");
+    if (
+      input.pageCount !== null &&
+      (!Number.isSafeInteger(input.pageCount) || input.pageCount < 0)
+    )
+      throw new Error("pageCount is invalid.");
   }
 
   private assertTerminalInput(input: TerminalParseInput) {
@@ -1186,10 +1495,20 @@ export class WorkspaceDocumentsRepository {
     expectedStatus: JobStatus,
     claim?: DocumentParseClaim,
   ) {
-    const row = this.database.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId);
-    if (!row || row.type !== "document_parse" || row.resource_type !== "document" || row.resource_id !== documentId || row.status !== expectedStatus) {
+    const row = this.database
+      .prepare("SELECT * FROM jobs WHERE id = ?")
+      .get(jobId);
+    if (
+      !row ||
+      row.type !== "document_parse" ||
+      row.resource_type !== "document" ||
+      row.resource_id !== documentId ||
+      row.status !== expectedStatus
+    ) {
       if (claim) throw new DocumentParseClaimLostError();
-      throw new Error("Document parse job is not bound to the requested document/version or status.");
+      throw new Error(
+        "Document parse job is not bound to the requested document/version or status.",
+      );
     }
     const payload = parseJson(row.payload_json, null);
     if (
@@ -1199,7 +1518,9 @@ export class WorkspaceDocumentsRepository {
       (payload as Record<string, unknown>).versionId !== versionId
     ) {
       if (claim) throw new DocumentParseClaimLostError();
-      throw new Error("Document parse job payload is not bound to the requested document/version.");
+      throw new Error(
+        "Document parse job payload is not bound to the requested document/version.",
+      );
     }
     if (claim) this.assertClaimRow(row, claim);
     return row;
@@ -1240,7 +1561,9 @@ export class WorkspaceDocumentsRepository {
 
   private isFtsUnavailable(error: unknown) {
     if (!(error instanceof Error)) return false;
-    return /no such table:\s*document_chunks_fts|no such module:\s*fts5|fts5.*(?:not available|unsupported)|unable to use function MATCH/i.test(error.message);
+    return /no such table:\s*document_chunks_fts|no such module:\s*fts5|fts5.*(?:not available|unsupported)|unable to use function MATCH/i.test(
+      error.message,
+    );
   }
 
   private mustGetDocument(documentId: string) {
@@ -1251,13 +1574,15 @@ export class WorkspaceDocumentsRepository {
 
   private mustGetVersion(documentId: string, versionId: string) {
     const value = this.getVersion(documentId, versionId);
-    if (!value) throw new Error("Document version could not be reloaded after write.");
+    if (!value)
+      throw new Error("Document version could not be reloaded after write.");
     return value;
   }
 
   private mustGetJob(jobId: string) {
     const value = this.getJob(jobId);
-    if (!value) throw new Error("Document parse job could not be reloaded after write.");
+    if (!value)
+      throw new Error("Document parse job could not be reloaded after write.");
     return value;
   }
 
@@ -1287,7 +1612,10 @@ export class WorkspaceDocumentsRepository {
       mimeType: asString(row.mime_type, "version mime type"),
       sizeBytes: asNumber(row.size_bytes, "version size"),
       contentSha256: asString(row.content_sha256, "version content hash"),
-      pageCount: row.page_count == null ? null : asNumber(row.page_count, "version page count"),
+      pageCount:
+        row.page_count == null
+          ? null
+          : asNumber(row.page_count, "version page count"),
       createdAt: asString(row.created_at, "version createdAt"),
       storageKey: asString(row.storage_key, "version storage key"),
       previewStorageKey: asNullableString(row.preview_storage_key),
@@ -1296,16 +1624,26 @@ export class WorkspaceDocumentsRepository {
   }
 
   private mapChunk(row: Record<string, unknown>): DocumentChunk {
+    const pageStart =
+      row.page_start == null
+        ? null
+        : asNumber(row.page_start, "chunk page start");
+    const pageEnd =
+      row.page_end == null ? null : asNumber(row.page_end, "chunk page end");
+    const metadata = parseDocumentChunkMetadataJson(row.metadata_json);
+    const text = asString(row.text, "chunk text");
+    assertDocumentChunkMetadataPageBinding(metadata, pageStart, pageEnd, text);
     return {
       id: asString(row.id, "chunk id"),
       documentId: asString(row.document_id, "chunk document id"),
       versionId: asString(row.version_id, "chunk version id"),
       ordinal: asNumber(row.ordinal, "chunk ordinal"),
-      text: asString(row.text, "chunk text"),
+      text,
       startOffset: asNumber(row.start_offset, "chunk start offset"),
       endOffset: asNumber(row.end_offset, "chunk end offset"),
-      pageStart: row.page_start == null ? null : asNumber(row.page_start, "chunk page start"),
-      pageEnd: row.page_end == null ? null : asNumber(row.page_end, "chunk page end"),
+      pageStart,
+      pageEnd,
+      metadata,
       createdAt: asString(row.created_at, "chunk createdAt"),
     };
   }
@@ -1318,8 +1656,14 @@ export class WorkspaceDocumentsRepository {
     if (!payload || typeof payload !== "object") {
       throw new Error("Document parse job payload is invalid.");
     }
-    assertUuid(String((payload as Record<string, unknown>).documentId), "job documentId");
-    assertUuid(String((payload as Record<string, unknown>).versionId), "job versionId");
+    assertUuid(
+      String((payload as Record<string, unknown>).documentId),
+      "job documentId",
+    );
+    assertUuid(
+      String((payload as Record<string, unknown>).versionId),
+      "job versionId",
+    );
     if ((payload as Record<string, unknown>).documentId !== row.resource_id) {
       throw new Error("Document parse job resource and payload do not match.");
     }

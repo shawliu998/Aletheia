@@ -28,6 +28,23 @@ export interface VeraFolderWire {
   updated_at: string;
 }
 
+export interface VeraDocumentStudioCapabilityWire {
+  editable: boolean;
+  format: "markdown" | null;
+  docx_import: boolean;
+  docx_export: boolean;
+}
+
+export interface VeraDocumentOcrSummaryWire {
+  engine: "apple-vision";
+  ocr_page_count: number;
+  /** Bounded to the first 50 low-confidence OCR pages. */
+  low_confidence_pages: number[];
+  low_confidence_page_count: number;
+  low_confidence_pages_truncated: boolean;
+  review_required: boolean;
+}
+
 export interface VeraDocumentWire {
   id: string;
   user_id: string;
@@ -48,6 +65,10 @@ export interface VeraDocumentWire {
   updated_at: string | null;
   active_version_number: number | null;
   latest_version_number: number | null;
+  /** Current-version OCR review signal; absent only in older embedded projections. */
+  ocr_summary?: VeraDocumentOcrSummaryWire | null;
+  /** Absent on older runtimes; absence is treated as no Studio access. */
+  studio_capability?: VeraDocumentStudioCapabilityWire;
 }
 
 export interface VeraProjectWire {

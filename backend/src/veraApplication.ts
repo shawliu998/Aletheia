@@ -42,6 +42,14 @@ import {
   type WorkspaceV1RuntimePort,
 } from "./routes/workspaceV1";
 import {
+  createWorkspaceDocumentStudioV1Router,
+  type WorkspaceDocumentStudioV1Port,
+} from "./routes/workspaceDocumentStudioV1";
+import {
+  createWorkspaceProjectSourcesV1Router,
+  type WorkspaceProjectSourcesV1Port,
+} from "./routes/workspaceProjectSourcesV1";
+import {
   createWorkspaceWorkflowRunsV1Router,
   createWorkspaceWorkflowsV1Router,
   type WorkspaceWorkflowsV1Port,
@@ -80,7 +88,11 @@ type Closable = {
   close(): void | Promise<void>;
 };
 
-export interface VeraWorkspaceRuntime extends WorkspaceV1RuntimePort {
+export interface VeraWorkspaceRuntime
+  extends
+    WorkspaceV1RuntimePort,
+    WorkspaceDocumentStudioV1Port,
+    WorkspaceProjectSourcesV1Port {
   readonly workflowCrud: WorkspaceWorkflowsV1Port;
   readonly modelSettings: WorkspaceModelSettingsRuntimePort;
   readonly chats: WorkspaceChatsV1Port;
@@ -400,6 +412,7 @@ export function createVeraApplication(
       /^\/(?:documents|single-documents)\/[^/]+\/versions\/?$/,
       /^\/projects\/[^/]+\/documents\/?$/,
       /^\/projects\/[^/]+\/documents\/[^/]+\/versions\/?$/,
+      /^\/projects\/[^/]+\/studio\/documents\/[^/]+\/import-docx\/?$/,
     ].some((pattern) => pattern.test(request.path));
     if (request.method === "POST" && uploadPath) {
       uploadLimiter(request, response, next);
@@ -453,6 +466,16 @@ export function createVeraApplication(
   );
   workspaceApi.use(
     createWorkspaceWorkflowRunsV1Router(options.runtime.workflowCrud),
+  );
+  workspaceApi.use(
+    createWorkspaceDocumentStudioV1Router(options.runtime, {
+      requireAuthentication: true,
+    }),
+  );
+  workspaceApi.use(
+    createWorkspaceProjectSourcesV1Router(options.runtime, {
+      requireAuthentication: true,
+    }),
   );
   workspaceApi.use(
     createWorkspaceV1Router(options.runtime, { requireAuthentication: true }),

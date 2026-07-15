@@ -16,6 +16,10 @@ import {
   refreshLocalMcpConnector,
 } from "../lib/aletheia/localMcpConnectorClient";
 import { legalSourceDeploymentStatus } from "../lib/aletheia/legalSourceAdapter";
+import {
+  legalResearchProviderDescriptor,
+  projectLegalResearchProviderConnectionStatus,
+} from "../lib/aletheia/legalResearchProvider";
 import { localModelScheduler } from "../lib/aletheia/localModelRuntime";
 import { requireAuth } from "../middleware/auth";
 
@@ -60,6 +64,7 @@ function exactObject(
   value: unknown,
   allowed: readonly string[],
   label: string,
+  options: { revealUnknownField?: boolean } = {},
 ) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new LocalControlError(
@@ -72,7 +77,9 @@ function exactObject(
   const unknown = Object.keys(object).find((key) => !allowed.includes(key));
   if (unknown) {
     throw new LocalControlError(
-      `${label} contains unknown field: ${unknown}`,
+      options.revealUnknownField === false
+        ? `${label} contains an unknown field.`
+        : `${label} contains unknown field: ${unknown}`,
       "INVALID_INPUT",
       400,
     );
@@ -91,18 +98,58 @@ function legalSourceStatusProjection(
   userId: string,
 ) {
   const encryptionEnabled = repo.canEncryptProviderSecrets();
-  return repo
-    .listProviderStatuses(userId)
-    .flatMap((item) => {
-      const provider = normalizeLegalSourceProvider(item.provider);
-      if (!provider) return [];
-      return [{
-        ...item,
-        hasSecret: item.configured,
+  return repo.listProviderStatuses(userId).flatMap((item) => {
+    const provider = normalizeLegalSourceProvider(item.provider);
+    if (!provider) return [];
+    const deployment = legalSourceDeploymentStatus(provider);
+    const descriptor = legalResearchProviderDescriptor(provider);
+    const deploymentReady =
+      deployment.endpointConfigured &&
+      deployment.allowlisted &&
+      deployment.credentialReferenceConfigured;
+    let secretStorageAvailable = encryptionEnabled;
+    let credentialAvailable = false;
+    if (item.configured && encryptionEnabled) {
+      try {
+        // Local decryptability is a credential-availability check, not a
+        // vendor connection test. The plaintext is neither returned nor
+        // retained in the status projection.
+        credentialAvailable =
+          repo.providerSecretForUse(userId, provider).length > 0;
+      } catch (error) {
+        if (error instanceof LocalControlError && error.code === "NOT_FOUND") {
+          credentialAvailable = false;
+        } else {
+          secretStorageAvailable = false;
+        }
+      }
+    }
+    return [
+      {
+        provider,
+        deploymentReady,
+        endpointConfigured: deployment.endpointConfigured,
+        allowlisted: deployment.allowlisted,
+        credentialReferenceConfigured: deployment.credentialReferenceConfigured,
+        hasSecret: item.configured === true,
         encryptionEnabled,
-        ...legalSourceDeploymentStatus(provider),
-      }];
-    });
+        contractVersion: descriptor.contractVersion,
+        integration: descriptor.integration,
+        capabilities: descriptor.capabilities,
+        dataUsePolicy: descriptor.dataUsePolicy,
+        connectionStatus: projectLegalResearchProviderConnectionStatus({
+          deployment,
+          credentialRequired: true,
+          credentialAvailable,
+          secretStorageAvailable,
+          // Historical rows came from a retired, unsupported test action.
+          // This request performs no network probe, so they cannot establish
+          // current connectivity or a current connection failure.
+          connectionTestStatus: null,
+        }),
+      },
+    ];
+  });
 }
 
 function handleError(
@@ -118,7 +165,12 @@ function handleError(
   }
   return void res.status(fallbackStatus).json({
     code: "LOCAL_CONTROL_ERROR",
-    detail: error instanceof Error ? error.message : String(error),
+    // Unclassified repository, cipher, and filesystem failures are internal
+    // details. Never reflect their messages across the renderer boundary:
+    // they may contain local paths or provider material supplied by a failing
+    // dependency. LocalControlError remains the explicit, safe business-error
+    // channel above.
+    detail: "Local control operation failed.",
   });
 }
 
@@ -201,7 +253,7 @@ export function createAletheiaLocalControlRouter(
   router.get("/providers", auth, (_req, res) => {
     try {
       res.json({
-        schemaVersion: "aletheia-local-provider-secrets-v1",
+        schemaVersion: "vera-legal-source-provider-status-v1",
         localOnly: true,
         providers: legalSourceStatusProjection(repo, userId(res)),
         detail:
@@ -223,8 +275,9 @@ export function createAletheiaLocalControlRouter(
         );
       }
       if (normalizeLegalSourceProvider(provider)) {
-        const status = legalSourceStatusProjection(repo, userId(res))
-          .find((item) => item.provider === provider);
+        const status = legalSourceStatusProjection(repo, userId(res)).find(
+          (item) => item.provider === provider,
+        );
         return void res.json(status);
       }
       res.status(404).json({
@@ -261,7 +314,9 @@ export function createAletheiaLocalControlRouter(
             428,
           );
         }
-        const payload = exactObject(req.body, ["secret"], "Provider secret");
+        const payload = exactObject(req.body, ["secret"], "Provider secret", {
+          revealUnknownField: false,
+        });
         if (typeof payload.secret !== "string") {
           throw new LocalControlError(
             "Provider secret must be a string.",
@@ -269,9 +324,19 @@ export function createAletheiaLocalControlRouter(
             400,
           );
         }
-        return void res.json(
-          repo.saveProviderSecret(userId(res), provider, payload.secret),
+        const id = userId(res);
+        repo.saveProviderSecret(id, legalProvider, payload.secret);
+        const status = legalSourceStatusProjection(repo, id).find(
+          (item) => item.provider === legalProvider,
         );
+        if (!status) {
+          throw new LocalControlError(
+            "Legal source provider status is unavailable.",
+            "NOT_FOUND",
+            404,
+          );
+        }
+        return void res.json(status);
       }
       throw new LocalControlError(
         "Remote provider credentials are disabled in the local-sensitive edition and will not be stored.",
@@ -293,7 +358,15 @@ export function createAletheiaLocalControlRouter(
           400,
         );
       }
-      const removed = repo.removeProviderSecret(userId(res), provider);
+      const legalProvider = normalizeLegalSourceProvider(provider);
+      if (!legalProvider) {
+        throw new LocalControlError(
+          "Remote provider credentials are disabled in the local-sensitive edition.",
+          "UNSUPPORTED_SETTING",
+          422,
+        );
+      }
+      const removed = repo.removeProviderSecret(userId(res), legalProvider);
       res.status(removed ? 204 : 404).end();
     } catch (error) {
       handleError(res, error);

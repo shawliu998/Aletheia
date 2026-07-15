@@ -215,14 +215,25 @@ function trackedDiskStorage(
   };
 }
 
-function diskUpload(maxFiles: number, removePath: UploadPathRemover) {
+function diskUpload(
+  maxFiles: number,
+  removePath: UploadPathRemover,
+  maxFileSizeBytes = MAX_UPLOAD_SIZE_BYTES,
+  multipartLimits: {
+    fields?: number;
+    fieldSize?: number;
+    parts?: number;
+    headerPairs?: number;
+  } = {},
+) {
   return multer({
     storage: trackedDiskStorage(removePath),
     limits: {
       // Multer treats the exact byte boundary as exceeded; keep one parser
       // byte of headroom and enforce the authoritative limit below.
-      fileSize: MAX_UPLOAD_SIZE_BYTES + 1,
+      fileSize: maxFileSizeBytes + 1,
       files: maxFiles,
+      ...multipartLimits,
     },
   });
 }
@@ -303,6 +314,7 @@ async function handleUploadCompletion(
   res: Parameters<RequestHandler>[1],
   next: Parameters<RequestHandler>[2],
   aggregateLimitBytes: number,
+  maxFileSizeBytes = MAX_UPLOAD_SIZE_BYTES,
   onError?: UploadErrorForwarder,
   removePath: UploadPathRemover = defaultUploadPathRemover,
 ) {
@@ -310,9 +322,7 @@ async function handleUploadCompletion(
 
   if (!err) {
     const aggregateBytes = files.reduce((sum, file) => sum + file.size, 0);
-    const fileTooLarge = files.some(
-      (file) => file.size > MAX_UPLOAD_SIZE_BYTES,
-    );
+    const fileTooLarge = files.some((file) => file.size > maxFileSizeBytes);
     if (!fileTooLarge && aggregateBytes <= aggregateLimitBytes) return next();
 
     const limitError = new multer.MulterError("LIMIT_FILE_SIZE");
@@ -324,7 +334,7 @@ async function handleUploadCompletion(
     }
     if (fileTooLarge) {
       return void res.status(413).json({
-        detail: `File too large. Maximum size is ${MAX_UPLOAD_SIZE_MB} MB.`,
+        detail: `File too large. Maximum size is ${Math.ceil(maxFileSizeBytes / (1024 * 1024))} MB.`,
       });
     }
     return void res.status(413).json({
@@ -343,7 +353,7 @@ async function handleUploadCompletion(
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return void res.status(413).json({
-        detail: `File too large. Maximum size is ${MAX_UPLOAD_SIZE_MB} MB.`,
+        detail: `File too large. Maximum size is ${Math.ceil(maxFileSizeBytes / (1024 * 1024))} MB.`,
       });
     }
     return void res.status(400).json({
@@ -366,10 +376,45 @@ export function singleFileUpload(
   options: {
     onError?: UploadErrorForwarder;
     removePath?: UploadPathRemover;
+    maxFileSizeBytes?: number;
+    maxFields?: number;
+    maxFieldSizeBytes?: number;
+    maxParts?: number;
+    maxHeaderPairs?: number;
   } = {},
 ): RequestHandler {
   const removePath = options.removePath ?? defaultUploadPathRemover;
-  const upload = diskUpload(1, removePath);
+  const maxFileSizeBytes = options.maxFileSizeBytes ?? MAX_UPLOAD_SIZE_BYTES;
+  if (
+    !Number.isSafeInteger(maxFileSizeBytes) ||
+    maxFileSizeBytes < 1 ||
+    maxFileSizeBytes > MAX_UPLOAD_SIZE_BYTES
+  ) {
+    throw new Error("Single-file upload limit is invalid.");
+  }
+  for (const [name, value] of Object.entries({
+    maxFields: options.maxFields,
+    maxFieldSizeBytes: options.maxFieldSizeBytes,
+    maxParts: options.maxParts,
+    maxHeaderPairs: options.maxHeaderPairs,
+  })) {
+    if (
+      value !== undefined &&
+      (!Number.isSafeInteger(value) || value < 1 || value > 100_000)
+    ) {
+      throw new Error(`Single-file upload ${name} limit is invalid.`);
+    }
+  }
+  const upload = diskUpload(1, removePath, maxFileSizeBytes, {
+    ...(options.maxFields === undefined ? {} : { fields: options.maxFields }),
+    ...(options.maxFieldSizeBytes === undefined
+      ? {}
+      : { fieldSize: options.maxFieldSizeBytes }),
+    ...(options.maxParts === undefined ? {} : { parts: options.maxParts }),
+    ...(options.maxHeaderPairs === undefined
+      ? {}
+      : { headerPairs: options.maxHeaderPairs }),
+  });
   return (req, res, next) => {
     void ensureUploadRoot().then(() => {
       upload.single(fieldName)(req, res, (err) => {
@@ -378,7 +423,8 @@ export function singleFileUpload(
           req,
           res,
           next,
-          MAX_UPLOAD_SIZE_BYTES,
+          maxFileSizeBytes,
+          maxFileSizeBytes,
           options.onError,
           removePath,
         ).catch(next);
@@ -407,6 +453,7 @@ export function multiFileUpload(
           res,
           next,
           MAX_BATCH_UPLOAD_SIZE_BYTES,
+          MAX_UPLOAD_SIZE_BYTES,
           undefined,
           removePath,
         ).catch(next);

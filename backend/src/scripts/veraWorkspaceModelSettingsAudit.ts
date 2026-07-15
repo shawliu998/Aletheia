@@ -4102,6 +4102,8 @@ async function auditCompiledMigrationGraphParity() {
     "src/lib/workspace/migrations/v8ModelCredentialOrigin.ts",
     "src/lib/workspace/migrations/v9ModelConnectionReadiness.ts",
     "src/lib/workspace/migrations/v10AssistantDurableEvents.ts",
+    "src/lib/workspace/migrations/v11ProjectSourceFoundation.ts",
+    "src/lib/workspace/migrations/v12DocumentStudio.ts",
   ];
   const relativeParityConfigPath = path.relative(backendRoot, parityConfigPath);
   assert.ok(
@@ -4173,6 +4175,8 @@ const migrations = [
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v8ModelCredentialOrigin.js"))}).MODEL_CREDENTIAL_ORIGIN_V8_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v9ModelConnectionReadiness.js"))}).MODEL_CONNECTION_READINESS_V9_MIGRATION,
   require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v10AssistantDurableEvents.js"))}).ASSISTANT_DURABLE_EVENTS_V10_MIGRATION,
+  require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v11ProjectSourceFoundation.js"))}).PROJECT_SOURCE_FOUNDATION_V11_MIGRATION,
+  require(${JSON.stringify(path.join(outDir, "lib/workspace/migrations/v12DocumentStudio.js"))}).DOCUMENT_STUDIO_V12_MIGRATION,
 ];
 const database = new WorkspaceDatabase(
   ${JSON.stringify(compiledRuntimeDatabasePath)},
@@ -4229,7 +4233,7 @@ try {
       checksumMaterial: migration.checksumMaterial,
     }));
     assert.deepEqual(compiledGraph.migrations, currentChecksums);
-    assert.equal(compiledGraph.runtime.currentVersion, 10);
+    assert.equal(compiledGraph.runtime.currentVersion, 12);
     assert.deepEqual(
       compiledGraph.runtime.appliedVersions,
       WORKSPACE_MIGRATIONS.map((migration) => migration.version),

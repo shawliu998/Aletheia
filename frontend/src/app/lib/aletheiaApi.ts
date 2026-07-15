@@ -82,65 +82,399 @@ export function getAletheiaSecurityPolicy() {
 
 export type AletheiaLegalSourceProviderId = "pkulaw" | "wolters";
 
+export type AletheiaLegalSourceProviderCapabilities = {
+  search: true;
+  fetchFullText: true;
+  pagination: false;
+  getByCitation: false;
+  jurisdictionFilter: false;
+  asOfDateFilter: false;
+  structuredFilters: false;
+  dynamicToolInvocation: false;
+  requiresExplicitEgressApproval: true;
+  documentKinds: ["statute", "judicial_interpretation", "case", "other"];
+};
+
+export type AletheiaLegalSourceDataUsePolicy = {
+  basis: "not_declared" | "deployment_contract";
+  retention:
+    | "not_declared"
+    | "no_retention"
+    | "metadata_only"
+    | "full_text_ttl"
+    | "full_text_permitted";
+  export:
+    | "not_declared"
+    | "prohibited"
+    | "exact_quotes_only"
+    | "reviewed_work_product"
+    | "permitted";
+  modelUse: "not_declared" | "prohibited" | "local_only" | "permitted";
+};
+
+export type AletheiaLegalSourceUnavailableReason =
+  | "endpoint_missing"
+  | "endpoint_not_allowlisted"
+  | "credential_reference_missing"
+  | "credential_unavailable"
+  | "secret_storage_unavailable";
+
+export type AletheiaLegalSourceConnectionStatus =
+  | {
+      state: "unavailable";
+      reason: AletheiaLegalSourceUnavailableReason;
+      connectionTested: false;
+    }
+  | {
+      state: "configured_unverified";
+      reason: null;
+      connectionTested: false;
+    };
+
 export type AletheiaLegalSourceProvider = {
   provider: AletheiaLegalSourceProviderId;
+  deploymentReady: boolean;
   hasSecret: boolean;
   encryptionEnabled: boolean;
   endpointConfigured: boolean;
   allowlisted: boolean;
   credentialReferenceConfigured: boolean;
+  contractVersion: "vera-legal-research-provider-v1";
+  integration: "authorized_json_gateway";
+  capabilities: AletheiaLegalSourceProviderCapabilities;
+  dataUsePolicy: AletheiaLegalSourceDataUsePolicy;
+  connectionStatus: AletheiaLegalSourceConnectionStatus;
 };
-
-type AletheiaLegalSourceProviderWire = Partial<
-  AletheiaLegalSourceProvider & {
-    configured: boolean;
-    credentialReference: string | null;
-  }
-> & { provider?: unknown };
 
 export type AletheiaLegalSourceProvidersResponse = {
+  schemaVersion: "vera-legal-source-provider-status-v1";
+  localOnly: true;
   providers: AletheiaLegalSourceProvider[];
+  detail: string;
 };
 
-function normalizeLegalSourceProvider(
-  value: AletheiaLegalSourceProviderWire,
-): AletheiaLegalSourceProvider | null {
-  if (value.provider !== "pkulaw" && value.provider !== "wolters") return null;
+function invalidLegalSourceWire(): never {
+  throw new AletheiaApiError({
+    status: 502,
+    code: "INVALID_RESPONSE",
+    message: "The legal-source status response is invalid.",
+  });
+}
+
+function exactLegalSourceObject(
+  value: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidLegalSourceWire();
+  }
+  const raw = value as Record<string, unknown>;
+  if (
+    Object.keys(raw).length !== allowed.length ||
+    Object.keys(raw).some((key) => !allowed.includes(key))
+  ) {
+    return invalidLegalSourceWire();
+  }
+  return raw;
+}
+
+function legalSourceBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") return invalidLegalSourceWire();
+  return value;
+}
+
+function parseLegalSourceCapabilities(
+  value: unknown,
+): AletheiaLegalSourceProviderCapabilities {
+  const raw = exactLegalSourceObject(value, [
+    "search",
+    "fetchFullText",
+    "pagination",
+    "getByCitation",
+    "jurisdictionFilter",
+    "asOfDateFilter",
+    "structuredFilters",
+    "dynamicToolInvocation",
+    "requiresExplicitEgressApproval",
+    "documentKinds",
+  ]);
+  if (
+    raw.search !== true ||
+    raw.fetchFullText !== true ||
+    raw.pagination !== false ||
+    raw.getByCitation !== false ||
+    raw.jurisdictionFilter !== false ||
+    raw.asOfDateFilter !== false ||
+    raw.structuredFilters !== false ||
+    raw.dynamicToolInvocation !== false ||
+    raw.requiresExplicitEgressApproval !== true ||
+    !Array.isArray(raw.documentKinds) ||
+    raw.documentKinds.length !== 4 ||
+    raw.documentKinds[0] !== "statute" ||
+    raw.documentKinds[1] !== "judicial_interpretation" ||
+    raw.documentKinds[2] !== "case" ||
+    raw.documentKinds[3] !== "other"
+  ) {
+    return invalidLegalSourceWire();
+  }
   return {
-    provider: value.provider,
-    hasSecret: value.hasSecret === true || value.configured === true,
-    encryptionEnabled: value.encryptionEnabled === true,
-    endpointConfigured: value.endpointConfigured === true,
-    allowlisted: value.allowlisted === true,
-    credentialReferenceConfigured:
-      value.credentialReferenceConfigured === true ||
-      (typeof value.credentialReference === "string" &&
-        value.credentialReference.length > 0),
+    search: true,
+    fetchFullText: true,
+    pagination: false,
+    getByCitation: false,
+    jurisdictionFilter: false,
+    asOfDateFilter: false,
+    structuredFilters: false,
+    dynamicToolInvocation: false,
+    requiresExplicitEgressApproval: true,
+    documentKinds: ["statute", "judicial_interpretation", "case", "other"],
+  };
+}
+
+const LEGAL_SOURCE_RETENTION_POLICIES = [
+  "not_declared",
+  "no_retention",
+  "metadata_only",
+  "full_text_ttl",
+  "full_text_permitted",
+] as const;
+const LEGAL_SOURCE_EXPORT_POLICIES = [
+  "not_declared",
+  "prohibited",
+  "exact_quotes_only",
+  "reviewed_work_product",
+  "permitted",
+] as const;
+const LEGAL_SOURCE_MODEL_USE_POLICIES = [
+  "not_declared",
+  "prohibited",
+  "local_only",
+  "permitted",
+] as const;
+
+function parseLegalSourceDataUsePolicy(
+  value: unknown,
+): AletheiaLegalSourceDataUsePolicy {
+  const raw = exactLegalSourceObject(value, [
+    "basis",
+    "retention",
+    "export",
+    "modelUse",
+  ]);
+  if (
+    (raw.basis !== "not_declared" && raw.basis !== "deployment_contract") ||
+    !LEGAL_SOURCE_RETENTION_POLICIES.includes(
+      raw.retention as (typeof LEGAL_SOURCE_RETENTION_POLICIES)[number],
+    ) ||
+    !LEGAL_SOURCE_EXPORT_POLICIES.includes(
+      raw.export as (typeof LEGAL_SOURCE_EXPORT_POLICIES)[number],
+    ) ||
+    !LEGAL_SOURCE_MODEL_USE_POLICIES.includes(
+      raw.modelUse as (typeof LEGAL_SOURCE_MODEL_USE_POLICIES)[number],
+    )
+  ) {
+    return invalidLegalSourceWire();
+  }
+  if (
+    raw.basis === "not_declared" &&
+    (raw.retention !== "not_declared" ||
+      raw.export !== "not_declared" ||
+      raw.modelUse !== "not_declared")
+  ) {
+    return invalidLegalSourceWire();
+  }
+  return {
+    basis: raw.basis,
+    retention: raw.retention as AletheiaLegalSourceDataUsePolicy["retention"],
+    export: raw.export as AletheiaLegalSourceDataUsePolicy["export"],
+    modelUse: raw.modelUse as AletheiaLegalSourceDataUsePolicy["modelUse"],
+  };
+}
+
+function configuredUnavailableReason(input: {
+  endpointConfigured: boolean;
+  allowlisted: boolean;
+  credentialReferenceConfigured: boolean;
+  encryptionEnabled: boolean;
+  hasSecret: boolean;
+}): AletheiaLegalSourceUnavailableReason | null {
+  if (!input.endpointConfigured) return "endpoint_missing";
+  if (!input.allowlisted) return "endpoint_not_allowlisted";
+  if (!input.credentialReferenceConfigured) {
+    return "credential_reference_missing";
+  }
+  if (!input.encryptionEnabled) return "secret_storage_unavailable";
+  if (!input.hasSecret) return "credential_unavailable";
+  return null;
+}
+
+function parseLegalSourceConnectionStatus(
+  value: unknown,
+  provider: Pick<
+    AletheiaLegalSourceProvider,
+    | "endpointConfigured"
+    | "allowlisted"
+    | "credentialReferenceConfigured"
+    | "encryptionEnabled"
+    | "hasSecret"
+  >,
+): AletheiaLegalSourceConnectionStatus {
+  const raw = exactLegalSourceObject(value, [
+    "state",
+    "reason",
+    "connectionTested",
+  ]);
+  if (raw.connectionTested !== false) return invalidLegalSourceWire();
+  const expectedReason = configuredUnavailableReason(provider);
+  if (expectedReason) {
+    if (raw.state !== "unavailable" || raw.reason !== expectedReason) {
+      return invalidLegalSourceWire();
+    }
+    return {
+      state: "unavailable",
+      reason: expectedReason,
+      connectionTested: false,
+    };
+  }
+  if (raw.state === "configured_unverified" && raw.reason === null) {
+    return {
+      state: "configured_unverified",
+      reason: null,
+      connectionTested: false,
+    };
+  }
+  // All deployment/storage flags can be healthy while one existing ciphertext
+  // is unreadable after corruption or key rotation. This remains fail-closed.
+  if (
+    raw.state === "unavailable" &&
+    raw.reason === "secret_storage_unavailable"
+  ) {
+    return {
+      state: "unavailable",
+      reason: "secret_storage_unavailable",
+      connectionTested: false,
+    };
+  }
+  return invalidLegalSourceWire();
+}
+
+export function parseAletheiaLegalSourceProvider(
+  value: unknown,
+): AletheiaLegalSourceProvider {
+  const raw = exactLegalSourceObject(value, [
+    "provider",
+    "deploymentReady",
+    "endpointConfigured",
+    "allowlisted",
+    "credentialReferenceConfigured",
+    "hasSecret",
+    "encryptionEnabled",
+    "contractVersion",
+    "integration",
+    "capabilities",
+    "dataUsePolicy",
+    "connectionStatus",
+  ]);
+  if (raw.provider !== "pkulaw" && raw.provider !== "wolters") {
+    return invalidLegalSourceWire();
+  }
+  if (
+    raw.contractVersion !== "vera-legal-research-provider-v1" ||
+    raw.integration !== "authorized_json_gateway"
+  ) {
+    return invalidLegalSourceWire();
+  }
+  const endpointConfigured = legalSourceBoolean(raw.endpointConfigured);
+  const allowlisted = legalSourceBoolean(raw.allowlisted);
+  const credentialReferenceConfigured = legalSourceBoolean(
+    raw.credentialReferenceConfigured,
+  );
+  const deploymentReady = legalSourceBoolean(raw.deploymentReady);
+  const hasSecret = legalSourceBoolean(raw.hasSecret);
+  const encryptionEnabled = legalSourceBoolean(raw.encryptionEnabled);
+  if (
+    (allowlisted && !endpointConfigured) ||
+    deploymentReady !==
+      (endpointConfigured && allowlisted && credentialReferenceConfigured)
+  ) {
+    return invalidLegalSourceWire();
+  }
+  const statusBasis = {
+    endpointConfigured,
+    allowlisted,
+    credentialReferenceConfigured,
+    hasSecret,
+    encryptionEnabled,
+  };
+  return {
+    provider: raw.provider,
+    deploymentReady,
+    ...statusBasis,
+    contractVersion: "vera-legal-research-provider-v1",
+    integration: "authorized_json_gateway",
+    capabilities: parseLegalSourceCapabilities(raw.capabilities),
+    dataUsePolicy: parseLegalSourceDataUsePolicy(raw.dataUsePolicy),
+    connectionStatus: parseLegalSourceConnectionStatus(
+      raw.connectionStatus,
+      statusBasis,
+    ),
+  };
+}
+
+export function parseAletheiaLegalSourceProvidersResponse(
+  value: unknown,
+): AletheiaLegalSourceProvidersResponse {
+  const raw = exactLegalSourceObject(value, [
+    "schemaVersion",
+    "localOnly",
+    "providers",
+    "detail",
+  ]);
+  if (
+    raw.schemaVersion !== "vera-legal-source-provider-status-v1" ||
+    raw.localOnly !== true ||
+    typeof raw.detail !== "string" ||
+    !raw.detail ||
+    raw.detail.length > 500 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(raw.detail) ||
+    !Array.isArray(raw.providers) ||
+    raw.providers.length !== 2
+  ) {
+    return invalidLegalSourceWire();
+  }
+  const providers = raw.providers.map(parseAletheiaLegalSourceProvider);
+  if (
+    new Set(providers.map((provider) => provider.provider)).size !== 2 ||
+    !providers.some((provider) => provider.provider === "pkulaw") ||
+    !providers.some((provider) => provider.provider === "wolters")
+  ) {
+    return invalidLegalSourceWire();
+  }
+  return {
+    schemaVersion: "vera-legal-source-provider-status-v1",
+    localOnly: true,
+    providers,
+    detail: raw.detail,
   };
 }
 
 export async function listAletheiaLegalSourceProviders(): Promise<AletheiaLegalSourceProvidersResponse> {
-  const response = await apiRequest<{ providers?: AletheiaLegalSourceProviderWire[] }>(
-    "/aletheia/providers",
+  return parseAletheiaLegalSourceProvidersResponse(
+    await apiRequest<unknown>("/aletheia/providers"),
   );
-  return {
-    providers: Array.isArray(response.providers)
-      ? response.providers
-          .map(normalizeLegalSourceProvider)
-          .filter((provider): provider is AletheiaLegalSourceProvider => Boolean(provider))
-      : [],
-  };
 }
 
-export function saveAletheiaLegalSourceSecret(
+export async function saveAletheiaLegalSourceSecret(
   provider: AletheiaLegalSourceProviderId,
   secret: string,
-): Promise<AletheiaLegalSourceProviderWire> {
-  return apiRequest(`/aletheia/providers/${provider}/secret`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret }),
-  });
+): Promise<void> {
+  parseAletheiaLegalSourceProvider(
+    await apiRequest<unknown>(`/aletheia/providers/${provider}/secret`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret }),
+    }),
+  );
 }
 
 export function removeAletheiaLegalSourceSecret(

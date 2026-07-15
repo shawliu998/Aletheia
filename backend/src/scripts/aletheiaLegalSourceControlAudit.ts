@@ -18,18 +18,25 @@ class AuditCipher implements SecretCipher {
     { plaintext: string; context: string }
   >();
   private failContexts = new Set<string>();
+  private encryptionAvailable = true;
   private sequence = 0;
 
   encrypt(plaintext: string, context: string) {
+    if (!this.encryptionAvailable) {
+      throw new Error(`cipher unavailable ${plaintext}`);
+    }
     const envelope = `audit-ciphertext-${++this.sequence}`;
     this.records.set(envelope, { plaintext, context });
     return envelope;
   }
 
   decrypt(envelope: string, context: string) {
-    if (this.failContexts.has(context))
-      throw new Error("audit cipher unavailable");
     const record = this.records.get(envelope);
+    if (this.failContexts.has(context)) {
+      throw new Error(
+        `audit cipher unavailable for ${record?.plaintext ?? "unknown"}`,
+      );
+    }
     if (!record || record.context !== context)
       throw new Error("audit cipher mismatch");
     return record.plaintext;
@@ -38,18 +45,27 @@ class AuditCipher implements SecretCipher {
   failFor(userId: string, provider: string) {
     this.failContexts.add(`provider-secret:${userId}:${provider}`);
   }
+
+  setEncryptionAvailable(available: boolean) {
+    this.encryptionAvailable = available;
+  }
 }
+
+const AUTH_TOKEN = "legal-source-route-audit-token";
 
 async function request(
   base: string,
   method: string,
   url: string,
   body?: unknown,
+  authenticated = true,
 ) {
   const response = await fetch(`${base}${url}`, {
     method,
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(authenticated ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}),
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
@@ -57,6 +73,89 @@ async function request(
     status: response.status,
     body: text ? (JSON.parse(text) as unknown) : null,
   };
+}
+
+const PROVIDER_STATUS_KEYS = [
+  "allowlisted",
+  "capabilities",
+  "connectionStatus",
+  "contractVersion",
+  "credentialReferenceConfigured",
+  "dataUsePolicy",
+  "deploymentReady",
+  "encryptionEnabled",
+  "endpointConfigured",
+  "hasSecret",
+  "integration",
+  "provider",
+] as const;
+
+function object(value: unknown): Record<string, unknown> {
+  assert(value && typeof value === "object" && !Array.isArray(value));
+  return value as Record<string, unknown>;
+}
+
+function assertStrictStatus(value: unknown) {
+  const status = object(value);
+  assert.deepEqual(
+    Object.keys(status).sort(),
+    [...PROVIDER_STATUS_KEYS].sort(),
+  );
+  assert(status.provider === "pkulaw" || status.provider === "wolters");
+  assert.equal(typeof status.deploymentReady, "boolean");
+  assert.equal(typeof status.endpointConfigured, "boolean");
+  assert.equal(typeof status.allowlisted, "boolean");
+  assert.equal(typeof status.credentialReferenceConfigured, "boolean");
+  assert.equal(typeof status.hasSecret, "boolean");
+  assert.equal(typeof status.encryptionEnabled, "boolean");
+  assert.equal(status.contractVersion, "vera-legal-research-provider-v1");
+  assert.equal(status.integration, "authorized_json_gateway");
+  assert.deepEqual(status.capabilities, {
+    search: true,
+    fetchFullText: true,
+    pagination: false,
+    getByCitation: false,
+    jurisdictionFilter: false,
+    asOfDateFilter: false,
+    structuredFilters: false,
+    dynamicToolInvocation: false,
+    requiresExplicitEgressApproval: true,
+    documentKinds: ["statute", "judicial_interpretation", "case", "other"],
+  });
+  assert.deepEqual(status.dataUsePolicy, {
+    basis: "not_declared",
+    retention: "not_declared",
+    export: "not_declared",
+    modelUse: "not_declared",
+  });
+  const connection = object(status.connectionStatus);
+  assert.deepEqual(Object.keys(connection).sort(), [
+    "connectionTested",
+    "reason",
+    "state",
+  ]);
+  assert(
+    connection.state === "unavailable" ||
+      connection.state === "configured_unverified",
+  );
+  assert.equal(connection.connectionTested, false);
+  return status;
+}
+
+function assertProviderListResponse(value: unknown) {
+  const response = object(value);
+  assert.deepEqual(Object.keys(response).sort(), [
+    "detail",
+    "localOnly",
+    "providers",
+    "schemaVersion",
+  ]);
+  assert.equal(response.schemaVersion, "vera-legal-source-provider-status-v1");
+  assert.equal(response.localOnly, true);
+  assert.equal(typeof response.detail, "string");
+  assert(Array.isArray(response.providers));
+  assert.equal(response.providers.length, 2);
+  return response.providers.map(assertStrictStatus);
 }
 
 function assertLocalControlError(
@@ -81,7 +180,8 @@ async function main() {
   process.env.VERA_PKULAW_API_ENDPOINT = "https://api.pkulaw.example/research";
   process.env.VERA_PKULAW_API_ALLOWED_HOSTS = "api.pkulaw.example";
   process.env.VERA_PKULAW_API_CREDENTIAL_REF = "pkulaw-local-credential";
-  process.env.VERA_WOLTERS_API_ENDPOINT = "https://api.wolters.example/research";
+  process.env.VERA_WOLTERS_API_ENDPOINT =
+    "https://api.wolters.example/research";
   process.env.VERA_WOLTERS_API_ALLOWED_HOSTS = "api.wolters.example";
   process.env.VERA_WOLTERS_API_CREDENTIAL_REF = "wolters-local-credential";
 
@@ -91,7 +191,26 @@ async function main() {
     databasePath: path.join(directory, "aletheia.db"),
     cipher,
   });
-  const auth: RequestHandler = (_req, res, next) => {
+  const originalListProviderStatuses =
+    repository.listProviderStatuses.bind(repository);
+  Object.defineProperty(repository, "listProviderStatuses", {
+    configurable: true,
+    value: (requestedUserId: string) =>
+      originalListProviderStatuses(requestedUserId).map((item) => ({
+        ...item,
+        endpoint: "https://must-not-cross-wire.invalid/private",
+        credentialReference: "must-not-cross-wire-reference",
+        encryptedSecret: "must-not-cross-wire-ciphertext",
+        internalOnly: "must-not-cross-wire-internal-field",
+      })),
+  });
+  const auth: RequestHandler = (req, res, next) => {
+    if (req.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+      return void res.status(401).json({
+        code: "UNAUTHORIZED",
+        detail: "Authentication is required.",
+      });
+    }
     res.locals.userId = userId;
     next();
   };
@@ -117,8 +236,32 @@ async function main() {
   } as const;
 
   try {
+    const unauthenticated = await request(
+      base,
+      "GET",
+      "/aletheia/providers",
+      undefined,
+      false,
+    );
+    assert.equal(unauthenticated.status, 401);
+
     const withheldEndpoint = process.env.VERA_WOLTERS_API_ENDPOINT;
     delete process.env.VERA_WOLTERS_API_ENDPOINT;
+    const missingDeploymentList = await request(
+      base,
+      "GET",
+      "/aletheia/providers",
+    );
+    const missingEndpointStatus = assertProviderListResponse(
+      missingDeploymentList.body,
+    ).find((status) => status.provider === "wolters");
+    assert(missingEndpointStatus);
+    assert.equal(missingEndpointStatus.deploymentReady, false);
+    assert.deepEqual(missingEndpointStatus.connectionStatus, {
+      state: "unavailable",
+      reason: "endpoint_missing",
+      connectionTested: false,
+    });
     const missingDeployment = await request(
       base,
       "PUT",
@@ -130,7 +273,78 @@ async function main() {
       (missingDeployment.body as { code: string }).code,
       "PRECONDITION_REQUIRED",
     );
-    process.env.VERA_WOLTERS_API_ENDPOINT = withheldEndpoint;
+    assert.equal(
+      JSON.stringify(missingDeployment.body).includes(secrets.wolters),
+      false,
+    );
+    process.env.VERA_WOLTERS_API_ENDPOINT = withheldEndpoint!;
+
+    process.env.VERA_WOLTERS_API_ENDPOINT =
+      "https://not-allowlisted.example/research";
+    const notAllowlisted = assertProviderListResponse(
+      (await request(base, "GET", "/aletheia/providers")).body,
+    ).find((status) => status.provider === "wolters");
+    assert(notAllowlisted);
+    assert.deepEqual(notAllowlisted.connectionStatus, {
+      state: "unavailable",
+      reason: "endpoint_not_allowlisted",
+      connectionTested: false,
+    });
+    process.env.VERA_WOLTERS_API_ENDPOINT = withheldEndpoint!;
+
+    const withheldCredentialReference =
+      process.env.VERA_WOLTERS_API_CREDENTIAL_REF;
+    delete process.env.VERA_WOLTERS_API_CREDENTIAL_REF;
+    const missingReference = assertProviderListResponse(
+      (await request(base, "GET", "/aletheia/providers")).body,
+    ).find((status) => status.provider === "wolters");
+    assert(missingReference);
+    assert.deepEqual(missingReference.connectionStatus, {
+      state: "unavailable",
+      reason: "credential_reference_missing",
+      connectionTested: false,
+    });
+    process.env.VERA_WOLTERS_API_CREDENTIAL_REF = withheldCredentialReference!;
+
+    const beforeSave = assertProviderListResponse(
+      (await request(base, "GET", "/aletheia/providers")).body,
+    );
+    for (const status of beforeSave) {
+      assert.equal(status.deploymentReady, true);
+      assert.equal(status.hasSecret, false);
+      assert.deepEqual(status.connectionStatus, {
+        state: "unavailable",
+        reason: "credential_unavailable",
+        connectionTested: false,
+      });
+    }
+
+    const unauthorizedSecret = "unauthorized-secret-must-not-echo";
+    const unauthorizedSave = await request(
+      base,
+      "PUT",
+      "/aletheia/providers/pkulaw/secret",
+      { secret: unauthorizedSecret },
+      false,
+    );
+    assert.equal(unauthorizedSave.status, 401);
+    assert.equal(
+      JSON.stringify(unauthorizedSave.body).includes(unauthorizedSecret),
+      false,
+    );
+
+    const unknownFieldSecret = "unknown-field-secret-must-not-echo";
+    const unknownSecretField = await request(
+      base,
+      "PUT",
+      "/aletheia/providers/pkulaw/secret",
+      { secret: secrets.pkulaw, [unknownFieldSecret]: true },
+    );
+    assert.equal(unknownSecretField.status, 400);
+    assert.equal(
+      JSON.stringify(unknownSecretField.body).includes(unknownFieldSecret),
+      false,
+    );
 
     for (const [provider, secret] of Object.entries(secrets)) {
       const saved = await request(
@@ -140,14 +354,27 @@ async function main() {
         { secret },
       );
       assert.equal(saved.status, 200);
+      const savedStatus = assertStrictStatus(saved.body);
+      assert.equal(savedStatus.provider, provider);
+      assert.equal(savedStatus.hasSecret, true);
+      assert.equal(savedStatus.deploymentReady, true);
+      assert.deepEqual(savedStatus.connectionStatus, {
+        state: "configured_unverified",
+        reason: null,
+        connectionTested: false,
+      });
       const serialized = JSON.stringify(saved.body);
       assert.equal(serialized.includes(secret), false);
       assert.equal(serialized.includes("audit-ciphertext"), false);
-      repository.recordProviderTest(userId, provider as keyof typeof secrets, {
-        status: "failed",
-        error: secret,
-      });
     }
+
+    repository.recordProviderTest(userId, "pkulaw", {
+      status: "passed",
+    });
+    repository.recordProviderTest(userId, "wolters", {
+      status: "unsupported",
+      error: secrets.wolters,
+    });
 
     const listed = await request(base, "GET", "/aletheia/providers");
     assert.equal(listed.status, 200);
@@ -155,22 +382,26 @@ async function main() {
     for (const secret of Object.values(secrets)) {
       assert.equal(listJson.includes(secret), false);
     }
-    const providers = (
-      listed.body as { providers: Array<Record<string, unknown>> }
-    ).providers;
+    assert.equal(listJson.includes("api.pkulaw.example"), false);
+    assert.equal(listJson.includes("api.wolters.example"), false);
+    assert.equal(listJson.includes("pkulaw-local-credential"), false);
+    assert.equal(listJson.includes("wolters-local-credential"), false);
+    assert.equal(listJson.includes("must-not-cross-wire"), false);
+    const providers = assertProviderListResponse(listed.body);
     for (const provider of Object.keys(secrets)) {
       const status = providers.find((item) => item.provider === provider);
       assert(status);
-      assert.equal(status.configured, true);
       assert.equal(status.hasSecret, true);
       assert.equal(status.encryptionEnabled, true);
+      assert.equal(status.deploymentReady, true);
       assert.equal(status.endpointConfigured, true);
       assert.equal(status.allowlisted, true);
       assert.equal(status.credentialReferenceConfigured, true);
-      assert.equal(status.masked, "••••");
-      assert.equal(status.readable, false);
-      assert.equal(status.source, "encrypted_local");
-      assert.equal(status.lastError, "Provider credential test failed.");
+      assert.deepEqual(status.connectionStatus, {
+        state: "configured_unverified",
+        reason: null,
+        connectionTested: false,
+      });
 
       const individual = await request(
         base,
@@ -178,7 +409,7 @@ async function main() {
         `/aletheia/providers/${provider}/status`,
       );
       assert.equal(individual.status, 200);
-      const individualStatus = individual.body as Record<string, unknown>;
+      const individualStatus = assertStrictStatus(individual.body);
       assert.equal(individualStatus.hasSecret, true);
       assert.equal(individualStatus.encryptionEnabled, true);
       assert.equal(individualStatus.endpointConfigured, true);
@@ -190,7 +421,61 @@ async function main() {
         ),
         false,
       );
+      assert.equal(
+        JSON.stringify(individual.body).includes("must-not-cross-wire"),
+        false,
+      );
     }
+
+    repository.recordProviderTest(userId, "pkulaw", {
+      status: "failed",
+      error: secrets.pkulaw,
+    });
+    const historicalFailure = assertStrictStatus(
+      (await request(base, "GET", "/aletheia/providers/pkulaw/status")).body,
+    );
+    assert.deepEqual(historicalFailure.connectionStatus, {
+      state: "configured_unverified",
+      reason: null,
+      connectionTested: false,
+    });
+
+    const disabledTest = await request(
+      base,
+      "POST",
+      "/aletheia/providers/pkulaw/test",
+    );
+    assert.equal(disabledTest.status, 422);
+    assert.equal(
+      (disabledTest.body as { code: string }).code,
+      "UNSUPPORTED_SETTING",
+    );
+
+    cipher.setEncryptionAvailable(false);
+    const storageUnavailable = assertProviderListResponse(
+      (await request(base, "GET", "/aletheia/providers")).body,
+    );
+    for (const status of storageUnavailable) {
+      assert.equal(status.encryptionEnabled, false);
+      assert.deepEqual(status.connectionStatus, {
+        state: "unavailable",
+        reason: "secret_storage_unavailable",
+        connectionTested: false,
+      });
+    }
+    const storageFailureSecret = "storage-failure-secret-must-not-echo";
+    const storageFailure = await request(
+      base,
+      "PUT",
+      "/aletheia/providers/pkulaw/secret",
+      { secret: storageFailureSecret },
+    );
+    assert.equal(storageFailure.status, 503);
+    assert.equal(
+      JSON.stringify(storageFailure.body).includes(storageFailureSecret),
+      false,
+    );
+    cipher.setEncryptionAvailable(true);
 
     for (const [provider, secret] of Object.entries(secrets)) {
       assert.equal(
@@ -208,6 +493,20 @@ async function main() {
       () => readLocalLegalSourceCredential(repository, userId, "pkulaw"),
       "SECRET_STORAGE_UNAVAILABLE",
     );
+    const corruptedCredential = assertStrictStatus(
+      (await request(base, "GET", "/aletheia/providers/pkulaw/status")).body,
+    );
+    assert.equal(corruptedCredential.hasSecret, true);
+    assert.equal(corruptedCredential.encryptionEnabled, true);
+    assert.deepEqual(corruptedCredential.connectionStatus, {
+      state: "unavailable",
+      reason: "secret_storage_unavailable",
+      connectionTested: false,
+    });
+    assert.equal(
+      JSON.stringify(corruptedCredential).includes(secrets.pkulaw),
+      false,
+    );
 
     const remoteProvider = await request(
       base,
@@ -220,6 +519,18 @@ async function main() {
       (remoteProvider.body as { code: string }).code,
       "UNSUPPORTED_SETTING",
     );
+    assert.equal(
+      JSON.stringify(remoteProvider.body).includes(
+        "still-disabled-provider-secret",
+      ),
+      false,
+    );
+    const remoteRemove = await request(
+      base,
+      "DELETE",
+      "/aletheia/providers/gemini/secret",
+    );
+    assert.equal(remoteRemove.status, 422);
 
     for (const provider of Object.keys(secrets)) {
       const removed = await request(
@@ -239,12 +550,55 @@ async function main() {
     for (const secret of Object.values(secrets)) {
       assert.equal(afterRemovalJson.includes(secret), false);
     }
+    for (const provider of assertProviderListResponse(afterRemoval.body)) {
+      assert.deepEqual(provider.connectionStatus, {
+        state: "unavailable",
+        reason: "credential_unavailable",
+        connectionTested: false,
+      });
+    }
+
+    const internalFailureMaterial =
+      "/private/vera/provider.db internal-secret-must-not-cross-wire";
+    Object.defineProperty(repository, "listProviderStatuses", {
+      configurable: true,
+      value: () => {
+        throw new Error(internalFailureMaterial);
+      },
+    });
+    const internalFailure = await request(
+      base,
+      "GET",
+      "/aletheia/providers",
+    );
+    assert.equal(internalFailure.status, 500);
+    assert.deepEqual(internalFailure.body, {
+      code: "LOCAL_CONTROL_ERROR",
+      detail: "Local control operation failed.",
+    });
+    assert.equal(
+      JSON.stringify(internalFailure.body).includes(internalFailureMaterial),
+      false,
+    );
 
     console.log(
       JSON.stringify({
         ok: true,
         suite: "aletheia-legal-source-control-audit-v1",
-        checks: ["save", "list-mask", "decrypt", "failure-codes", "remove"],
+        checks: [
+          "save",
+          "strict-secret-free-wire",
+          "provider-contract-projection",
+          "truthful-configured-unverified-status",
+          "historical-test-state-ignored",
+          "unavailable-reason-precedence",
+          "authentication-and-deployment-gates",
+          "decrypt",
+          "corrupt-ciphertext-fails-closed",
+          "secret-safe-failure-codes",
+          "unclassified-internal-errors-are-redacted",
+          "remove",
+        ],
       }),
     );
   } finally {

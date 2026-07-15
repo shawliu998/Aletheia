@@ -5,11 +5,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+    AlertCircle,
     Download,
     FileUp,
     Loader2,
     Pencil,
     RefreshCw,
+    ScanText,
     Trash2,
     X,
 } from "lucide-react";
@@ -66,7 +68,8 @@ export function DocumentSidePanel({
     onRetry,
     onDelete,
 }: DocumentSidePanelProps) {
-    const { t, formatDate, formatFileSize, errorMessage } = useI18n();
+    const { t, formatDate, formatFileSize, formatNumber, errorMessage } =
+        useI18n();
     const [mounted, setMounted] = useState(false);
     const [mobilePane, setMobilePane] = useState<"document" | "details">(
         "document",
@@ -273,13 +276,15 @@ export function DocumentSidePanel({
                                     )
                                 }
                             />
-                            <ActionButton
-                                label={t("documents.newVersion")}
-                                icon={FileUp}
-                                busy={busyAction === "upload"}
-                                disabled={busyAction != null}
-                                onClick={() => fileInputRef.current?.click()}
-                            />
+                            {doc.studio_capability?.editable !== true && (
+                                <ActionButton
+                                    label={t("documents.newVersion")}
+                                    icon={FileUp}
+                                    busy={busyAction === "upload"}
+                                    disabled={busyAction != null}
+                                    onClick={() => fileInputRef.current?.click()}
+                                />
+                            )}
                             {doc.status === "error" && (
                                 <ActionButton
                                     label={t("common.actions.retry")}
@@ -300,20 +305,99 @@ export function DocumentSidePanel({
                                 onClick={() => setDeleteConfirmOpen(true)}
                             />
                         </div>
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept={SUPPORTED_DOCUMENT_ACCEPT}
-                            className="hidden"
-                            onChange={(event) => {
-                                const file = event.target.files?.[0];
-                                event.target.value = "";
-                                if (!file) return;
-                                void run("upload", () =>
-                                    onUploadNewVersion(doc.id, file),
-                                );
-                            }}
-                        />
+                        {isCurrent && doc.ocr_summary && (
+                            <section
+                                aria-label={t("documents.ocr.summary")}
+                                className="mt-4 rounded-xl border border-gray-200 bg-white/80 p-3"
+                            >
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700">
+                                        <ScanText
+                                            className="h-3.5 w-3.5"
+                                            aria-hidden="true"
+                                        />
+                                        {t("documents.ocr.used", {
+                                            count: formatNumber(
+                                                doc.ocr_summary.ocr_page_count,
+                                            ),
+                                        })}
+                                    </span>
+                                    {doc.ocr_summary.review_required && (
+                                        <span
+                                            role="status"
+                                            className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800"
+                                        >
+                                            <AlertCircle
+                                                className="h-3.5 w-3.5"
+                                                aria-hidden="true"
+                                            />
+                                            {t(
+                                                "documents.ocr.reviewRequired",
+                                            )}
+                                        </span>
+                                    )}
+                                </div>
+                                <dl className="mt-2 divide-y divide-gray-100 text-xs">
+                                    <DataRow
+                                        label={t("documents.ocr.engine")}
+                                        value={t(
+                                            "documents.ocr.engineAppleVision",
+                                        )}
+                                    />
+                                </dl>
+                                {doc.ocr_summary.review_required && (
+                                    <div className="mt-2 rounded-lg bg-amber-50/80 px-3 py-2 text-xs leading-5 text-amber-900">
+                                        <p>
+                                            {t(
+                                                "documents.ocr.lowConfidencePages",
+                                                {
+                                                    pages: doc.ocr_summary.low_confidence_pages
+                                                        .map((page) =>
+                                                            formatNumber(page),
+                                                        )
+                                                        .join(", "),
+                                                },
+                                            )}
+                                        </p>
+                                        {doc.ocr_summary
+                                            .low_confidence_pages_truncated && (
+                                            <p className="mt-1 text-amber-700">
+                                                {t(
+                                                    "documents.ocr.lowConfidencePagesTruncated",
+                                                    {
+                                                        shown: formatNumber(
+                                                            doc.ocr_summary
+                                                                .low_confidence_pages
+                                                                .length,
+                                                        ),
+                                                        count: formatNumber(
+                                                            doc.ocr_summary
+                                                                .low_confidence_page_count,
+                                                        ),
+                                                    },
+                                                )}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </section>
+                        )}
+                        {doc.studio_capability?.editable !== true && (
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept={SUPPORTED_DOCUMENT_ACCEPT}
+                                className="hidden"
+                                onChange={(event) => {
+                                    const file = event.target.files?.[0];
+                                    event.target.value = "";
+                                    if (!file) return;
+                                    void run("upload", () =>
+                                        onUploadNewVersion(doc.id, file),
+                                    );
+                                }}
+                            />
+                        )}
 
                         <dl className="mt-6 divide-y divide-gray-100 text-xs">
                             <DataRow

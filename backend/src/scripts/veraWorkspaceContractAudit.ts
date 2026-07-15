@@ -156,6 +156,7 @@ function run() {
       endOffset: 28,
       pageStart: 1,
       pageEnd: 1,
+      metadata: {},
       createdAt: timestamp,
     },
     "document chunks expose an inclusive page range",

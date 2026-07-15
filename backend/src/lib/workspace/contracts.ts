@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DocumentChunkMetadataSchema } from "./documentChunkMetadata";
 
 import { API_ERROR_CODES } from "./errors";
 import { MAX_PAGE_SIZE } from "./pagination";
@@ -262,6 +263,7 @@ export const DocumentChunkSchema = z
     endOffset: z.number().int().nonnegative(),
     pageStart: z.number().int().positive().nullable(),
     pageEnd: z.number().int().positive().nullable(),
+    metadata: DocumentChunkMetadataSchema,
     createdAt: IsoDateTimeSchema,
   })
   .strict()

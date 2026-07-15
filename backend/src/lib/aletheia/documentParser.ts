@@ -1,8 +1,13 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { spawn } from "node:child_process";
-import { lstatSync } from "node:fs";
 import { normalizeDocxZipPaths } from "../convert";
+import { configuredAppleVisionOcrProvider } from "./appleVisionOcrProvider";
+import type {
+  OcrBoundingBox,
+  OcrCoordinateSpace,
+  OcrProvider,
+  OcrRecognitionResult,
+} from "./ocrProvider";
 import {
   readProtectedLocalFileSync,
   writeProtectedLocalFileSync,
@@ -22,16 +27,58 @@ export type ParsedMatterDocument = {
   chunks: ParsedDocumentChunk[];
 };
 
+export const MATTER_DOCUMENT_PDF_PAGE_SPANS_SCHEMA_VERSION =
+  "vera-pdf-page-spans-v1" as const;
+
+/**
+ * UTF-16 offsets into the exact, un-normalized extraction text. `textStart`
+ * includes Vera's structural page label, while the content range contains
+ * only text returned by the PDF text layer or OCR provider.
+ */
+export type MatterDocumentPdfPageSpan = Readonly<{
+  page: number;
+  textStart: number;
+  contentStart: number;
+  contentEnd: number;
+  textEnd: number;
+}>;
+
+export type MatterDocumentChunkRegion = Readonly<{
+  start: number;
+  end: number;
+  page: number | null;
+}>;
+
 export type MatterDocumentExtraction = {
   text: string;
   metadata: {
     parser: "pdf" | "pdf+apple-vision" | "docx" | "xlsx" | "deterministic";
     pageCount?: number;
+    pageSpanSchemaVersion?: typeof MATTER_DOCUMENT_PDF_PAGE_SPANS_SCHEMA_VERSION;
+    pageSpans?: MatterDocumentPdfPageSpan[];
     textLayerPageCount?: number;
     ocrPageCount?: number;
-    ocrEngine?: "apple-vision";
+    ocrAttemptedPageCount?: number;
+    ocrAttemptedPages?: number[];
+    ocrEngine?: string;
+    ocrCoordinateSpace?: OcrCoordinateSpace;
     averageOcrConfidence?: number;
-    ocrPages?: Array<{ page: number; confidence: number }>;
+    ocrPages?: Array<{
+      page: number;
+      confidence: number;
+      blocks?: Array<{
+        textStart: number;
+        textEnd: number;
+        confidence: number;
+        boundingBox: OcrBoundingBox;
+      }>;
+    }>;
+    ocrEmptyPageCount?: number;
+    ocrEmptyPages?: number[];
+    lowConfidenceOcrPageCount?: number;
+    lowConfidenceOcrPages?: Array<{ page: number; confidence: number }>;
+    unresolvedPageCount?: number;
+    unresolvedPages?: number[];
     sheetCount?: number;
     sectionCount?: number;
   };
@@ -39,6 +86,7 @@ export type MatterDocumentExtraction = {
 
 const MAX_CHUNK_LENGTH = 1200;
 const CHUNK_OVERLAP = 160;
+const OCR_REVIEW_CONFIDENCE_THRESHOLD = 0.5;
 
 function extension(filename: string) {
   return path.extname(filename).replace(".", "").toLowerCase();
@@ -84,6 +132,8 @@ export function sensitiveMaterialFlagsForText(args: {
 export async function extractMatterDocumentText(args: {
   filename: string;
   buffer: Buffer;
+  signal?: AbortSignal;
+  ocrProvider?: OcrProvider | null;
 }) {
   return (await extractMatterDocument(args)).text;
 }
@@ -91,9 +141,21 @@ export async function extractMatterDocumentText(args: {
 export async function extractMatterDocument(args: {
   filename: string;
   buffer: Buffer;
+  signal?: AbortSignal;
+  /** `null` explicitly disables OCR; `undefined` uses the local configuration. */
+  ocrProvider?: OcrProvider | null;
 }): Promise<MatterDocumentExtraction> {
+  assertNotAborted(args.signal);
   const ext = extension(args.filename);
-  if (ext === "pdf") return extractPdfDocument(args.buffer);
+  if (ext === "pdf") {
+    return extractPdfDocument(args.buffer, {
+      signal: args.signal,
+      ocrProvider:
+        args.ocrProvider === undefined
+          ? configuredAppleVisionOcrProvider()
+          : args.ocrProvider,
+    });
+  }
   if (ext === "docx" || ext === "doc") {
     return {
       text: await extractDocxText(args.buffer),
@@ -113,13 +175,18 @@ export async function extractMatterDocument(args: {
   };
 }
 
-async function extractPdfText(buffer: Buffer) {
-  return (await extractPdfDocument(buffer)).text;
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw new Error("Document extraction was cancelled.");
 }
 
 async function extractPdfDocument(
   buffer: Buffer,
+  options: {
+    signal?: AbortSignal;
+    ocrProvider: OcrProvider | null;
+  },
 ): Promise<MatterDocumentExtraction> {
+  assertNotAborted(options.signal);
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
   const pdfjsRoot = path.dirname(require.resolve("pdfjs-dist/package.json"));
   const workerOptions = (
@@ -150,6 +217,7 @@ async function extractPdfDocument(
   const pages = new Map<number, string>();
   const missingPages: number[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
+    assertNotAborted(options.signal);
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const text = content.items
@@ -160,149 +228,133 @@ async function extractPdfDocument(
     if (text) pages.set(i, text);
     else missingPages.push(i);
   }
-  let ocrPages: Array<{ page: number; text: string; confidence: number }> = [];
-  if (missingPages.length > 0 && nativeOcrConfigured()) {
-    ocrPages = await runNativePdfOcr(buffer, pdf.numPages);
+  let recognition: OcrRecognitionResult | null = null;
+  let ocrPages: OcrRecognitionResult["pages"] = [];
+  if (missingPages.length > 0 && options.ocrProvider?.isAvailable() === true) {
+    recognition = await options.ocrProvider.recognizePdf({
+      pdf: buffer,
+      pageCount: pdf.numPages,
+      pages: missingPages,
+      signal: options.signal,
+    });
+    ocrPages = recognition.pages;
     for (const item of ocrPages) {
       if (missingPages.includes(item.page) && item.text.trim()) {
-        pages.set(item.page, item.text.trim());
+        pages.set(item.page, item.text);
       }
     }
   }
-  const combined = [...pages.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([page, text]) => `[Page ${page}]\n${text}`)
-    .join("\n\n");
+  const serializedPages = serializePdfPages(pages);
   const usedOcr = ocrPages.filter(
     (item) => missingPages.includes(item.page) && item.text.trim(),
   );
+  const returnedOcrPages = new Set(
+    ocrPages
+      .filter((item) => missingPages.includes(item.page))
+      .map((item) => item.page),
+  );
+  const unresolvedPages = missingPages.filter(
+    (page) => !returnedOcrPages.has(page),
+  );
+  const emptyOcrPages = ocrPages
+    .filter((item) => missingPages.includes(item.page) && !item.text.trim())
+    .map((item) => item.page);
+  const lowConfidenceOcrPages = ocrPages
+    .filter(
+      (item) =>
+        missingPages.includes(item.page) &&
+        item.confidence < OCR_REVIEW_CONFIDENCE_THRESHOLD,
+    )
+    .map((item) => ({ page: item.page, confidence: item.confidence }));
   return {
-    text: combined,
+    text: serializedPages.text,
     metadata: {
       parser: usedOcr.length > 0 ? "pdf+apple-vision" : "pdf",
       pageCount: pdf.numPages,
+      pageSpanSchemaVersion: MATTER_DOCUMENT_PDF_PAGE_SPANS_SCHEMA_VERSION,
+      pageSpans: serializedPages.pageSpans,
       textLayerPageCount: pdf.numPages - missingPages.length,
       ocrPageCount: usedOcr.length,
-      ...(usedOcr.length > 0
+      ocrAttemptedPageCount: recognition ? missingPages.length : 0,
+      ocrAttemptedPages: recognition ? missingPages : [],
+      ocrEmptyPageCount: emptyOcrPages.length,
+      ocrEmptyPages: emptyOcrPages,
+      lowConfidenceOcrPageCount: lowConfidenceOcrPages.length,
+      lowConfidenceOcrPages,
+      unresolvedPageCount: unresolvedPages.length,
+      unresolvedPages,
+      ...(recognition
         ? {
-            ocrEngine: "apple-vision" as const,
-            averageOcrConfidence:
-              usedOcr.reduce((sum, item) => sum + item.confidence, 0) /
-              usedOcr.length,
-            ocrPages: usedOcr.map((item) => ({
-              page: item.page,
-              confidence: item.confidence,
-            })),
+            ocrEngine: recognition.engine,
+            ...(recognition.coordinateSpace
+              ? { ocrCoordinateSpace: recognition.coordinateSpace }
+              : {}),
+            ...(ocrPages.length > 0
+              ? {
+                  averageOcrConfidence:
+                    ocrPages.reduce((sum, item) => sum + item.confidence, 0) /
+                    ocrPages.length,
+                }
+              : {}),
+            ...(usedOcr.length > 0
+              ? {
+                  ocrPages: usedOcr.map((item) => {
+                    let textOffset = 0;
+                    const blocks = item.blocks.map((block) => {
+                      const textStart = textOffset;
+                      const textEnd = textStart + block.text.length;
+                      textOffset = textEnd + 1;
+                      return {
+                        textStart,
+                        textEnd,
+                        confidence: block.confidence,
+                        boundingBox: block.boundingBox,
+                      };
+                    });
+                    return {
+                      page: item.page,
+                      confidence: item.confidence,
+                      ...(blocks.length > 0 ? { blocks } : {}),
+                    };
+                  }),
+                }
+              : {}),
           }
         : {}),
     },
   };
 }
 
-export function nativeOcrConfigured() {
-  if (process.env.ALETHEIA_OCR_ENABLED !== "true") return false;
-  const binary = process.env.ALETHEIA_OCR_BINARY?.trim();
-  if (!binary || !path.isAbsolute(binary)) return false;
-  try {
-    const info = lstatSync(binary);
-    return info.isFile() && !info.isSymbolicLink();
-  } catch {
-    return false;
+function serializePdfPages(pages: ReadonlyMap<number, string>): Readonly<{
+  text: string;
+  pageSpans: MatterDocumentPdfPageSpan[];
+}> {
+  let text = "";
+  const partialSpans: Array<Omit<MatterDocumentPdfPageSpan, "textEnd">> = [];
+  for (const [page, content] of [...pages.entries()].sort(
+    ([left], [right]) => left - right,
+  )) {
+    if (text) text += "\n\n";
+    const textStart = text.length;
+    text += `[Page ${page}]\n`;
+    const contentStart = text.length;
+    text += content;
+    partialSpans.push({
+      page,
+      textStart,
+      contentStart,
+      contentEnd: text.length,
+    });
   }
+  const pageSpans = partialSpans.map((span, index) => ({
+    ...span,
+    textEnd: partialSpans[index + 1]?.textStart ?? text.length,
+  }));
+  return { text, pageSpans };
 }
 
-async function runNativePdfOcr(buffer: Buffer, pageCount: number) {
-  const binary = process.env.ALETHEIA_OCR_BINARY as string;
-  return new Promise<Array<{ page: number; text: string; confidence: number }>>(
-    (resolve, reject) => {
-      const child = spawn(binary, [], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { LANG: "en_US.UTF-8" },
-        shell: false,
-      });
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let outputBytes = 0;
-      let settled = false;
-      const fail = (error: Error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        reject(error);
-      };
-      const timeout = setTimeout(() => {
-        child.kill("SIGKILL");
-      }, 10 * 60_000);
-      child.stdout.on("data", (chunk: Buffer) => {
-        outputBytes += chunk.length;
-        if (outputBytes > 64 * 1024 * 1024) child.kill("SIGKILL");
-        else stdout.push(chunk);
-      });
-      child.stderr.on("data", (chunk: Buffer) => {
-        if (stderr.reduce((sum, item) => sum + item.length, 0) < 8_192) {
-          stderr.push(chunk);
-        }
-      });
-      child.once("error", (error) => {
-        fail(error);
-      });
-      child.stdin.once("error", (error: NodeJS.ErrnoException) => {
-        fail(
-          new Error(
-            `Local OCR failed: input ${error.code || error.message}`,
-          ),
-        );
-        child.kill("SIGKILL");
-      });
-      child.once("close", (code) => {
-        if (settled) return;
-        clearTimeout(timeout);
-        if (code !== 0 || outputBytes > 64 * 1024 * 1024) {
-          fail(
-            new Error(
-              `Local OCR failed: ${Buffer.concat(stderr).toString("utf8").replace(/\s+/g, " ").slice(0, 500) || `exit ${code}`}`,
-            ),
-          );
-          return;
-        }
-        try {
-          const result = JSON.parse(Buffer.concat(stdout).toString("utf8"));
-          if (
-            result?.schemaVersion !== "aletheia-native-ocr-v1" ||
-            result?.engine !== "apple-vision" ||
-            !Array.isArray(result.pages)
-          ) {
-            throw new Error("Local OCR returned an invalid schema.");
-          }
-          const seen = new Set<number>();
-          const pages = result.pages.map((item: Record<string, unknown>) => {
-            const page = Number(item.page);
-            const confidence = Number(item.confidence);
-            if (
-              !Number.isInteger(page) ||
-              page < 1 ||
-              page > pageCount ||
-              seen.has(page) ||
-              typeof item.text !== "string" ||
-              item.text.length > 10_000_000 ||
-              !Number.isFinite(confidence) ||
-              confidence < 0 ||
-              confidence > 1
-            ) {
-              throw new Error("Local OCR returned invalid page data.");
-            }
-            seen.add(page);
-            return { page, text: item.text, confidence };
-          });
-          settled = true;
-          resolve(pages);
-        } catch (error) {
-          fail(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-      child.stdin.end(buffer);
-    },
-  );
+export function nativeOcrConfigured() {
+  return configuredAppleVisionOcrProvider() !== null;
 }
 
 async function extractDocxText(buffer: Buffer) {
@@ -384,37 +436,110 @@ function cellText(value: unknown): string {
   return "";
 }
 
-export function chunkMatterDocument(text: string): ParsedDocumentChunk[] {
-  const normalized = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+export function chunkMatterDocument(
+  text: string,
+  structuredRegions?: readonly MatterDocumentChunkRegion[],
+): ParsedDocumentChunk[] {
+  const normalized = normalizeMatterDocumentText(text);
   if (!normalized) return [];
 
   const chunks: ParsedDocumentChunk[] = [];
-  for (const region of pageRegions(normalized)) {
+  const regions =
+    structuredRegions === undefined
+      ? pageRegions(normalized)
+      : validatedStructuredRegions(normalized, structuredRegions);
+  for (const region of regions) {
     let cursor = region.start;
     while (cursor < region.end) {
       const end = Math.min(region.end, cursor + MAX_CHUNK_LENGTH);
       const window = normalized.slice(cursor, end);
       const breakAt = findChunkBreak(window);
-      const actualEnd = end === region.end ? end : cursor + breakAt;
-      const chunkText = normalized.slice(cursor, actualEnd).trim();
+      let actualEnd = end === region.end ? end : cursor + breakAt;
+      if (
+        actualEnd < region.end &&
+        isHighSurrogate(normalized.charCodeAt(actualEnd - 1)) &&
+        isLowSurrogate(normalized.charCodeAt(actualEnd))
+      ) {
+        actualEnd -= 1;
+      }
+      const selected = normalized.slice(cursor, actualEnd);
+      const chunkText = selected.trim();
       if (chunkText) {
+        const leadingWhitespace = selected.length - selected.trimStart().length;
+        const trailingWhitespace = selected.length - selected.trimEnd().length;
+        const quoteStart = cursor + leadingWhitespace;
+        const quoteEnd = actualEnd - trailingWhitespace;
         chunks.push({
           chunkIndex: chunks.length,
           page: region.page,
           section: null,
           text: chunkText,
-          quoteStart: cursor,
-          quoteEnd: actualEnd,
+          quoteStart,
+          quoteEnd,
         });
       }
       if (actualEnd >= region.end) break;
-      cursor = Math.max(actualEnd - CHUNK_OVERLAP, cursor + 1);
+      let nextCursor = Math.max(actualEnd - CHUNK_OVERLAP, cursor + 1);
+      if (
+        isLowSurrogate(normalized.charCodeAt(nextCursor)) &&
+        isHighSurrogate(normalized.charCodeAt(nextCursor - 1))
+      ) {
+        nextCursor = nextCursor - 1 > cursor ? nextCursor - 1 : nextCursor + 1;
+      }
+      cursor = nextCursor;
     }
   }
   return chunks;
+}
+
+function validatedStructuredRegions(
+  text: string,
+  regions: readonly MatterDocumentChunkRegion[],
+): readonly MatterDocumentChunkRegion[] {
+  if (!Array.isArray(regions) || regions.length < 1 || regions.length > 500) {
+    throw new Error("Structured document page regions are invalid.");
+  }
+  let previousEnd = 0;
+  let previousPage = 0;
+  for (const region of regions) {
+    if (
+      !region ||
+      typeof region !== "object" ||
+      !Number.isSafeInteger(region.start) ||
+      !Number.isSafeInteger(region.end) ||
+      region.start !== previousEnd ||
+      region.end <= region.start ||
+      region.end > text.length ||
+      (region.page !== null &&
+        (!Number.isSafeInteger(region.page) ||
+          region.page < 1 ||
+          region.page > 500 ||
+          region.page <= previousPage))
+    ) {
+      throw new Error("Structured document page regions are invalid.");
+    }
+    if (region.page !== null) previousPage = region.page;
+    previousEnd = region.end;
+  }
+  if (previousEnd !== text.length) {
+    throw new Error("Structured document page regions are invalid.");
+  }
+  return regions;
+}
+
+function isHighSurrogate(value: number) {
+  return value >= 0xd800 && value <= 0xdbff;
+}
+
+function isLowSurrogate(value: number) {
+  return value >= 0xdc00 && value <= 0xdfff;
+}
+
+export function normalizeMatterDocumentText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function pageRegions(text: string) {
@@ -422,7 +547,8 @@ function pageRegions(text: string) {
   if (matches.length === 0) {
     return [{ start: 0, end: text.length, page: null as number | null }];
   }
-  const regions: Array<{ start: number; end: number; page: number | null }> = [];
+  const regions: Array<{ start: number; end: number; page: number | null }> =
+    [];
   const firstStart = matches[0].index ?? 0;
   if (firstStart > 0) {
     regions.push({ start: 0, end: firstStart, page: null });

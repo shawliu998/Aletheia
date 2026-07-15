@@ -3,6 +3,21 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import type { WorkspaceChatsV1Port } from "../../routes/workspaceChatsV1";
+import type {
+  WorkspaceDocumentStudioCreateInput,
+  WorkspaceDocumentStudioExportResult,
+  WorkspaceDocumentStudioImportInput,
+  WorkspaceDocumentStudioImportResult,
+  WorkspaceDocumentStudioRestoreInput,
+  WorkspaceDocumentStudioSaveInput,
+  WorkspaceDocumentStudioDocxWarningCode,
+  WorkspaceDocumentStudioV1Port,
+} from "../../routes/workspaceDocumentStudioV1";
+import type {
+  WorkspaceProjectSourceAnchorInput,
+  WorkspaceProjectSourceListInput,
+  WorkspaceProjectSourcesV1Port,
+} from "../../routes/workspaceProjectSourcesV1";
 import type { WorkspaceTabularV1RuntimePort } from "../../routes/workspaceTabularV1";
 import type {
   WorkspaceV1Context,
@@ -17,6 +32,11 @@ import type {
 } from "../../routes/workspaceV1";
 import { LocalWorkspaceBlobStore } from "./localWorkspaceBlobStore";
 import { WorkspaceDatabase } from "./database";
+import {
+  exportDocumentStudioMarkdownToDocx,
+  importDocumentStudioDocxToMarkdown,
+  type DocumentStudioDocxWarning,
+} from "./documentStudioDocx";
 import { InMemoryDownloadCapabilityStore } from "./downloadCapabilities";
 import { WorkspaceApiError } from "./errors";
 import { WorkspaceJobPump } from "./jobs/pump";
@@ -32,6 +52,8 @@ import {
 import { WORKSPACE_LOCAL_PRINCIPAL_ID } from "./principal";
 import { WorkspaceBlobCleanupRepository } from "./repositories/blobCleanup";
 import { WorkspaceBlobRecordsRepository } from "./repositories/blobRecords";
+import { WorkspaceDocumentStudioRepository } from "./repositories/documentStudio";
+import { WorkspaceSourceFoundationRepository } from "./repositories/sourceFoundation";
 import { AssistantRetrievalRepository } from "./repositories/assistantRetrieval";
 import { ChatsRepository } from "./repositories/chats";
 import {
@@ -54,6 +76,25 @@ import {
 } from "./services/blobReconciliation";
 import { WorkspaceBlobCleanupReplay } from "./services/blobCleanup";
 import { WorkspaceDocumentCatalogService } from "./services/documentCatalog";
+import {
+  serializeWorkspaceDocumentOcrSummary,
+  WorkspaceDocumentOcrSummaryService,
+  type WorkspaceDocumentOcrSummaryWire,
+} from "./services/documentOcrSummary";
+import {
+  type DocumentStudioDocument,
+  type DocumentStudioVersion,
+  type DocumentStudioVersionList,
+  WorkspaceDocumentStudioService,
+  type WorkspaceDocumentStudioRepositoryPort,
+} from "./services/documentStudio";
+import { WorkspaceDocumentStudioRepositoryAdapter } from "./services/documentStudioRepositoryAdapter";
+import {
+  WorkspaceProjectSourcesService,
+  type CaptureProjectDocumentSourceResult,
+  type ProjectSourceDetail,
+  type ProjectSourcePage,
+} from "./services/projectSources";
 import {
   type DocumentUploadResult,
   type PublicDocumentVersion,
@@ -131,9 +172,21 @@ type WorkspaceDocumentJobWire = {
   completed_at: string | null;
 };
 type WorkspaceDocumentMutationWire = {
-  document: MikeDocumentWire;
+  document: WorkspaceMikeDocumentWire;
   version: MikeDocumentVersionWire;
   job: WorkspaceDocumentJobWire;
+};
+
+type WorkspaceDocumentStudioCapabilityWire = {
+  editable: boolean;
+  format: "markdown" | null;
+  docx_import: boolean;
+  docx_export: boolean;
+};
+
+type WorkspaceMikeDocumentWire = MikeDocumentWire & {
+  studio_capability: WorkspaceDocumentStudioCapabilityWire;
+  ocr_summary: WorkspaceDocumentOcrSummaryWire | null;
 };
 
 type ProjectRequest = {
@@ -167,6 +220,9 @@ export type WorkspaceRuntimeDependencies = {
   documents?: WorkspaceDocumentCatalogService;
   documentService?: WorkspaceDocumentsService;
   documentRepository?: WorkspaceDocumentsRepository;
+  documentStudioService?: WorkspaceDocumentStudioService;
+  documentStudioRepository?: WorkspaceDocumentStudioRepositoryPort;
+  projectSourcesService?: WorkspaceProjectSourcesService;
   workflows?: WorkflowsService;
   workflowCrud?: MikeWorkflowCrudPortAdapter;
   seedWorkflows?: (workflows: WorkflowsService) => readonly unknown[];
@@ -225,12 +281,29 @@ function folderRequest(value: unknown): FolderRequest {
   return { name: input.name, parent_folder_id: input.parent_folder_id };
 }
 
+function studioDocxWarningCodes(
+  warnings: readonly DocumentStudioDocxWarning[],
+): WorkspaceDocumentStudioDocxWarningCode[] {
+  return [...new Set(warnings.map((warning) => warning.code))];
+}
+
+function studioDocxFilename(markdownFilename: string): string {
+  const stem = markdownFilename.replace(/\.md$/i, "").trim();
+  const boundedStem = [...(stem || "Untitled")].slice(0, 235).join("").trim();
+  return `${boundedStem || "Untitled"}.docx`;
+}
+
 /**
  * The one workspace composition root. It owns exactly one WorkspaceDatabase
  * handle and is the only place that wires durable cleanup, blobs, jobs, and
  * the HTTP facade together.
  */
-export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
+export class WorkspaceRuntime
+  implements
+    WorkspaceV1RuntimePort,
+    WorkspaceDocumentStudioV1Port,
+    WorkspaceProjectSourcesV1Port
+{
   readonly database: WorkspaceDatabase;
   readonly blobs: LocalWorkspaceBlobStore;
   readonly capabilities: InMemoryDownloadCapabilityStore;
@@ -246,6 +319,10 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
   readonly tabular: WorkspaceTabularV1RuntimePort;
   private readonly documentService: WorkspaceDocumentsService;
   private readonly documentRepository: WorkspaceDocumentsRepository;
+  private readonly documentOcrSummary: WorkspaceDocumentOcrSummaryService;
+  private readonly documentStudioService: WorkspaceDocumentStudioService;
+  private readonly documentStudioRepository: WorkspaceDocumentStudioRepositoryPort;
+  private readonly projectSourcesService: WorkspaceProjectSourcesService;
   private readonly blobRecords: WorkspaceBlobRecordsRepository;
   private readonly startMigrations: () => void;
   private readonly startupRecovery: Pick<
@@ -293,6 +370,9 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     this.documentRepository =
       dependencies.documentRepository ??
       new WorkspaceDocumentsRepository(this.database, { blobRecords });
+    this.documentOcrSummary = new WorkspaceDocumentOcrSummaryService(
+      this.database,
+    );
     const jobsRepository = new WorkspaceJobsRepository(this.database);
     this.jobs =
       dependencies.jobs ??
@@ -380,6 +460,26 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
         allowLocalDevelopmentBaseUrl:
           dependencies.allowLocalDevelopmentModelBaseUrl ?? false,
       });
+    const sourceFoundation = new WorkspaceSourceFoundationRepository(
+      this.database,
+    );
+    this.documentStudioRepository =
+      dependencies.documentStudioRepository ??
+      new WorkspaceDocumentStudioRepositoryAdapter(
+        new WorkspaceDocumentStudioRepository(this.database, { blobRecords }),
+        sourceFoundation,
+      );
+    this.documentStudioService =
+      dependencies.documentStudioService ??
+      new WorkspaceDocumentStudioService(
+        this.documentStudioRepository,
+        this.blobs,
+        blobRecords,
+        { cleanupRecorder },
+      );
+    this.projectSourcesService =
+      dependencies.projectSourcesService ??
+      new WorkspaceProjectSourcesService(this.database, sourceFoundation);
     this.documentService =
       dependencies.documentService ??
       new WorkspaceDocumentsService(
@@ -878,6 +978,7 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
   ) {
     this.requireAccess(context);
     this.assertDocumentScope(documentId, scope?.projectId);
+    this.assertGenericMutationAllowed(documentId);
     const result = await this.documents.uploadVersion(documentId, input);
     return this.documentMutationWire(result);
   }
@@ -926,6 +1027,206 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     return this.documentWire(
       this.documents.move(documentId, projectId, folderId),
     );
+  }
+  async createStudioDocument(
+    context: WorkspaceV1Context,
+    projectId: string,
+    input: WorkspaceDocumentStudioCreateInput,
+  ) {
+    this.requireAccess(context);
+    this.assertUploadPlacement(projectId, input.folderId);
+    return this.studioDocumentWire(
+      await this.documentStudioService.createDraft({
+        projectId,
+        folderId: input.folderId,
+        title: input.title,
+      }),
+    );
+  }
+  async getStudioDocument(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    versionId?: string,
+  ) {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    return this.studioDocumentWire(
+      await this.documentStudioService.getDocument(
+        projectId,
+        documentId,
+        versionId,
+      ),
+    );
+  }
+  async saveStudioDocument(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    input: WorkspaceDocumentStudioSaveInput,
+  ) {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    return this.studioDocumentWire(
+      await this.documentStudioService.save({
+        projectId,
+        documentId,
+        expectedVersionId: input.expectedVersionId,
+        content: input.content,
+        source: input.source,
+        citationAnchorIds: input.citationAnchorIds,
+        summary: input.summary,
+      }),
+    );
+  }
+  async listStudioDocumentVersions(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+  ) {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    return this.studioVersionListWire(
+      await this.documentStudioService.listVersions(projectId, documentId),
+    );
+  }
+  async restoreStudioDocumentVersion(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    versionId: string,
+    input: WorkspaceDocumentStudioRestoreInput,
+  ) {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    return this.studioDocumentWire(
+      await this.documentStudioService.restore({
+        projectId,
+        documentId,
+        targetVersionId: versionId,
+        expectedCurrentVersionId: input.expectedCurrentVersionId,
+      }),
+    );
+  }
+  async importStudioDocumentDocx(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    input: WorkspaceDocumentStudioImportInput,
+  ): Promise<WorkspaceDocumentStudioImportResult> {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    const current = await this.documentStudioService.getDocument(
+      projectId,
+      documentId,
+    );
+    if (current.document.currentVersionId !== input.expectedVersionId) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Studio document changed before DOCX import.",
+      );
+    }
+    const imported = await importDocumentStudioDocxToMarkdown({
+      bytes: input.buffer,
+    });
+    const saved = await this.documentStudioService.save({
+      projectId,
+      documentId,
+      expectedVersionId: input.expectedVersionId,
+      content: imported.markdown,
+      source: "user_upload",
+      citationAnchorIds: current.version.citationAnchorIds,
+      summary: null,
+    });
+    return {
+      document: this.studioDocumentWire(saved),
+      warningCodes: studioDocxWarningCodes(imported.warnings),
+    };
+  }
+  async exportStudioDocumentDocx(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    versionId?: string,
+  ): Promise<WorkspaceDocumentStudioExportResult> {
+    this.requireAccess(context);
+    this.projects.get(projectId);
+    const selected = await this.documentStudioService.getDocument(
+      projectId,
+      documentId,
+      versionId,
+    );
+    const exported = await exportDocumentStudioMarkdownToDocx({
+      title: selected.document.title,
+      markdown: selected.content,
+    });
+    return {
+      filename: studioDocxFilename(selected.version.filename),
+      contentType: exported.mimeType,
+      bytes: exported.bytes,
+      warningCodes: studioDocxWarningCodes(exported.warnings),
+    };
+  }
+  async captureProjectDocumentSource(
+    context: WorkspaceV1Context,
+    projectId: string,
+    documentId: string,
+    versionId?: string,
+  ) {
+    this.requireAccess(context);
+    return this.projectSourceCaptureWire(
+      this.projectSourcesService.captureProjectDocumentSnapshot({
+        projectId,
+        documentId,
+        versionId,
+      }),
+    );
+  }
+  async listProjectSources(
+    context: WorkspaceV1Context,
+    projectId: string,
+    input: WorkspaceProjectSourceListInput,
+  ) {
+    this.requireAccess(context);
+    return this.projectSourcePageWire(
+      this.projectSourcesService.listSnapshots({
+        projectId,
+        sourceKind: input.sourceKind,
+        limit: input.limit,
+        cursor: input.cursor,
+      }),
+    );
+  }
+  async getProjectSource(
+    context: WorkspaceV1Context,
+    projectId: string,
+    snapshotId: string,
+  ) {
+    this.requireAccess(context);
+    return this.projectSourceDetailWire(
+      this.projectSourcesService.getSnapshot(projectId, snapshotId),
+    );
+  }
+  async createProjectSourceAnchor(
+    context: WorkspaceV1Context,
+    projectId: string,
+    snapshotId: string,
+    input: WorkspaceProjectSourceAnchorInput,
+  ) {
+    this.requireAccess(context);
+    return {
+      anchor: this.projectSourceAnchorWire(
+        this.projectSourcesService.createProjectDocumentAnchor({
+          projectId,
+          snapshotId,
+          chunkId: input.chunkId,
+          exactQuote: input.exactQuote,
+          startOffset: input.startOffset,
+          endOffset: input.endOffset,
+        }),
+      ),
+    };
   }
   async getDocument(context: WorkspaceV1Context, documentId: string) {
     this.requireAccess(context);
@@ -1072,6 +1373,22 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     if (doc.projectId !== projectId)
       throw new WorkspaceApiError(404, "NOT_FOUND", "Document not found.");
   }
+  private assertGenericMutationAllowed(documentId: string) {
+    const document = this.documents.get(documentId).document;
+    if (
+      document.projectId !== null &&
+      this.documentStudioRepository.getProjectDocument(
+        document.projectId,
+        document.id,
+      ) !== null
+    ) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "Studio documents must be changed through Document Studio.",
+      );
+    }
+  }
   private requireAccess(context: WorkspaceV1Context) {
     requireLocal(context);
     if (!this.started || this.draining || this.closed) {
@@ -1176,7 +1493,7 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
       updated_at: folder.updatedAt,
     };
   }
-  private documentWire(document: Document): MikeDocumentWire {
+  private documentWire(document: Document): WorkspaceMikeDocumentWire {
     const versions = this.documents.listVersions(document.id);
     const active = document.currentVersionId
       ? (versions.find((version) => version.id === document.currentVersionId) ??
@@ -1192,7 +1509,7 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
     const hasPreview = Boolean(
       active && this.hasPreview(document.id, active.id),
     );
-    return serializeMikeDocument({
+    const wire = serializeMikeDocument({
       id: document.id,
       projectId: document.projectId,
       folderId: document.folderId,
@@ -1207,6 +1524,158 @@ export class WorkspaceRuntime implements WorkspaceV1RuntimePort {
       latestVersionNumber: latest?.versionNumber ?? null,
       hasPreview,
     });
+    const editable =
+      document.projectId !== null &&
+      this.documentStudioRepository.getProjectDocument(
+        document.projectId,
+        document.id,
+      ) !== null;
+    const ocrSummary = this.documentOcrSummary.summarize(document);
+    return {
+      ...wire,
+      ocr_summary: serializeWorkspaceDocumentOcrSummary(ocrSummary),
+      studio_capability: {
+        editable,
+        format: editable ? "markdown" : null,
+        docx_import: editable,
+        docx_export: editable,
+      },
+    };
+  }
+  private studioVersionWire(version: DocumentStudioVersion) {
+    if (
+      version.source !== "user_upload" &&
+      version.source !== "assistant_edit"
+    ) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Persisted Studio version source is invalid.",
+      );
+    }
+    return {
+      id: version.id,
+      version_number: version.versionNumber,
+      source: version.source,
+      filename: version.filename,
+      mime_type: version.mimeType,
+      size_bytes: version.sizeBytes,
+      content_sha256: version.contentSha256,
+      created_at: version.createdAt,
+      citation_anchor_ids: [...version.citationAnchorIds],
+    };
+  }
+  private studioDocumentWire(result: DocumentStudioDocument) {
+    const projectId = result.document.projectId;
+    const currentVersionId = result.document.currentVersionId;
+    if (!projectId || !currentVersionId) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Persisted Studio document scope is invalid.",
+      );
+    }
+    return {
+      document_id: result.document.id,
+      project_id: projectId,
+      title: result.document.title,
+      filename: result.document.filename,
+      format: "markdown" as const,
+      current_version_id: currentVersionId,
+      version: this.studioVersionWire(result.version),
+      content: result.content,
+      citation_anchors: result.citationAnchors.map((anchor) => ({
+        id: anchor.id,
+        snapshot_id: anchor.snapshotId,
+        ordinal: anchor.ordinal,
+        exact_quote: anchor.exactQuote,
+        quote_sha256: anchor.quoteSha256,
+        locator: anchor.locator,
+      })),
+      capabilities: {
+        docx_import: true as const,
+        docx_export: true as const,
+      },
+    };
+  }
+  private studioVersionListWire(result: DocumentStudioVersionList) {
+    const currentVersionId = result.document.currentVersionId;
+    if (!currentVersionId) {
+      throw new WorkspaceApiError(
+        500,
+        "INTERNAL_ERROR",
+        "Persisted Studio document has no current version.",
+      );
+    }
+    return {
+      current_version_id: currentVersionId,
+      versions: result.versions.map((version) =>
+        this.studioVersionWire(version),
+      ),
+    };
+  }
+  private projectSourceSnapshotWire(
+    snapshot: ProjectSourceDetail["snapshot"],
+  ) {
+    return {
+      id: snapshot.id,
+      project_id: snapshot.projectId,
+      kind: snapshot.sourceKind,
+      source_record_id: snapshot.sourceRecordId,
+      source_version_id: snapshot.sourceVersionId,
+      title: snapshot.titleSnapshot,
+      content_sha256: snapshot.contentSha256,
+      locator: snapshot.locator,
+      retrieved_at: snapshot.retrievedAt,
+      license: {
+        basis: snapshot.license.basis,
+        retention: snapshot.license.retention,
+        export: snapshot.license.export,
+        model_use: snapshot.license.modelUse,
+      },
+      retention_policy: snapshot.retentionPolicy,
+      retention_expires_at: snapshot.retentionExpiresAt,
+      retrieval_metadata: snapshot.retrievalMetadata,
+      created_at: snapshot.createdAt,
+    };
+  }
+  private projectSourceAnchorWire(
+    anchor: ProjectSourceDetail["anchors"][number],
+  ) {
+    return {
+      id: anchor.id,
+      project_id: anchor.projectId,
+      snapshot_id: anchor.snapshotId,
+      ordinal: anchor.ordinal,
+      exact_quote: anchor.exactQuote,
+      quote_sha256: anchor.quoteSha256,
+      locator: anchor.locator,
+      created_at: anchor.createdAt,
+    };
+  }
+  private projectSourceCaptureWire(
+    result: CaptureProjectDocumentSourceResult,
+  ) {
+    return {
+      snapshot: this.projectSourceSnapshotWire(result.snapshot),
+      reused: result.reused,
+    };
+  }
+  private projectSourcePageWire(result: ProjectSourcePage) {
+    return {
+      sources: result.sources.map((snapshot) =>
+        this.projectSourceSnapshotWire(snapshot),
+      ),
+      next_cursor: result.nextCursor,
+    };
+  }
+  private projectSourceDetailWire(result: ProjectSourceDetail) {
+    return {
+      snapshot: this.projectSourceSnapshotWire(result.snapshot),
+      anchors: result.anchors.map((anchor) =>
+        this.projectSourceAnchorWire(anchor),
+      ),
+    };
   }
   private documentVersionWire(version: PublicDocumentVersion) {
     return serializeMikeDocumentVersion({

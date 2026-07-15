@@ -91,6 +91,16 @@ const zhCN = {
     moveToFolder: "移动到文件夹",
     removeFromProject: "从项目移除",
     version: "版本 {version}",
+    ocr: {
+      used: "OCR · {count} 页",
+      reviewRequired: "需要复核",
+      summary: "OCR 识别",
+      engine: "识别引擎",
+      engineAppleVision: "Apple Vision",
+      lowConfidencePages: "低置信度页：{pages}",
+      lowConfidencePagesTruncated:
+        "已列出前 {shown} 页，共 {count} 页需要复核。",
+    },
     empty: {
       title: "还没有文档",
       body: "上传资料并在本地管理版本；助手、工作流与表格审阅可在获得授权后使用已解析资料。",
@@ -108,6 +118,77 @@ const zhCN = {
       title: "删除文档？",
       body: "“{name}”的全部版本将从本地工作区中永久删除。此操作无法撤销。",
       action: "永久删除文档",
+    },
+  },
+  studio: {
+    title: "文档工作室",
+    newDraft: "新建草稿",
+    newDraftTitle: "新建文档草稿",
+    titleLabel: "草稿名称",
+    titlePlaceholder: "例如：合同审查意见",
+    create: "创建并打开",
+    creating: "正在创建…",
+    open: "打开工作室",
+    back: "返回项目文档",
+    editorLabel: "文档正文",
+    currentVersion: "当前版本 {version}",
+    historicalVersion: "历史版本 {version}",
+    versions: "版本记录",
+    citations: "引用来源",
+    noCitations: "此版本没有来源引用。",
+    current: "当前",
+    viewVersion: "查看版本 {version}",
+    restore: "恢复为新版本",
+    restoring: "正在恢复…",
+    save: "保存新版本",
+    unsaved: "有未保存更改",
+    saved: "已保存",
+    saving: "正在保存…",
+    sourceSnapshot: "来源快照 {id}",
+    copyLocal: "复制本地草稿",
+    reloadLatest: "载入最新版本",
+    reloadConfirm: {
+      title: "载入服务端最新版本？",
+      body: "当前编辑器中的本地更改将被丢弃。可先复制本地草稿，再载入最新版本。",
+      action: "丢弃本地更改并载入",
+    },
+    docx: {
+      import: "导入 DOCX",
+      importing: "正在导入…",
+      export: "导出 DOCX",
+      exporting: "正在导出…",
+      exportSavedOnly:
+        "导出只包含当前已保存的不可变版本，不包含编辑器中尚未保存的更改。",
+      importWarnings: "DOCX 已导入，但有以下转换提示",
+      exportWarnings: "DOCX 已导出，但有以下转换提示",
+      confirm: {
+        title: "将 DOCX 导入为新版本？",
+        body: "“{name}”将转换为 Markdown，并创建一个新的不可变版本。当前已保存版本不会被覆盖。",
+        action: "导入并创建新版本",
+      },
+      warnings: {
+        DOCX_IMAGES_IGNORED: "DOCX 中的图片未导入。",
+        DOCX_FORMATTING_SIMPLIFIED:
+          "部分 DOCX 格式已简化为 Studio 支持的 Markdown。",
+        DOCX_CONVERTER_WARNING:
+          "转换器报告了可能影响版式的提示，请检查导入内容。",
+        MARKDOWN_IMAGES_OMITTED: "Markdown 图片在 DOCX 中仅保留替代文字。",
+        MARKDOWN_HTML_AS_TEXT: "原始 HTML 已作为无执行能力的普通文本导出。",
+        MARKDOWN_BLOCKQUOTE_SIMPLIFIED: "引用块在 DOCX 中使用了简化样式。",
+      },
+    },
+    errors: {
+      load: "无法读取真实文档草稿。请检查本地服务后重试。",
+      save: "保存失败；本地编辑内容仍保留在当前页面。",
+      import: "DOCX 导入失败；当前已保存版本和编辑器内容均未改变。",
+      export: "无法导出所选的已保存版本。请重试。",
+      restore: "无法恢复所选版本；当前版本没有改变。",
+      versions: "无法读取版本记录。",
+      offline:
+        "本地服务连接已断开。编辑内容仍保留在当前页面，恢复连接后再保存。",
+      conflict: "此文档已在其他位置更新。本地更改尚未覆盖服务端版本。",
+      clipboard: "无法复制本地草稿。请在编辑器中手动复制。",
+      historyDirty: "请先保存或放弃本地更改，再查看历史版本。",
     },
   },
   assistant: {
@@ -211,7 +292,8 @@ const zhCN = {
   },
   workflows: {
     title: "工作流",
-    subtitle: "创建可复用的法律工作指令，并由已通过连接测试的模型在本地持久执行。",
+    subtitle:
+      "创建可复用的法律工作指令，并由已通过连接测试的模型在本地持久执行。",
     create: "新建工作流",
     run: "运行",
     runAgain: "从失败点重试",
@@ -309,7 +391,8 @@ const zhCN = {
     },
     errors: {
       load: "无法加载工作流或运行记录。请检查本地服务后重试。",
-      definitionLoad: "无法加载工作流定义；在读取真实本地配置前不会显示或运行草稿。",
+      definitionLoad:
+        "无法加载工作流定义；在读取真实本地配置前不会显示或运行草稿。",
       save: "无法保存工作流。现有内容未被覆盖。",
       run: "无法更新工作流运行状态。运行不会由界面伪造。",
       retry: "无法从失败点重试此运行。",
@@ -335,7 +418,8 @@ const zhCN = {
       restoring: "正在恢复本地运行记录…",
       unavailable: "本地工作流执行器尚未就绪，当前不会排队或伪装运行。",
       noReadyModel: "没有已启用且通过连接测试的模型。",
-      configuredModelUnavailable: "步骤指定的模型当前不可用或尚未通过连接测试。",
+      configuredModelUnavailable:
+        "步骤指定的模型当前不可用或尚未通过连接测试。",
       openModels: "打开模型设置",
       model: "模型",
       chooseModel: "选择可用模型",
@@ -357,7 +441,8 @@ const zhCN = {
     },
     definition: {
       title: "工作流定义",
-      description: "按顺序配置有界步骤；名称、项目和每个步骤均保存到本地工作区。",
+      description:
+        "按顺序配置有界步骤；名称、项目和每个步骤均保存到本地工作区。",
       loading: "正在读取本地工作流定义…",
       save: "保存定义",
       name: "工作流名称",
@@ -393,17 +478,20 @@ const zhCN = {
       stepModel: "步骤模型（可选）",
       runModel: "使用运行时选择的模型",
       inputMapping: "输入映射（固定）",
-      inputMappingHint: "P0 固定向提示步骤传入完整运行输入；非空自定义映射尚无真实执行契约。",
+      inputMappingHint:
+        "P0 固定向提示步骤传入完整运行输入；非空自定义映射尚无真实执行契约。",
       queryTemplate: "检索查询模板",
       queryPlaceholder: "输入用于搜索当前项目已解析文档的关键词或问题…",
       limit: "结果上限",
       outputFormat: "输出格式",
       outputText: "文本",
       outputJson: "严格 JSON",
-      requiredFields: "请填写所有步骤名称及必填配置，并将检索上限设为 1 到 100。",
+      requiredFields:
+        "请填写所有步骤名称及必填配置，并将检索上限设为 1 到 100。",
       outputLast: "输出步骤必须位于最后。",
       outputNeedsPrompt: "输出步骤前至少需要一个提示步骤。",
-      modelConflict: "同一次运行只能使用一个不可变模型；所有指定模型的提示步骤必须一致。",
+      modelConflict:
+        "同一次运行只能使用一个不可变模型；所有指定模型的提示步骤必须一致。",
     },
     editor: {
       details: "编辑信息",
@@ -446,7 +534,8 @@ const zhCN = {
   },
   tabular: {
     title: "表格",
-    subtitle: "用已通过连接测试的模型，从项目文档批量提取结构化结果，并保留精确引用。",
+    subtitle:
+      "用已通过连接测试的模型，从项目文档批量提取结构化结果，并保留精确引用。",
     create: "新建表格审阅",
     run: "运行",
     stop: "停止",
@@ -495,7 +584,8 @@ const zhCN = {
       chooseProjectFirst: "先选择项目，再选择其中已解析就绪的文档。",
       model: "模型",
       chooseModel: "选择已验证模型",
-      noReadyModel: "没有已启用且通过连接测试的模型；请先在设置中完成模型测试。",
+      noReadyModel:
+        "没有已启用且通过连接测试的模型；请先在设置中完成模型测试。",
       documents: "项目文档",
       readyDocumentsOnly: "只有已解析就绪的文档可加入审阅。",
       noDocuments: "这个项目还没有可用文档。",
@@ -521,7 +611,8 @@ const zhCN = {
       empty: "至少添加一列并写明真实提取指令。",
       actions: "{name} 的列操作",
       deleteTitle: "删除提取列？",
-      deleteBody: "删除“{name}”会重建审阅矩阵；已有结果可能被清除。此操作使用服务端持久状态，不会由界面伪造。",
+      deleteBody:
+        "删除“{name}”会重建审阅矩阵；已有结果可能被清除。此操作使用服务端持久状态，不会由界面伪造。",
     },
     formats: {
       text: "文本",
@@ -549,7 +640,8 @@ const zhCN = {
     },
     documents: {
       manage: "管理审阅文档",
-      readyOnly: "保存会以项目中已解析就绪的文档重建持久矩阵；可移除全部文档并保留空审阅。",
+      readyOnly:
+        "保存会以项目中已解析就绪的文档重建持久矩阵；可移除全部文档并保留空审阅。",
       matrixLimit: "一个审阅最多包含 10,000 个单元格",
     },
     cell: {
@@ -618,6 +710,7 @@ const zhCN = {
     tabs: {
       general: "通用",
       models: "模型",
+      legalSources: "法律数据源",
       data: "本地数据",
     },
     general: {
@@ -716,6 +809,104 @@ const zhCN = {
         form: "请填写名称、受支持的 Provider 和模型标识；兼容 Provider 还需要 Base URL。",
       },
     },
+    legalSources: {
+      title: "法律数据源",
+      description:
+        "查看获授权法律数据源的本地部署、凭据和数据使用声明。此页面不会向 Provider 发起请求。",
+      loading: "正在读取本地法律数据源状态。",
+      providerContract: "授权 JSON 网关 · 本地配置状态",
+      localStatus: {
+        title: "仅显示本地配置状态",
+        body: "“已配置但未验证”不等于“已连接”。Vera 只检查本机部署与加密凭据是否就绪，不会从此页面联系 Provider；在留存执行门禁完成前，本版本的生产外呼保持关闭。",
+      },
+      providers: {
+        pkulaw: "北大法宝",
+        wolters: "威科先行",
+      },
+      status: {
+        configuredUnverified: "已配置但未验证",
+        unavailable: "不可用",
+        configuredUnverifiedBody:
+          "本地配置和凭据可用，但未执行 Provider 网络验证，不能据此判断已连接；当前生产外呼门禁仍关闭。",
+        reasons: {
+          endpointMissing: "部署未配置授权端点。",
+          endpointNotAllowlisted: "部署端点不在允许列表中。",
+          credentialReferenceMissing: "部署未配置凭据引用。",
+          credentialUnavailable: "尚未保存可用的本地密钥。",
+          secretStorageUnavailable: "本地加密密钥存储当前不可用。",
+        },
+      },
+      readiness: {
+        title: "部署就绪状态",
+        endpoint: "授权端点",
+        allowlist: "端点允许列表",
+        credentialReference: "凭据引用",
+        encryption: "本地密钥加密",
+        ready: "就绪",
+        notReady: "未就绪",
+      },
+      credential: {
+        title: "本地密钥",
+        configured: "本地密钥已保存",
+        missing: "尚未保存本地密钥",
+        localOnly: "仅由本地服务加密保存",
+        formLabel: "{provider} 密钥表单",
+        inputLabel: "新密钥",
+        placeholder: "粘贴新密钥（不会回显）",
+        description:
+          "密钥通过本机 API 一次性提交，输入框会在请求前立即清空。后端仅在 SQLCipher 中保存应用层密文，绝不向界面回显明文。",
+        actionsReady: "部署和本地加密均已就绪，可以安全保存、替换或移除密钥。",
+        deploymentDisabled:
+          "部署尚未就绪，保存和替换已停用；仍可移除已有本地密钥。",
+        encryptionDisabled:
+          "本地加密存储不可用，保存和替换已停用；仍可移除已有本地密钥。",
+        store: "安全保存",
+        replace: "替换密钥",
+        remove: "移除密钥",
+        saved: "本地服务已安全保存密钥；当前状态已重新读取。",
+        removed: "本地密钥已移除；当前状态已重新读取。",
+        savedRefreshFailed:
+          "密钥已提交，但无法重新读取最新状态。请重试刷新；Vera 不会伪造保存结果。",
+        removedRefreshFailed:
+          "移除请求已完成，但无法重新读取最新状态。请重试刷新；Vera 不会伪造移除结果。",
+        removeConfirmTitle: "移除本地密钥？",
+        removeConfirmBody:
+          "移除 {provider} 的本地密钥后，该数据源将不可用，直到再次安全保存密钥。",
+      },
+      policy: {
+        title: "数据使用声明",
+        description:
+          "以下内容来自部署契约；未声明的权限一律不能从 API 可访问性中推断。",
+        basis: "声明依据",
+        retention: "保留策略",
+        export: "导出策略",
+        modelUse: "模型使用策略",
+        notDeclaredWarning:
+          "至少一项策略未声明。Vera 不会据此推断全文保留、导出或模型使用权限。",
+        ttlDeclarationWarning:
+          "全文 TTL 当前仅是部署契约声明；在所有读取、引用、导出和模型上下文入口完成到期拦截前，不代表 Vera 已执行自动删除。",
+        values: {
+          notDeclared: "未声明",
+          deploymentContract: "部署契约",
+          noRetention: "不保留",
+          metadataOnly: "仅元数据",
+          fullTextTtl: "全文限时保留",
+          fullTextPermitted: "允许保留全文",
+          prohibited: "禁止",
+          exactQuotesOnly: "仅精确引文",
+          reviewedWorkProduct: "仅经复核工作成果",
+          permitted: "允许",
+          localOnly: "仅限本地模型",
+        },
+      },
+      empty: {
+        title: "没有可显示的法律数据源",
+        body: "本地服务未返回受支持的 Provider。Vera 不会创建占位配置。",
+      },
+      errors: {
+        loadTitle: "法律数据源状态不可用",
+      },
+    },
     appearance: {
       title: "外观",
       theme: "主题",
@@ -751,16 +942,19 @@ const zhCN = {
       backup: {
         title: "加密备份与恢复",
         create: "创建加密备份",
-        createDescription: "复用 Vera 现有备份工具，在本机停止服务后生成经过认证的加密归档。",
+        createDescription:
+          "复用 Vera 现有备份工具，在本机停止服务后生成经过认证的加密归档。",
         createAction: "创建备份",
         created: "加密备份已创建。",
         inspect: "恢复前检查",
-        inspectDescription: "先验证加密认证、归档路径、manifest 和工作区结构，不会覆盖现有数据。",
+        inspectDescription:
+          "先验证加密认证、归档路径、manifest 和工作区结构，不会覆盖现有数据。",
         inspectAction: "检查备份",
         checkPassed: "备份检查通过，可以恢复。",
         checkFailed: "备份未通过完整性检查，未更改当前工作区。",
         restore: "恢复工作区",
-        restoreDescription: "仅能恢复刚刚通过检查的备份；启动失败时会自动恢复原工作区。",
+        restoreDescription:
+          "仅能恢复刚刚通过检查的备份；启动失败时会自动恢复原工作区。",
         restoreAction: "恢复备份",
         restored: "工作区恢复完成。",
         openRestored: "打开恢复后的工作区",
@@ -768,11 +962,13 @@ const zhCN = {
       diagnostics: {
         title: "诊断",
         logs: "本地日志",
-        logsDescription: "打开 Vera 日志目录；日志不应记录 API 密钥或完整文档内容。",
+        logsDescription:
+          "打开 Vera 日志目录；日志不应记录 API 密钥或完整文档内容。",
         openLogs: "打开日志文件夹",
         logsOpened: "已打开日志文件夹。",
         export: "导出脱敏诊断包",
-        exportDescription: "只导出版本、服务、安全状态和文件数量/大小；不含 API 密钥、路径、日志正文、Prompt、对话或原始文档。",
+        exportDescription:
+          "只导出版本、服务、安全状态和文件数量/大小；不含 API 密钥、路径、日志正文、Prompt、对话或原始文档。",
         exportAction: "导出诊断包",
         exported: "脱敏诊断包已导出。",
       },
@@ -828,7 +1024,8 @@ const zhCN = {
     invalidResponse: "Vera 收到了无法识别的本地服务响应。请重试。",
     localControl: "无法连接本地服务。请重新启动 Vera。",
     modelUnavailable: "当前没有可用模型。请在设置中配置、启用并完成连接测试。",
-    modelConnection: "模型连接测试失败。请检查 Provider、模型标识、地址和凭据后重试。",
+    modelConnection:
+      "模型连接测试失败。请检查 Provider、模型标识、地址和凭据后重试。",
     modelCredentialMissing: "此模型尚未配置凭据。请先安全保存 API 密钥。",
     modelCredentialInvalid: "模型凭据无效。请安全保存新的 API 密钥后重试。",
     credentialWriteUnavailable: "桌面安全凭据服务当前不提供写入能力。",
@@ -901,7 +1098,8 @@ const enUS = {
   },
   projects: {
     title: "Projects",
-    subtitle: "Create projects and organize project documents and versions locally.",
+    subtitle:
+      "Create projects and organize project documents and versions locally.",
     all: "All projects",
     recent: "Recent projects",
     create: "New project",
@@ -919,7 +1117,8 @@ const enUS = {
       load: "Projects could not be loaded. Try again.",
       create: "The project could not be created. Check the name and try again.",
       update: "The project could not be updated. Try again.",
-      delete: "The project could not be deleted. Its contents were not changed.",
+      delete:
+        "The project could not be deleted. Its contents were not changed.",
     },
     deleteConfirm: {
       title: "Delete project?",
@@ -939,6 +1138,16 @@ const enUS = {
     moveToFolder: "Move to folder",
     removeFromProject: "Remove from project",
     version: "Version {version}",
+    ocr: {
+      used: "OCR · {count} pages",
+      reviewRequired: "Review required",
+      summary: "OCR recognition",
+      engine: "Recognition engine",
+      engineAppleVision: "Apple Vision",
+      lowConfidencePages: "Low-confidence pages: {pages}",
+      lowConfidencePagesTruncated:
+        "Showing the first {shown} of {count} pages that require review.",
+    },
     empty: {
       title: "No documents yet",
       body: "Upload materials and manage their versions locally. Assistant, Workflows, and Tabular review can use parsed documents when authorized.",
@@ -946,7 +1155,8 @@ const enUS = {
     },
     errors: {
       load: "Documents could not be loaded. Try again.",
-      upload: "The document could not be uploaded. The original file was not changed.",
+      upload:
+        "The document could not be uploaded. The original file was not changed.",
       download: "The download could not be prepared. Try again.",
       move: "The document could not be moved. Try again.",
       delete: "The document could not be deleted. Try again.",
@@ -958,9 +1168,87 @@ const enUS = {
       action: "Delete document permanently",
     },
   },
+  studio: {
+    title: "Document Studio",
+    newDraft: "New draft",
+    newDraftTitle: "Create document draft",
+    titleLabel: "Draft title",
+    titlePlaceholder: "For example: Contract review memo",
+    create: "Create and open",
+    creating: "Creating…",
+    open: "Open Studio",
+    back: "Back to Project documents",
+    editorLabel: "Document body",
+    currentVersion: "Current version {version}",
+    historicalVersion: "Historical version {version}",
+    versions: "Version history",
+    citations: "Citation sources",
+    noCitations: "This version has no source citations.",
+    current: "Current",
+    viewVersion: "View version {version}",
+    restore: "Restore as new version",
+    restoring: "Restoring…",
+    save: "Save new version",
+    unsaved: "Unsaved changes",
+    saved: "Saved",
+    saving: "Saving…",
+    sourceSnapshot: "Source snapshot {id}",
+    copyLocal: "Copy local draft",
+    reloadLatest: "Load latest version",
+    reloadConfirm: {
+      title: "Load the latest server version?",
+      body: "Local changes in the editor will be discarded. Copy the local draft first if you need to preserve it.",
+      action: "Discard local changes and load",
+    },
+    docx: {
+      import: "Import DOCX",
+      importing: "Importing…",
+      export: "Export DOCX",
+      exporting: "Exporting…",
+      exportSavedOnly:
+        "Export includes only the current saved immutable version, not unsaved editor changes.",
+      importWarnings: "The DOCX was imported with conversion notes",
+      exportWarnings: "The DOCX was exported with conversion notes",
+      confirm: {
+        title: "Import DOCX as a new version?",
+        body: "“{name}” will be converted to Markdown and saved as a new immutable version. The current saved version will not be overwritten.",
+        action: "Import and create version",
+      },
+      warnings: {
+        DOCX_IMAGES_IGNORED: "Images in the DOCX were not imported.",
+        DOCX_FORMATTING_SIMPLIFIED:
+          "Some DOCX formatting was simplified to Studio-supported Markdown.",
+        DOCX_CONVERTER_WARNING:
+          "The converter reported a possible layout issue; review the imported content.",
+        MARKDOWN_IMAGES_OMITTED:
+          "Markdown images are represented by alt text only in the DOCX.",
+        MARKDOWN_HTML_AS_TEXT: "Raw HTML was exported as inert plain text.",
+        MARKDOWN_BLOCKQUOTE_SIMPLIFIED:
+          "Block quotes use simplified styling in the DOCX.",
+      },
+    },
+    errors: {
+      load: "The real document draft could not be loaded. Check the local service and try again.",
+      save: "Save failed; the local edits remain in this page.",
+      import:
+        "DOCX import failed; the saved version and editor content are unchanged.",
+      export: "The selected saved version could not be exported. Try again.",
+      restore:
+        "The selected version could not be restored. The current version is unchanged.",
+      versions: "Version history could not be loaded.",
+      offline:
+        "The local service connection is offline. Edits remain in this page; save after the connection returns.",
+      conflict:
+        "This document changed elsewhere. Local edits have not overwritten the server version.",
+      clipboard:
+        "The local draft could not be copied. Copy it directly from the editor.",
+      historyDirty: "Save or discard local changes before viewing history.",
+    },
+  },
   assistant: {
     title: "Assistant",
-    subtitle: "Use an enabled model in durable local conversations to analyse materials and complete legal work.",
+    subtitle:
+      "Use an enabled model in durable local conversations to analyse materials and complete legal work.",
     newChat: "New chat",
     untitled: "Untitled conversation",
     projectScope: "Project scope",
@@ -970,7 +1258,8 @@ const enUS = {
     send: "Send",
     stop: "Stop generating",
     sources: "Sources",
-    disclaimer: "AI can make mistakes. Verify important facts, citations, and legal conclusions.",
+    disclaimer:
+      "AI can make mistakes. Verify important facts, citations, and legal conclusions.",
     scrollBottom: "Scroll to bottom",
     resume: "Resume receiving",
     citation: "Citation",
@@ -997,7 +1286,8 @@ const enUS = {
       chat: "Conversation",
     },
     project: {
-      emptyBody: "Ask questions within this Project's document scope and keep durable local conversation history.",
+      emptyBody:
+        "Ask questions within this Project's document scope and keep durable local conversation history.",
       restoring: "Restoring Project conversation…",
       wrongScope: "This conversation does not belong to the current Project.",
       backToChats: "Back to Project conversations",
@@ -1009,7 +1299,8 @@ const enUS = {
       remove: "Remove {filename}",
       search: "Search documents",
       loading: "Reading local documents…",
-      loadError: "Documents could not be read. Close this dialog and try again.",
+      loadError:
+        "Documents could not be read. Close this dialog and try again.",
       empty: "No parsed documents are available.",
       addCount: "Add ({count})",
       projectTitle: "{project} · Add documents",
@@ -1052,14 +1343,17 @@ const enUS = {
     errors: {
       load: "The conversation could not be loaded. Try again.",
       send: "The generation job could not be started; the message was not presented as sent.",
-      stream: "The local service still owns the generation job, but the event connection ended. Resume receiving events.",
+      stream:
+        "The local service still owns the generation job, but the event connection ended. Resume receiving events.",
       failed: "The generation job failed. Check the model state and try again.",
-      interrupted: "Generation was interrupted when Vera last exited. You can retry it.",
+      interrupted:
+        "Generation was interrupted when Vera last exited. You can retry it.",
     },
   },
   workflows: {
     title: "Workflows",
-    subtitle: "Create reusable legal instructions and run them durably with a connection-tested model.",
+    subtitle:
+      "Create reusable legal instructions and run them durably with a connection-tested model.",
     create: "New workflow",
     run: "Run",
     runAgain: "Retry from failure",
@@ -1091,7 +1385,8 @@ const enUS = {
       clearFilters: "Clear filters",
       projectHint: "Projects can optionally use these workflows.",
       open: "Open workflow: {name}",
-      deleteMessage: "“{name}” will be permanently removed from the local workspace.",
+      deleteMessage:
+        "“{name}” will be permanently removed from the local workspace.",
     },
     form: {
       create: "New workflow",
@@ -1099,7 +1394,8 @@ const enUS = {
       saveChanges: "Save changes",
       saving: "Saving…",
       createAction: "Create workflow",
-      localHint: "Workflow templates are stored independently on this device; a Project is only an optional run container.",
+      localHint:
+        "Workflow templates are stored independently on this device; a Project is only an optional run container.",
       name: "Name",
       namePlaceholder: "For example: Contract risk summary",
       type: "Type",
@@ -1157,7 +1453,8 @@ const enUS = {
     },
     errors: {
       load: "The workflow or its run history could not be loaded. Check the local service and try again.",
-      definitionLoad: "The workflow definition could not be loaded. Vera will not show or run a draft before reading the real local configuration.",
+      definitionLoad:
+        "The workflow definition could not be loaded. Vera will not show or run a draft before reading the real local configuration.",
       save: "The workflow could not be saved. Existing content was not overwritten.",
       run: "The workflow run state could not be updated. The interface will not fabricate progress.",
       retry: "This run could not be retried from its failed step.",
@@ -1179,17 +1476,21 @@ const enUS = {
     },
     execution: {
       title: "Run workflow",
-      localDurable: "Status and steps come from durable local records and recover after refresh.",
+      localDurable:
+        "Status and steps come from durable local records and recover after refresh.",
       restoring: "Restoring local run history…",
-      unavailable: "The local workflow executor is not ready; no run will be queued or simulated.",
+      unavailable:
+        "The local workflow executor is not ready; no run will be queued or simulated.",
       noReadyModel: "No enabled, connection-tested model is available.",
-      configuredModelUnavailable: "The model assigned to a step is unavailable or does not have a current passing connection test.",
+      configuredModelUnavailable:
+        "The model assigned to a step is unavailable or does not have a current passing connection test.",
       openModels: "Open model settings",
       model: "Model",
       chooseModel: "Choose an available model",
       noProject: "No project",
       additionalInput: "Additional input (optional)",
-      additionalInputPlaceholder: "Describe this run's scope, focus, or output requirements…",
+      additionalInputPlaceholder:
+        "Describe this run's scope, focus, or output requirements…",
       noRuns: "No run history yet.",
       loadMore: "Load more",
       selectRun: "Select a run to inspect its steps and result.",
@@ -1205,7 +1506,8 @@ const enUS = {
     },
     definition: {
       title: "Workflow definition",
-      description: "Configure bounded steps in order. The name, Project, and every step are stored in the local workspace.",
+      description:
+        "Configure bounded steps in order. The name, Project, and every step are stored in the local workspace.",
       loading: "Reading the local workflow definition…",
       save: "Save definition",
       name: "Workflow name",
@@ -1213,11 +1515,14 @@ const enUS = {
       noProject: "No fixed Project",
       unavailableProject: "Previously bound Project is unavailable",
       workflowDescription: "Description",
-      descriptionPlaceholder: "Describe the purpose and scope of this workflow (optional)",
-      projectsLoadFailed: "The Project list could not be loaded. The interface will not overwrite the existing association.",
+      descriptionPlaceholder:
+        "Describe the purpose and scope of this workflow (optional)",
+      projectsLoadFailed:
+        "The Project list could not be loaded. The interface will not overwrite the existing association.",
       steps: "Steps",
       stepCount: "{count} / 100 bounded steps",
-      emptySteps: "No steps yet. Add a prompt, document retrieval, or output step.",
+      emptySteps:
+        "No steps yet. Add a prompt, document retrieval, or output step.",
       defaultPromptName: "Model prompt",
       defaultRetrievalName: "Retrieve Project documents",
       defaultOutputName: "Prepare output",
@@ -1237,21 +1542,26 @@ const enUS = {
       removeStep: "Delete step",
       stepName: "Step name",
       prompt: "Prompt",
-      promptPlaceholder: "Write the precise instruction this step sends to the model…",
+      promptPlaceholder:
+        "Write the precise instruction this step sends to the model…",
       stepModel: "Step model (optional)",
       runModel: "Use the model selected for the run",
       inputMapping: "Input mapping (fixed)",
-      inputMappingHint: "P0 passes the complete run input to prompt steps. A non-empty custom mapping has no real execution contract yet.",
+      inputMappingHint:
+        "P0 passes the complete run input to prompt steps. A non-empty custom mapping has no real execution contract yet.",
       queryTemplate: "Retrieval query template",
-      queryPlaceholder: "Enter keywords or a question used to search parsed documents in the current Project…",
+      queryPlaceholder:
+        "Enter keywords or a question used to search parsed documents in the current Project…",
       limit: "Result limit",
       outputFormat: "Output format",
       outputText: "Text",
       outputJson: "Strict JSON",
-      requiredFields: "Complete every step name and required field, and set retrieval limits from 1 to 100.",
+      requiredFields:
+        "Complete every step name and required field, and set retrieval limits from 1 to 100.",
       outputLast: "The output step must be last.",
       outputNeedsPrompt: "An output step requires an earlier prompt step.",
-      modelConflict: "A run uses one immutable model. Every prompt step with an assigned model must select the same profile.",
+      modelConflict:
+        "A run uses one immutable model. Every prompt step with an assigned model must select the same profile.",
     },
     editor: {
       details: "Edit details",
@@ -1269,9 +1579,11 @@ const enUS = {
       builtinSource: "Vera built-in workflow",
       localSource: "Local workflow",
       instructions: "Workflow instructions",
-      instructionsHint: "Edit the reusable Markdown instructions executed by the model.",
+      instructionsHint:
+        "Edit the reusable Markdown instructions executed by the model.",
       columns: "Extraction columns",
-      columnsHint: "Configure the columns and output formats used by Tabular review.",
+      columnsHint:
+        "Configure the columns and output formats used by Tabular review.",
       addColumn: "Add column",
       saveColumns: "Save columns",
       saveInstructions: "Save instructions",
@@ -1294,7 +1606,8 @@ const enUS = {
   },
   tabular: {
     title: "Tabular",
-    subtitle: "Extract structured results from Project documents with a connection-tested model and retain exact sources.",
+    subtitle:
+      "Extract structured results from Project documents with a connection-tested model and retain exact sources.",
     create: "New Tabular review",
     run: "Run",
     stop: "Stop",
@@ -1324,7 +1637,8 @@ const enUS = {
       status: "Status",
       allProjects: "All Projects",
       noMatches: "No matching Tabular reviews",
-      noMatchesBody: "Adjust the search, Project, or status filter and try again.",
+      noMatchesBody:
+        "Adjust the search, Project, or status filter and try again.",
       actions: "Actions for {name}",
       clearSelection: "Clear {count} selected",
     },
@@ -1340,16 +1654,19 @@ const enUS = {
       namePlaceholder: "For example: Key contract terms review",
       project: "Project",
       chooseProject: "Choose a Project",
-      chooseProjectFirst: "Choose a Project before selecting its parsed documents.",
+      chooseProjectFirst:
+        "Choose a Project before selecting its parsed documents.",
       model: "Model",
       chooseModel: "Choose a verified model",
-      noReadyModel: "No enabled model has a current passing connection test. Configure and test a model in Settings first.",
+      noReadyModel:
+        "No enabled model has a current passing connection test. Configure and test a model in Settings first.",
       documents: "Project documents",
       readyDocumentsOnly: "Only documents with completed parsing can be added.",
       noDocuments: "This Project has no available documents.",
       selectAll: "Select all ready documents",
       clearSelection: "Clear selection",
-      matrixSize: "{documents} documents × {columns} columns = {cells} durable cells",
+      matrixSize:
+        "{documents} documents × {columns} columns = {cells} durable cells",
     },
     columns: {
       title: "Extraction columns",
@@ -1365,11 +1682,13 @@ const enUS = {
       tags: "Allowed tags (comma-separated)",
       tagsPlaceholder: "High risk, Medium risk, Low risk",
       prompt: "Extraction instruction",
-      promptPlaceholder: "State exactly what to extract from each document and how it must be returned.",
+      promptPlaceholder:
+        "State exactly what to extract from each document and how it must be returned.",
       empty: "Add at least one column with a real extraction instruction.",
       actions: "Column actions for {name}",
       deleteTitle: "Delete extraction column?",
-      deleteBody: "Deleting “{name}” rebuilds the review matrix and may clear saved results. The interface relies on server-persisted state and will not fabricate a result.",
+      deleteBody:
+        "Deleting “{name}” rebuilds the review matrix and may clear saved results. The interface relies on server-persisted state and will not fabricate a result.",
     },
     formats: {
       text: "Text",
@@ -1384,20 +1703,24 @@ const enUS = {
     },
     table: {
       noDocuments: "No review documents",
-      noDocumentsBody: "Choose parsed documents from the current Project. Vera will not create placeholder documents.",
+      noDocumentsBody:
+        "Choose parsed documents from the current Project. Vera will not create placeholder documents.",
       noColumns: "No extraction columns",
-      noColumnsBody: "Add structured extraction columns with an output format and instruction before running.",
+      noColumnsBody:
+        "Add structured extraction columns with an output format and instruction before running.",
       pageRange: "Showing {start}–{end} of {total}",
       previousPage: "Previous",
       nextPage: "Next",
     },
     details: {
       title: "Edit review details",
-      projectLocked: "A Project cannot be changed while the review contains documents. Update the document matrix first.",
+      projectLocked:
+        "A Project cannot be changed while the review contains documents. Update the document matrix first.",
     },
     documents: {
       manage: "Manage review documents",
-      readyOnly: "Saving rebuilds the durable matrix from parsed Project documents. Remove every document to keep an empty review.",
+      readyOnly:
+        "Saving rebuilds the durable matrix from parsed Project documents. Remove every document to keep an empty review.",
       matrixLimit: "A review can contain at most 10,000 cells",
     },
     cell: {
@@ -1448,9 +1771,11 @@ const enUS = {
       load: "The Tabular review could not be loaded. Check the local service and try again.",
       save: "The Tabular review could not be saved. Existing durable data was not overwritten by the interface.",
       run: "The real generation state could not be updated. The interface will not fabricate progress or results.",
-      export: "The Tabular review could not be exported from the local service.",
+      export:
+        "The Tabular review could not be exported from the local service.",
       notFound: "The Tabular review could not be opened",
-      projectScope: "This Tabular review does not belong to the current Project.",
+      projectScope:
+        "This Tabular review does not belong to the current Project.",
     },
     deleteConfirm: {
       title: "Delete Tabular review?",
@@ -1467,6 +1792,7 @@ const enUS = {
     tabs: {
       general: "General",
       models: "Models",
+      legalSources: "Legal sources",
       data: "Local data",
     },
     general: {
@@ -1570,6 +1896,109 @@ const enUS = {
         form: "Enter a name, a supported provider, and a model identifier. Compatible providers also require a base URL.",
       },
     },
+    legalSources: {
+      title: "Legal sources",
+      description:
+        "Review the local deployment, credential, and data-use declarations for authorized legal sources. This page never calls a provider.",
+      loading: "Reading local legal-source status.",
+      providerContract: "Authorized JSON gateway · local configuration status",
+      localStatus: {
+        title: "Local configuration status only",
+        body: "Configured but unverified does not mean connected. Vera checks only local deployment and encrypted-credential readiness and never contacts a provider from this page; production egress remains closed until retention enforcement is complete.",
+      },
+      providers: {
+        pkulaw: "PKULAW (北大法宝)",
+        wolters: "Wolters Kluwer China (威科先行)",
+      },
+      status: {
+        configuredUnverified: "Configured, not verified",
+        unavailable: "Unavailable",
+        configuredUnverifiedBody:
+          "Local configuration and a credential are available, but no provider network verification was performed. This is not proof of a connection, and the production egress gate remains closed.",
+        reasons: {
+          endpointMissing: "The authorized endpoint is not configured.",
+          endpointNotAllowlisted: "The deployment endpoint is not allowlisted.",
+          credentialReferenceMissing:
+            "The deployment has no credential reference.",
+          credentialUnavailable: "No usable local secret has been stored.",
+          secretStorageUnavailable:
+            "Local encrypted secret storage is unavailable.",
+        },
+      },
+      readiness: {
+        title: "Deployment readiness",
+        endpoint: "Authorized endpoint",
+        allowlist: "Endpoint allowlist",
+        credentialReference: "Credential reference",
+        encryption: "Local secret encryption",
+        ready: "Ready",
+        notReady: "Not ready",
+      },
+      credential: {
+        title: "Local secret",
+        configured: "A local secret is stored",
+        missing: "No local secret is stored",
+        localOnly: "Encrypted by the local service only",
+        formLabel: "{provider} secret form",
+        inputLabel: "New secret",
+        placeholder: "Paste a new secret (never displayed)",
+        description:
+          "The secret is submitted once over the local API and the field is cleared before the request. The backend stores only application-layer ciphertext in SQLCipher and never returns the plaintext to the UI.",
+        actionsReady:
+          "Deployment and local encryption are ready for secure secret storage, replacement, or removal.",
+        deploymentDisabled:
+          "The deployment is not ready, so storage and replacement are disabled. An existing local secret can still be removed.",
+        encryptionDisabled:
+          "Local encrypted storage is unavailable, so storage and replacement are disabled. An existing local secret can still be removed.",
+        store: "Store securely",
+        replace: "Replace secret",
+        remove: "Remove secret",
+        saved:
+          "The local service stored the secret securely and the current status was reloaded.",
+        removed:
+          "The local secret was removed and current status was reloaded.",
+        savedRefreshFailed:
+          "The secret was submitted, but the latest status could not be reloaded. Retry refresh; Vera will not fabricate a save result.",
+        removedRefreshFailed:
+          "The removal request completed, but the latest status could not be reloaded. Retry refresh; Vera will not fabricate a removal result.",
+        removeConfirmTitle: "Remove the local secret?",
+        removeConfirmBody:
+          "Removing the local secret for {provider} makes this source unavailable until another secret is stored securely.",
+      },
+      policy: {
+        title: "Data-use declaration",
+        description:
+          "These values come from the deployment contract. Rights that are not declared cannot be inferred from API access.",
+        basis: "Declaration basis",
+        retention: "Retention policy",
+        export: "Export policy",
+        modelUse: "Model-use policy",
+        notDeclaredWarning:
+          "At least one policy is not declared. Vera does not infer full-text retention, export, or model-use rights.",
+        ttlDeclarationWarning:
+          "Full-text TTL is currently a deployment-contract declaration only. It does not mean Vera enforces automatic deletion until expiry gates cover every read, citation, export, and model-context path.",
+        values: {
+          notDeclared: "Not declared",
+          deploymentContract: "Deployment contract",
+          noRetention: "No retention",
+          metadataOnly: "Metadata only",
+          fullTextTtl: "Full text with TTL",
+          fullTextPermitted: "Full text permitted",
+          prohibited: "Prohibited",
+          exactQuotesOnly: "Exact quotes only",
+          reviewedWorkProduct: "Reviewed work product only",
+          permitted: "Permitted",
+          localOnly: "Local models only",
+        },
+      },
+      empty: {
+        title: "No legal sources to display",
+        body: "The local service returned no supported providers. Vera will not create placeholder configuration.",
+      },
+      errors: {
+        loadTitle: "Legal-source status unavailable",
+      },
+    },
     appearance: {
       title: "Appearance",
       theme: "Theme",
@@ -1642,7 +2071,8 @@ const enUS = {
         exported: "The redacted diagnostic bundle was exported.",
       },
       errors: {
-        desktopOnly: "These actions are available only in the Vera desktop client.",
+        desktopOnly:
+          "These actions are available only in the Vera desktop client.",
         action:
           "The desktop action could not be completed. Existing local data was not deleted automatically.",
       },
@@ -1657,7 +2087,8 @@ const enUS = {
   },
   workspace: {
     title: "Local workspace",
-    description: "Project materials are stored in Vera's data directory on this device.",
+    description:
+      "Project materials are stored in Vera's data directory on this device.",
     localOnly: "On this device",
     dataLocation: "Data location",
     database: "Workspace database",
@@ -1671,8 +2102,10 @@ const enUS = {
     integrityHealthy: "The workspace integrity check passed.",
     errors: {
       unavailable: "The local workspace is unavailable. Restart Vera.",
-      integrity: "The workspace integrity check did not pass. Preserve the current data before reviewing diagnostics.",
-      storage: "There is not enough local storage. Free some space and try again.",
+      integrity:
+        "The workspace integrity check did not pass. Preserve the current data before reviewing diagnostics.",
+      storage:
+        "There is not enough local storage. Free some space and try again.",
     },
     resetConfirm: {
       title: "Clear local workspace?",
@@ -1682,27 +2115,40 @@ const enUS = {
     },
   },
   errors: {
-    validation: "Some information is missing or invalid. Check it and try again.",
+    validation:
+      "Some information is missing or invalid. Check it and try again.",
     notFound: "The requested content does not exist or has been deleted.",
     conflict: "This content has changed. Refresh and try again.",
-    precondition: "This action is not available in the current state. Refresh and try again.",
+    precondition:
+      "This action is not available in the current state. Refresh and try again.",
     unauthorized: "The local session has expired. Restart Vera.",
     forbidden: "The current session is not allowed to perform this action.",
     rateLimited: "There have been too many requests. Try again shortly.",
-    jobFailed: "The background task could not finish. Review its status and try again.",
-    internal: "Vera could not complete this action. Your local data will not be deleted automatically.",
-    invalidResponse: "Vera received an unrecognized response from the local service. Try again.",
+    jobFailed:
+      "The background task could not finish. Review its status and try again.",
+    internal:
+      "Vera could not complete this action. Your local data will not be deleted automatically.",
+    invalidResponse:
+      "Vera received an unrecognized response from the local service. Try again.",
     localControl: "The local service could not be reached. Restart Vera.",
-    modelUnavailable: "No model is currently available. Configure, enable, and connection-test one in Settings.",
-    modelConnection: "The model connection test failed. Check the provider, model identifier, endpoint, and credential, then try again.",
-    modelCredentialMissing: "This model has no credential. Store an API key securely first.",
-    modelCredentialInvalid: "The model credential is invalid. Store a new API key securely and try again.",
-    credentialWriteUnavailable: "The desktop secure credential service does not currently provide writes.",
-    credentialUnavailable: "The desktop secure credential service is unavailable. Restart Vera and try again.",
+    modelUnavailable:
+      "No model is currently available. Configure, enable, and connection-test one in Settings.",
+    modelConnection:
+      "The model connection test failed. Check the provider, model identifier, endpoint, and credential, then try again.",
+    modelCredentialMissing:
+      "This model has no credential. Store an API key securely first.",
+    modelCredentialInvalid:
+      "The model credential is invalid. Store a new API key securely and try again.",
+    credentialWriteUnavailable:
+      "The desktop secure credential service does not currently provide writes.",
+    credentialUnavailable:
+      "The desktop secure credential service is unavailable. Restart Vera and try again.",
     remoteDisabled: "This runtime does not provide remote model calls.",
     unsupported: "The current runtime does not support this action.",
-    network: "The connection failed. Check the local service or network and try again.",
-    unknown: "The action could not be completed. Try again; if the problem continues, review diagnostics.",
+    network:
+      "The connection failed. Check the local service or network and try again.",
+    unknown:
+      "The action could not be completed. Try again; if the problem continues, review diagnostics.",
   },
 } as const satisfies DictionaryShape<typeof zhCN>;
 
@@ -1740,8 +2186,11 @@ export function translateMessage(
 ): string {
   const template = readMessage(MESSAGES[locale], key);
   if (!values) return template;
-  return template.replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (token, name: string) => {
-    const value = values[name];
-    return value === undefined ? token : String(value);
-  });
+  return template.replace(
+    /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g,
+    (token, name: string) => {
+      const value = values[name];
+      return value === undefined ? token : String(value);
+    },
+  );
 }

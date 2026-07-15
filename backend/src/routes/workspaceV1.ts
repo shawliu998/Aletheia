@@ -481,7 +481,7 @@ function safeDisposition(
   return disposition;
 }
 
-function sendBinary(
+export function sendWorkspaceV1Download(
   request: Request,
   response: Response,
   download: WorkspaceV1Download,
@@ -854,7 +854,7 @@ function installDocuments(
         request.query.version_id === undefined
           ? undefined
           : Id.parse(request.query.version_id);
-      sendBinary(
+      sendWorkspaceV1Download(
         request,
         response,
         await port.displayDocument(
@@ -1205,7 +1205,7 @@ export function createWorkspaceV1Router(
         contextFor(request, options),
         DownloadToken.parse(request.params.token),
       );
-      sendBinary(request, response, {
+      sendWorkspaceV1Download(request, response, {
         ...download,
         disposition: "attachment",
       });

@@ -606,17 +606,19 @@ export type LegalSourceDeploymentStatus = {
 /**
  * Project the deployment prerequisites without exposing an endpoint, host list,
  * credential reference, or credential value to the local client. A configured
- * source is still unusable until the local encrypted credential is present.
+ * credentialed source is still unusable until the local encrypted credential
+ * is present; the credentialless official gateway still requires its endpoint
+ * and allowlist.
  */
 export function legalSourceDeploymentStatus(
-  provider: "pkulaw" | "wolters",
+  provider: LegalSourceProvider,
 ): LegalSourceDeploymentStatus {
-  const envProvider = provider.toUpperCase() as "PKULAW" | "WOLTERS";
-  const endpoint = process.env[`VERA_${envProvider}_API_ENDPOINT`]?.trim();
+  const environmentPrefix = provider === "official" ? "OFFICIAL_LEGAL" : provider.toUpperCase();
+  const endpoint = process.env[`VERA_${environmentPrefix}_API_ENDPOINT`]?.trim();
   const credentialRef = process.env[
-    `VERA_${envProvider}_API_CREDENTIAL_REF`
+    `VERA_${environmentPrefix}_API_CREDENTIAL_REF`
   ]?.trim();
-  const rawAllowedHosts = process.env[`VERA_${envProvider}_API_ALLOWED_HOSTS`]
+  const rawAllowedHosts = process.env[`VERA_${environmentPrefix}_API_ALLOWED_HOSTS`]
     ?.split(",")
     .map((host) => host.trim())
     .filter(Boolean);

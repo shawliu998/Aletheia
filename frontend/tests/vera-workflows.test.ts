@@ -708,6 +708,13 @@ test("Workflow UI retains pinned Mike provenance and connects only durable local
     ),
     "utf8",
   );
+  const richTextEditor = readFileSync(
+    path.join(
+      root,
+      "src/app/components/shared/VeraRichTextEditor.tsx",
+    ),
+    "utf8",
+  );
   const runPanel = readFileSync(
     path.join(root, "src/app/components/workflows/VeraWorkflowRunPanel.tsx"),
     "utf8",
@@ -725,7 +732,11 @@ test("Workflow UI retains pinned Mike provenance and connects only durable local
   );
   assert.match(list, /e32daad5a4c64a5561e04c53ee12411e3c5e7238/);
   assert.match(editor, /e32daad5a4c64a5561e04c53ee12411e3c5e7238/);
-  assert.match(promptEditor, /WorkflowPromptEditor\.tsx/);
+  assert.match(richTextEditor, /WorkflowPromptEditor\.tsx/);
+  assert.match(promptEditor, /VeraRichTextEditor/);
+  assert.doesNotMatch(promptEditor, /@tiptap|useEditor|StarterKit|TableKit/);
+  assert.match(richTextEditor, /@tiptap\/react/);
+  assert.match(richTextEditor, /vera-rich-text-editor-content/);
   assert.match(runPanel, /UseWorkflowModal\.tsx/);
   assert.match(definitionEditor, /e32daad5a4c64a5561e04c53ee12411e3c5e7238/);
   assert.match(adapter, /frontend\/src\/app\/lib\/mikeApi\.ts/);

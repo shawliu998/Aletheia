@@ -16,16 +16,19 @@ import {
     ChevronRight,
     Download,
     FileUp,
+    FilePenLine,
     Folder,
     FolderOpen,
     FolderPlus,
     Loader2,
     Pencil,
     RefreshCw,
+    ScanText,
     Trash2,
     Upload,
     X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { AddProjectDocsModal } from "@/app/components/shared/AddProjectDocsModal";
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { VersionChip } from "@/app/components/shared/VersionChip";
@@ -46,6 +49,7 @@ import {
     uploadVeraDocument,
     uploadVeraDocumentVersion,
 } from "@/app/lib/veraApi";
+import { createVeraStudioDocument } from "@/app/lib/veraDocumentStudioApi";
 import type {
     VeraDocumentVersionWire,
     VeraDocumentWire,
@@ -82,6 +86,7 @@ const VERA_DOCUMENT_DRAG = "application/vera-document";
 const VERA_FOLDER_DRAG = "application/vera-folder";
 
 export function ProjectDocumentsView({ projectId }: Props) {
+    const router = useRouter();
     const {
         project,
         documents,
@@ -133,6 +138,8 @@ export function ProjectDocumentsView({ projectId }: Props) {
         useState<VeraDocumentWire | null>(null);
     const [pendingDeleteFolder, setPendingDeleteFolder] =
         useState<FolderDeleteImpact | null>(null);
+    const [newDraftOpen, setNewDraftOpen] = useState(false);
+    const [newDraftTitle, setNewDraftTitle] = useState("");
     const rootUploadRef = useRef<HTMLInputElement>(null);
     const versionUploadRef = useRef<HTMLInputElement>(null);
     const versionUploadTargetRef = useRef<string | null>(null);
@@ -571,6 +578,20 @@ export function ProjectDocumentsView({ projectId }: Props) {
         if (opening) void loadVersions(documentId);
     };
 
+    const validNewDraftTitle =
+        newDraftTitle.trim().length > 0 &&
+        [...newDraftTitle.trim()].length <= 240;
+    const submitNewDraft = () =>
+        perform("studio-create", async () => {
+            const created = await createVeraStudioDocument(projectId, {
+                title: newDraftTitle,
+            });
+            setNewDraftOpen(false);
+            router.push(
+                `/projects/${projectId}/documents/${created.document_id}/studio`,
+            );
+        });
+
     const query = search.trim().toLocaleLowerCase();
     const filteredDocuments = useMemo(
         () =>
@@ -584,6 +605,18 @@ export function ProjectDocumentsView({ projectId }: Props) {
 
     const tableActions = (
         <div className="flex items-center gap-4">
+            <button
+                type="button"
+                disabled={projectLoading}
+                onClick={() => {
+                    setNewDraftTitle("");
+                    setNewDraftOpen(true);
+                }}
+                className="flex items-center gap-1 text-xs font-medium text-gray-500 transition-colors hover:text-gray-700 disabled:text-gray-300"
+            >
+                <FilePenLine className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{t("studio.newDraft")}</span>
+            </button>
             <button
                 type="button"
                 disabled={projectLoading}
@@ -665,6 +698,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
                     }}
                     onDragOver={(event) => {
                         if (
+                            document.studio_capability?.editable !== true &&
                             event.dataTransfer.types.includes("Files") &&
                             !event.dataTransfer.types.includes(
                                 VERA_DOCUMENT_DRAG,
@@ -687,6 +721,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
                     }}
                     onDrop={(event) => {
                         if (
+                            document.studio_capability?.editable === true ||
                             !event.dataTransfer.types.includes("Files") ||
                             event.dataTransfer.types.includes(
                                 VERA_DOCUMENT_DRAG,
@@ -783,8 +818,9 @@ export function ProjectDocumentsView({ projectId }: Props) {
                             ? formatDate(document.updated_at)
                             : "—"}
                     </div>
-                    <div className="w-24 shrink-0">
+                    <div className="flex w-56 shrink-0 items-center gap-1.5">
                         <StatusPill status={document.status} />
+                        <OcrStatusBadges summary={document.ocr_summary} />
                     </div>
                     <label className="w-32 shrink-0 px-1">
                         <span className="sr-only">
@@ -811,7 +847,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
                             ))}
                         </select>
                     </label>
-                    <div className="flex w-36 shrink-0 items-center justify-end gap-1">
+                    <div className="flex w-44 shrink-0 items-center justify-end gap-1">
                         {document.status === "error" && (
                             <IconAction
                                 label={t("common.actions.retry")}
@@ -820,6 +856,17 @@ export function ProjectDocumentsView({ projectId }: Props) {
                                 onClick={() =>
                                     void perform(`retry:${document.id}`, () =>
                                         retryDocument(document.id),
+                                    )
+                                }
+                            />
+                        )}
+                        {document.studio_capability?.editable === true && (
+                            <IconAction
+                                label={t("studio.open")}
+                                icon={FilePenLine}
+                                onClick={() =>
+                                    router.push(
+                                        `/projects/${projectId}/documents/${document.id}/studio`,
                                     )
                                 }
                             />
@@ -834,15 +881,17 @@ export function ProjectDocumentsView({ projectId }: Props) {
                                 )
                             }
                         />
-                        <IconAction
-                            label={t("documents.newVersion")}
-                            icon={FileUp}
-                            busy={busyKeys.has(`version:${document.id}`)}
-                            onClick={() => {
-                                versionUploadTargetRef.current = document.id;
-                                versionUploadRef.current?.click();
-                            }}
-                        />
+                        {document.studio_capability?.editable !== true && (
+                            <IconAction
+                                label={t("documents.newVersion")}
+                                icon={FileUp}
+                                busy={busyKeys.has(`version:${document.id}`)}
+                                onClick={() => {
+                                    versionUploadTargetRef.current = document.id;
+                                    versionUploadRef.current?.click();
+                                }}
+                            />
+                        )}
                         <IconAction
                             label={t("common.actions.rename")}
                             icon={Pencil}
@@ -1156,9 +1205,9 @@ export function ProjectDocumentsView({ projectId }: Props) {
                         <div className="w-28 shrink-0">
                             {t("common.fields.updatedAt")}
                         </div>
-                        <div className="w-24 shrink-0" />
+                        <div className="w-56 shrink-0" />
                         <div className="w-32 shrink-0" />
-                        <div className="w-36 shrink-0" />
+                        <div className="w-44 shrink-0" />
                     </div>
 
                     {projectLoading ? (
@@ -1221,6 +1270,54 @@ export function ProjectDocumentsView({ projectId }: Props) {
                     projectId={projectId}
                 />
             )}
+
+            <ConfirmPopup
+                open={newDraftOpen}
+                title={t("studio.newDraftTitle")}
+                message={
+                    <label className="block space-y-2">
+                        <span className="block text-xs text-gray-600">
+                            {t("studio.titleLabel")}
+                        </span>
+                        <input
+                            autoFocus
+                            value={newDraftTitle}
+                            placeholder={t("studio.titlePlaceholder")}
+                            onChange={(event) =>
+                                setNewDraftTitle(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                                if (
+                                    event.key === "Enter" &&
+                                    validNewDraftTitle &&
+                                    !busyKeys.has("studio-create")
+                                ) {
+                                    event.preventDefault();
+                                    void submitNewDraft();
+                                }
+                            }}
+                            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
+                        />
+                    </label>
+                }
+                confirmLabel={
+                    busyKeys.has("studio-create")
+                        ? t("studio.creating")
+                        : t("studio.create")
+                }
+                confirmStatus={
+                    busyKeys.has("studio-create") ? "loading" : "idle"
+                }
+                confirmDisabled={!validNewDraftTitle}
+                cancelLabel={t("common.actions.cancel")}
+                cancelDisabled={busyKeys.has("studio-create")}
+                onCancel={() => {
+                    if (busyKeys.has("studio-create")) return;
+                    setNewDraftOpen(false);
+                    setNewDraftTitle("");
+                }}
+                onConfirm={() => void submitNewDraft()}
+            />
 
             <DocumentSidePanel
                 doc={viewingDocument}
@@ -1435,6 +1532,31 @@ function StatusPill({ status }: { status: VeraDocumentWire["status"] }) {
         >
             {label}
         </span>
+    );
+}
+
+function OcrStatusBadges({
+    summary,
+}: {
+    summary: VeraDocumentWire["ocr_summary"];
+}) {
+    const { t, formatNumber } = useI18n();
+    if (!summary) return null;
+    return (
+        <>
+            <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                <ScanText className="h-3 w-3" aria-hidden="true" />
+                {t("documents.ocr.used", {
+                    count: formatNumber(summary.ocr_page_count),
+                })}
+            </span>
+            {summary.review_required && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                    <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                    {t("documents.ocr.reviewRequired")}
+                </span>
+            )}
+        </>
     );
 }
 
