@@ -35,7 +35,7 @@ Vera.app (Electron main process)
   `- controlled native backup/restore/log/diagnostic operations
 
 Local persistence
-  |- SQLCipher Workspace metadata (migrations v1-v15)
+  |- SQLCipher Workspace metadata (migrations v1-v16)
   |- AES-256-GCM encrypted originals, extracted content, and exports
   |- FTS5 project/document retrieval
   |- authenticated encrypted backups and restore journal

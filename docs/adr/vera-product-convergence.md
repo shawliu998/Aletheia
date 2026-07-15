@@ -336,9 +336,9 @@ renames, bulk inferred profile creation, and in-place deletion are prohibited.
 Committed migration v15 remains immutable. Its litigation-oriented
 `matter_type` and dormant Matter Policy foundation are transitional storage,
 not the final public workspace taxonomy and not proof that inference is
-permitted. A later additive classification migration introduces the broader
-user-selected workspace classification and jurisdiction without guessing from
-v15 values. Missing classification remains an explicit capability state.
+permitted. Additive migration v16 introduces the broader user-selected
+workspace classification and jurisdiction without guessing from v15 values.
+Missing classification remains an explicit capability state.
 
 Legacy migration is a bounded import, not runtime convergence:
 

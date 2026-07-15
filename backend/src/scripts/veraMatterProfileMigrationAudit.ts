@@ -10,6 +10,7 @@ import {
   workspaceMigrationChecksum,
 } from "../lib/workspace/database";
 import {
+  MATTER_CLASSIFICATION_V16_MIGRATION,
   MATTER_PROFILES_V15_MIGRATION,
   WORKSPACE_MIGRATIONS,
   type WorkspaceDatabaseAdapter,
@@ -19,9 +20,12 @@ import {
 
 const originalEnvironment = { ...process.env };
 const root = mkdtempSync(
-  path.join(os.tmpdir(), "vera-matter-profile-v15-audit-"),
+  path.join(os.tmpdir(), "vera-matter-profile-v16-audit-"),
 );
 const V14_MIGRATIONS = WORKSPACE_MIGRATIONS.slice(0, 14);
+const V15_MIGRATIONS = WORKSPACE_MIGRATIONS.slice(0, 15);
+const FROZEN_V15_CHECKSUM =
+  "sha256:88a7393d47909c61cdb92744467731978844897355cd86261efc6cb11b37fa5f";
 const now = "2026-07-16T08:00:00.000Z";
 const later = "2026-07-16T09:00:00.000Z";
 
@@ -46,6 +50,8 @@ function insertProject(
 type MatterRow = {
   projectId?: unknown;
   matterType?: unknown;
+  workspaceType?: unknown;
+  jurisdiction?: unknown;
   clientName?: unknown;
   representedRole?: unknown;
   counterparty?: unknown;
@@ -69,8 +75,9 @@ function insertMatterProfile(
       `INSERT INTO matter_profiles (
          project_id, matter_type, client_name, represented_role,
          counterparty, court, case_number, stage, objective, risk_level,
-         opened_at, closed_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         opened_at, closed_at, created_at, updated_at,
+         workspace_type, jurisdiction
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.projectId === undefined ? "project-constraints" : input.projectId,
@@ -91,6 +98,8 @@ function insertMatterProfile(
       input.closedAt === undefined ? null : input.closedAt,
       input.createdAt === undefined ? now : input.createdAt,
       input.updatedAt === undefined ? now : input.updatedAt,
+      input.workspaceType === undefined ? "dispute" : input.workspaceType,
+      input.jurisdiction === undefined ? "CN" : input.jurisdiction,
     );
 }
 
@@ -208,12 +217,16 @@ function schemaNames(
 function auditFreshInstallAndStrictConstraints() {
   const database = new WorkspaceDatabase(path.join(root, "fresh.db"));
   try {
-    assert.equal(database.migration?.currentVersion, 15);
+    assert.equal(database.migration?.currentVersion, 16);
     assert.deepEqual(
       database.migration?.applied.map((entry) => entry.version),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     );
     assert.equal(WORKSPACE_MIGRATIONS.at(14), MATTER_PROFILES_V15_MIGRATION);
+    assert.equal(
+      WORKSPACE_MIGRATIONS.at(15),
+      MATTER_CLASSIFICATION_V16_MIGRATION,
+    );
     assert.deepEqual(
       database
         .prepare("PRAGMA table_info('matter_profiles')")
@@ -234,12 +247,16 @@ function auditFreshInstallAndStrictConstraints() {
         "closed_at",
         "created_at",
         "updated_at",
+        "workspace_type",
+        "jurisdiction",
       ],
     );
     for (const index of [
       "idx_matter_profiles_type_updated",
       "idx_matter_profiles_risk_updated",
       "idx_matter_profiles_case_number",
+      "idx_matter_profiles_workspace_type_updated",
+      "idx_matter_profiles_jurisdiction_updated",
       "idx_matter_policies_egress_updated",
       "idx_matter_policy_execution_locations_location",
     ]) {
@@ -249,6 +266,8 @@ function auditFreshInstallAndStrictConstraints() {
       "matter_profiles_v15_update_guard",
       "matter_policies_v15_update_guard",
       "matter_policy_execution_locations_v15_immutable",
+      "matter_profiles_v16_insert_requires_workspace_type",
+      "matter_profiles_v16_workspace_type_one_way",
     ]) {
       assert.equal(
         schemaNames(database, "trigger").has(trigger),
@@ -275,6 +294,12 @@ function auditFreshInstallAndStrictConstraints() {
       "low",
       "medium",
       "high",
+      "general_legal",
+      "transaction",
+      "dispute",
+      "investigation",
+      "compliance",
+      "research",
     ]) {
       assert.equal(tableSql.includes(`'${value}'`), true, value);
     }
@@ -335,6 +360,8 @@ function auditFreshInstallAndStrictConstraints() {
     insertMatterProfile(database, {
       projectId: "project-full",
       matterType: "commercial_dispute",
+      workspaceType: "dispute",
+      jurisdiction: "CN / Hong Kong SAR",
       clientName: "Vera Client",
       representedRole: "Respondent",
       counterparty: "Example Counterparty",
@@ -354,7 +381,8 @@ function auditFreshInstallAndStrictConstraints() {
           .prepare(
             `SELECT project_id, matter_type, client_name, represented_role,
                     counterparty, court, case_number, stage, objective,
-                    risk_level, opened_at, closed_at, created_at, updated_at
+                    risk_level, opened_at, closed_at, created_at, updated_at,
+                    workspace_type, jurisdiction
                FROM matter_profiles
               WHERE project_id = 'project-full'`,
           )
@@ -375,6 +403,8 @@ function auditFreshInstallAndStrictConstraints() {
         closed_at: later,
         created_at: now,
         updated_at: later,
+        workspace_type: "dispute",
+        jurisdiction: "CN / Hong Kong SAR",
       },
     );
     assert.throws(
@@ -390,6 +420,30 @@ function auditFreshInstallAndStrictConstraints() {
 
     for (const matterType of ["", "Civil_litigation", "litigation", null]) {
       assertConstraint(database, { matterType });
+    }
+    for (const workspaceType of [
+      "",
+      "general",
+      "civil_litigation",
+      "Dispute",
+    ]) {
+      assertConstraint(database, { workspaceType });
+    }
+    assert.throws(
+      () => insertMatterProfile(database, { workspaceType: null }),
+      /classification is required/i,
+      "every new v16 Matter Profile requires an explicit classification",
+    );
+    assert.equal(
+      database
+        .prepare(
+          "SELECT count(*) AS count FROM matter_profiles WHERE project_id = 'project-constraints'",
+        )
+        .get()?.count,
+      0,
+    );
+    for (const jurisdiction of [" ", "x".repeat(241), `safe\0unsafe`]) {
+      assertConstraint(database, { jurisdiction });
     }
     for (const riskLevel of ["", "critical", "High"]) {
       assertConstraint(database, { riskLevel });
@@ -433,10 +487,25 @@ function auditFreshInstallAndStrictConstraints() {
     database
       .prepare(
         `UPDATE matter_profiles
-            SET stage = 'hearing', updated_at = updated_at
+            SET stage = 'hearing',
+                workspace_type = 'transaction',
+                jurisdiction = 'Singapore',
+                updated_at = updated_at
           WHERE project_id = 'project-full'`,
       )
       .run();
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            `UPDATE matter_profiles
+                SET workspace_type = NULL
+              WHERE project_id = 'project-full'`,
+          )
+          .run(),
+      /classification cannot be cleared/i,
+      "an explicitly classified Matter cannot return to the legacy null state",
+    );
     assert.throws(
       () =>
         database
@@ -787,10 +856,10 @@ function auditV14UpgradeChecksumAndIdempotence() {
 
   const upgraded = new WorkspaceDatabase(databasePath);
   try {
-    assert.equal(upgraded.migration?.currentVersion, 15);
+    assert.equal(upgraded.migration?.currentVersion, 16);
     assert.deepEqual(
       upgraded.migration?.applied.map((entry) => entry.version),
-      [15],
+      [15, 16],
     );
     assert.deepEqual(
       upgraded
@@ -803,7 +872,7 @@ function auditV14UpgradeChecksumAndIdempotence() {
         .all()
         .map((row) => ({ ...row })),
       oldMigrationRows,
-      "v15 must not rewrite any prior migration record",
+      "v15 and v16 must not rewrite any prior migration record",
     );
     assert.deepEqual(
       object(
@@ -850,8 +919,22 @@ function auditV14UpgradeChecksumAndIdempotence() {
       name: MATTER_PROFILES_V15_MIGRATION.name,
       checksum: workspaceMigrationChecksum(MATTER_PROFILES_V15_MIGRATION),
     });
+    const v16Record = object(
+      upgraded
+        .prepare(
+          `SELECT version, name, checksum
+             FROM workspace_schema_migrations
+            WHERE version = 16`,
+        )
+        .get(),
+    );
+    assert.deepEqual(v16Record, {
+      version: 16,
+      name: MATTER_CLASSIFICATION_V16_MIGRATION.name,
+      checksum: workspaceMigrationChecksum(MATTER_CLASSIFICATION_V16_MIGRATION),
+    });
     const rerun = upgraded.runMigrations();
-    assert.equal(rerun.currentVersion, 15);
+    assert.equal(rerun.currentVersion, 16);
     assert.deepEqual(rerun.applied, []);
 
     const driftedV15: WorkspaceMigration = {
@@ -859,7 +942,12 @@ function auditV14UpgradeChecksumAndIdempotence() {
       checksumMaterial: `${MATTER_PROFILES_V15_MIGRATION.checksumMaterial}\n-- unauthorized drift`,
     };
     assert.throws(
-      () => upgraded.runMigrations([...V14_MIGRATIONS, driftedV15]),
+      () =>
+        upgraded.runMigrations([
+          ...V14_MIGRATIONS,
+          driftedV15,
+          MATTER_CLASSIFICATION_V16_MIGRATION,
+        ]),
       /checksum drift/i,
     );
     assert.equal(
@@ -870,13 +958,29 @@ function auditV14UpgradeChecksumAndIdempotence() {
         .get()?.checksum,
       workspaceMigrationChecksum(MATTER_PROFILES_V15_MIGRATION),
     );
+    const driftedV16: WorkspaceMigration = {
+      ...MATTER_CLASSIFICATION_V16_MIGRATION,
+      checksumMaterial: `${MATTER_CLASSIFICATION_V16_MIGRATION.checksumMaterial}\n-- unauthorized drift`,
+    };
+    assert.throws(
+      () => upgraded.runMigrations([...V15_MIGRATIONS, driftedV16]),
+      /checksum drift/i,
+    );
+    assert.equal(
+      upgraded
+        .prepare(
+          "SELECT checksum FROM workspace_schema_migrations WHERE version = 16",
+        )
+        .get()?.checksum,
+      workspaceMigrationChecksum(MATTER_CLASSIFICATION_V16_MIGRATION),
+    );
   } finally {
     upgraded.close();
   }
 
   const reopened = new WorkspaceDatabase(databasePath);
   try {
-    assert.equal(reopened.migration?.currentVersion, 15);
+    assert.equal(reopened.migration?.currentVersion, 16);
     assert.deepEqual(reopened.migration?.applied, []);
     assert.equal(
       reopened
@@ -889,7 +993,278 @@ function auditV14UpgradeChecksumAndIdempotence() {
   }
 }
 
-function failAfterV15Apply(
+function seedV15ClassificationFixture(database: WorkspaceDatabase) {
+  for (const [projectId, matterType] of [
+    ["project-v15", "commercial_dispute"],
+    ["project-v15-civil", "civil_litigation"],
+    ["project-v15-contract", "contract_review"],
+    ["project-v15-research", "legal_research"],
+    ["project-v15-general", "general"],
+  ] as const) {
+    insertProject(database, projectId, `Preserved v15 ${matterType} Matter`);
+    database
+      .prepare(
+        `INSERT INTO matter_profiles (
+           project_id, matter_type, client_name, represented_role,
+           counterparty, court, case_number, stage, objective, risk_level,
+           opened_at, closed_at, created_at, updated_at
+         ) VALUES (
+           ?, ?, 'Legacy Client', 'Respondent',
+           'Legacy Counterparty', 'Legacy Court', '(2026) Legacy 15',
+           'intake', 'Preserve without guessing.', 'medium', ?, NULL, ?, ?
+         )`,
+      )
+      .run(projectId, matterType, now, now, now);
+  }
+  database.exec(`
+    CREATE TABLE matter_v16_legacy_sentinel (
+      id INTEGER PRIMARY KEY,
+      payload TEXT NOT NULL
+    );
+    INSERT INTO matter_v16_legacy_sentinel (id, payload)
+    VALUES (1, 'v15-data-must-survive');
+  `);
+}
+
+function auditV15ClassificationUpgradeAndRestart() {
+  const databasePath = path.join(root, "v15-classification-upgrade.db");
+  const v15 = new WorkspaceDatabase(databasePath, {
+    migrations: V15_MIGRATIONS,
+  });
+  let v15Record: Record<string, unknown>;
+  try {
+    assert.equal(v15.migration?.currentVersion, 15);
+    seedV15ClassificationFixture(v15);
+    v15Record = object(
+      v15
+        .prepare(
+          `SELECT version, name, checksum
+             FROM workspace_schema_migrations
+            WHERE version = 15`,
+        )
+        .get(),
+    );
+  } finally {
+    v15.close();
+  }
+
+  const upgraded = new WorkspaceDatabase(databasePath);
+  try {
+    assert.equal(upgraded.migration?.currentVersion, 16);
+    assert.deepEqual(
+      upgraded.migration?.applied.map((entry) => entry.version),
+      [16],
+    );
+    assert.deepEqual(
+      object(
+        upgraded
+          .prepare(
+            `SELECT matter_type, workspace_type, jurisdiction, stage
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      {
+        matter_type: "commercial_dispute",
+        workspace_type: null,
+        jurisdiction: null,
+        stage: "intake",
+      },
+      "v16 must not infer classification or jurisdiction from v15 metadata",
+    );
+    assert.deepEqual(
+      upgraded
+        .prepare(
+          `SELECT matter_type, workspace_type, jurisdiction
+             FROM matter_profiles
+            ORDER BY matter_type`,
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        "civil_litigation",
+        "commercial_dispute",
+        "contract_review",
+        "general",
+        "legal_research",
+      ].map((matterType) => ({
+        matter_type: matterType,
+        workspace_type: null,
+        jurisdiction: null,
+      })),
+      "none of the five v15 matter_type values may guess a v16 classification",
+    );
+    assert.deepEqual(
+      object(
+        upgraded
+          .prepare(
+            `SELECT version, name, checksum
+               FROM workspace_schema_migrations
+              WHERE version = 15`,
+          )
+          .get(),
+      ),
+      v15Record,
+      "v16 must preserve the immutable v15 migration ledger record",
+    );
+    assert.deepEqual(
+      object(
+        upgraded
+          .prepare(
+            `SELECT version, name, checksum
+               FROM workspace_schema_migrations
+              WHERE version = 16`,
+          )
+          .get(),
+      ),
+      {
+        version: 16,
+        name: MATTER_CLASSIFICATION_V16_MIGRATION.name,
+        checksum: workspaceMigrationChecksum(
+          MATTER_CLASSIFICATION_V16_MIGRATION,
+        ),
+      },
+    );
+    upgraded
+      .prepare(
+        `UPDATE matter_profiles
+            SET stage = 'review', updated_at = ?
+          WHERE project_id = 'project-v15'`,
+      )
+      .run(later);
+    assert.equal(
+      upgraded
+        .prepare("SELECT payload FROM matter_v16_legacy_sentinel WHERE id = 1")
+        .get()?.payload,
+      "v15-data-must-survive",
+    );
+  } finally {
+    upgraded.close();
+  }
+
+  const classificationRequiredRestart = new WorkspaceDatabase(databasePath);
+  try {
+    assert.equal(classificationRequiredRestart.migration?.currentVersion, 16);
+    assert.deepEqual(classificationRequiredRestart.migration?.applied, []);
+    assert.deepEqual(
+      object(
+        classificationRequiredRestart
+          .prepare(
+            `SELECT matter_type, workspace_type, jurisdiction, stage
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      {
+        matter_type: "commercial_dispute",
+        workspace_type: null,
+        jurisdiction: null,
+        stage: "review",
+      },
+    );
+    classificationRequiredRestart
+      .prepare(
+        `UPDATE matter_profiles
+            SET workspace_type = 'dispute', jurisdiction = 'PRC'
+          WHERE project_id = 'project-v15'`,
+      )
+      .run();
+    assert.throws(
+      () =>
+        classificationRequiredRestart
+          .prepare(
+            `UPDATE matter_profiles
+                SET workspace_type = NULL
+              WHERE project_id = 'project-v15'`,
+          )
+          .run(),
+      /classification cannot be cleared/i,
+    );
+  } finally {
+    classificationRequiredRestart.close();
+  }
+
+  const classifiedRestart = new WorkspaceDatabase(databasePath);
+  try {
+    assert.equal(classifiedRestart.migration?.currentVersion, 16);
+    assert.deepEqual(
+      object(
+        classifiedRestart
+          .prepare(
+            `SELECT matter_type, workspace_type, jurisdiction
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      {
+        matter_type: "commercial_dispute",
+        workspace_type: "dispute",
+        jurisdiction: "PRC",
+      },
+    );
+    assert.equal(
+      classifiedRestart
+        .prepare("SELECT payload FROM matter_v16_legacy_sentinel WHERE id = 1")
+        .get()?.payload,
+      "v15-data-must-survive",
+    );
+  } finally {
+    classifiedRestart.close();
+  }
+
+  assert.throws(
+    () =>
+      new WorkspaceDatabase(databasePath, {
+        migrations: V15_MIGRATIONS,
+      }),
+    /unknown or out-of-order migration version 16/i,
+    "a pre-v16 executable must fail closed rather than reinterpret v16 data",
+  );
+  const currentBinaryRecovery = new WorkspaceDatabase(databasePath);
+  try {
+    assert.equal(currentBinaryRecovery.migration?.currentVersion, 16);
+    assert.deepEqual(currentBinaryRecovery.migration?.applied, []);
+    assert.deepEqual(
+      object(
+        currentBinaryRecovery
+          .prepare(
+            `SELECT matter_type, workspace_type, jurisdiction
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      {
+        matter_type: "commercial_dispute",
+        workspace_type: "dispute",
+        jurisdiction: "PRC",
+      },
+    );
+    assert.equal(
+      currentBinaryRecovery
+        .prepare(
+          "SELECT checksum FROM workspace_schema_migrations WHERE version = 15",
+        )
+        .get()?.checksum,
+      workspaceMigrationChecksum(MATTER_PROFILES_V15_MIGRATION),
+    );
+    assert.equal(
+      currentBinaryRecovery
+        .prepare(
+          "SELECT checksum FROM workspace_schema_migrations WHERE version = 16",
+        )
+        .get()?.checksum,
+      workspaceMigrationChecksum(MATTER_CLASSIFICATION_V16_MIGRATION),
+    );
+  } finally {
+    currentBinaryRecovery.close();
+  }
+}
+
+function failAfterV16Apply(
   database: WorkspaceDatabase,
   onCompleteApply: () => void,
 ): WorkspaceDatabaseAdapter {
@@ -904,9 +1279,9 @@ function failAfterV15Apply(
       }
       const wrapped: WorkspaceStatement = {
         run(...parameters: unknown[]) {
-          if (Number(parameters[0]) === 15) {
+          if (Number(parameters[0]) === 16) {
             onCompleteApply();
-            throw new Error("injected fault after complete v15 apply");
+            throw new Error("injected fault after complete v16 apply");
           }
           return statement.run(...parameters);
         },
@@ -924,23 +1299,31 @@ function failAfterV15Apply(
 
 function auditPostApplyFailureRollsBack() {
   const database = new WorkspaceDatabase(path.join(root, "rollback.db"), {
-    migrations: V14_MIGRATIONS,
+    migrations: V15_MIGRATIONS,
   });
   try {
-    insertProject(database, "project-rollback", "Rollback Project");
+    seedV15ClassificationFixture(database);
     let observedCompleteApply = false;
     assert.throws(
       () =>
         runWorkspaceMigrations(
-          failAfterV15Apply(database, () => {
+          failAfterV16Apply(database, () => {
             observedCompleteApply =
-              schemaNames(database, "table").has("matter_profiles") &&
-              schemaNames(database, "table").has("matter_policies") &&
-              schemaNames(database, "table").has(
-                "matter_policy_execution_locations",
+              database
+                .prepare("PRAGMA table_info('matter_profiles')")
+                .all()
+                .some((row) => row.name === "workspace_type") &&
+              schemaNames(database, "index").has(
+                "idx_matter_profiles_workspace_type_updated",
+              ) &&
+              schemaNames(database, "index").has(
+                "idx_matter_profiles_jurisdiction_updated",
               ) &&
               schemaNames(database, "trigger").has(
-                "matter_profiles_v15_update_guard",
+                "matter_profiles_v16_insert_requires_workspace_type",
+              ) &&
+              schemaNames(database, "trigger").has(
+                "matter_profiles_v16_workspace_type_one_way",
               );
           }),
           WORKSPACE_MIGRATIONS,
@@ -948,15 +1331,37 @@ function auditPostApplyFailureRollsBack() {
       /failed and was rolled back/i,
     );
     assert.equal(observedCompleteApply, true);
-    for (const table of [
-      "matter_profiles",
-      "matter_policies",
-      "matter_policy_execution_locations",
-    ]) {
-      assert.equal(schemaNames(database, "table").has(table), false, table);
-    }
+    assert.deepEqual(
+      database
+        .prepare("PRAGMA table_info('matter_profiles')")
+        .all()
+        .map((row) => String(row.name))
+        .slice(-2),
+      ["created_at", "updated_at"],
+      "rolled-back v16 columns must not leak into the v15 table",
+    );
     assert.equal(
-      schemaNames(database, "trigger").has("matter_profiles_v15_update_guard"),
+      schemaNames(database, "index").has(
+        "idx_matter_profiles_workspace_type_updated",
+      ),
+      false,
+    );
+    assert.equal(
+      schemaNames(database, "index").has(
+        "idx_matter_profiles_jurisdiction_updated",
+      ),
+      false,
+    );
+    assert.equal(
+      schemaNames(database, "trigger").has(
+        "matter_profiles_v16_insert_requires_workspace_type",
+      ),
+      false,
+    );
+    assert.equal(
+      schemaNames(database, "trigger").has(
+        "matter_profiles_v16_workspace_type_one_way",
+      ),
       false,
     );
     assert.equal(
@@ -965,13 +1370,26 @@ function auditPostApplyFailureRollsBack() {
           "SELECT max(version) AS version FROM workspace_schema_migrations",
         )
         .get()?.version,
-      14,
+      15,
+    );
+    assert.deepEqual(
+      object(
+        database
+          .prepare(
+            `SELECT matter_type, stage
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      { matter_type: "commercial_dispute", stage: "intake" },
+      "v15 Matter data survives the failed v16 migration byte-logically",
     );
     assert.equal(
       database
-        .prepare("SELECT name FROM projects WHERE id = 'project-rollback'")
-        .get()?.name,
-      "Rollback Project",
+        .prepare("SELECT payload FROM matter_v16_legacy_sentinel WHERE id = 1")
+        .get()?.payload,
+      "v15-data-must-survive",
     );
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
@@ -979,60 +1397,55 @@ function auditPostApplyFailureRollsBack() {
   }
 }
 
-function auditSqlcipherV14Upgrade() {
+function auditSqlcipherV15UpgradeAndRestart() {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "sqlcipher_required";
   process.env.ALETHEIA_DATABASE_KEY_SOURCE = "env";
   process.env.ALETHEIA_DATABASE_KEY_BASE64 = randomBytes(32).toString("base64");
   const databasePath = path.join(root, "encrypted-upgrade.db");
-  const v14 = new WorkspaceDatabase(databasePath, {
-    migrations: V14_MIGRATIONS,
+  const v15 = new WorkspaceDatabase(databasePath, {
+    migrations: V15_MIGRATIONS,
   });
   try {
-    assert.equal(v14.migration?.currentVersion, 14);
-    assert.equal(v14.migration?.capabilities.sqlcipherEncrypted, true);
-    insertProject(v14, "project-encrypted", "Encrypted Project");
+    assert.equal(v15.migration?.currentVersion, 15);
+    assert.equal(v15.migration?.capabilities.sqlcipherEncrypted, true);
+    seedV15ClassificationFixture(v15);
   } finally {
-    v14.close();
+    v15.close();
   }
 
   const upgraded = new WorkspaceDatabase(databasePath);
   try {
-    assert.equal(upgraded.migration?.currentVersion, 15);
+    assert.equal(upgraded.migration?.currentVersion, 16);
     assert.deepEqual(
       upgraded.migration?.applied.map((entry) => entry.version),
-      [15],
+      [16],
     );
     assert.equal(upgraded.migration?.capabilities.sqlcipherEncrypted, true);
-    assert.equal(
-      upgraded
-        .prepare("SELECT name FROM projects WHERE id = 'project-encrypted'")
-        .get()?.name,
-      "Encrypted Project",
+    assert.deepEqual(
+      object(
+        upgraded
+          .prepare(
+            `SELECT matter_type, workspace_type, jurisdiction
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      {
+        matter_type: "commercial_dispute",
+        workspace_type: null,
+        jurisdiction: null,
+      },
     );
-    insertMatterProfile(upgraded, {
-      projectId: "project-encrypted",
-      matterType: "general",
-      clientName: null,
-      representedRole: null,
-      counterparty: null,
-      court: null,
-      caseNumber: null,
-      stage: null,
-      objective: null,
-      riskLevel: null,
-      openedAt: null,
-      closedAt: null,
-    });
-    assert.equal(
-      upgraded
-        .prepare(
-          "SELECT matter_type FROM matter_profiles WHERE project_id = 'project-encrypted'",
-        )
-        .get()?.matter_type,
-      "general",
-    );
+    upgraded
+      .prepare(
+        `UPDATE matter_profiles
+            SET workspace_type = 'investigation', jurisdiction = 'Singapore'
+          WHERE project_id = 'project-v15'`,
+      )
+      .run();
     insertMatterPolicy(upgraded, {
-      projectId: "project-encrypted",
+      projectId: "project-v15",
       externalEgressMode: "approval",
       audioRetentionDays: 7,
       allowExternalLegalSources: 1,
@@ -1042,20 +1455,50 @@ function auditSqlcipherV14Upgrade() {
       .prepare(
         `INSERT INTO matter_policy_execution_locations
           (project_id, execution_location, created_at)
-         VALUES ('project-encrypted', 'firm_private', ?)`,
+         VALUES ('project-v15', 'firm_private', ?)`,
       )
       .run(now);
     assert.equal(
-      policyAllowsExecutionLocation(
-        upgraded,
-        "project-encrypted",
-        "firm_private",
-      ),
+      policyAllowsExecutionLocation(upgraded, "project-v15", "firm_private"),
       true,
     );
     assert.deepEqual(upgraded.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {
     upgraded.close();
+  }
+  const reopened = new WorkspaceDatabase(databasePath);
+  try {
+    assert.equal(reopened.migration?.currentVersion, 16);
+    assert.deepEqual(reopened.migration?.applied, []);
+    assert.equal(reopened.migration?.capabilities.sqlcipherEncrypted, true);
+    assert.deepEqual(
+      object(
+        reopened
+          .prepare(
+            `SELECT workspace_type, jurisdiction
+               FROM matter_profiles
+              WHERE project_id = 'project-v15'`,
+          )
+          .get(),
+      ),
+      { workspace_type: "investigation", jurisdiction: "Singapore" },
+    );
+    assert.equal(
+      policyAllowsExecutionLocation(reopened, "project-v15", "firm_private"),
+      true,
+    );
+    assert.equal(
+      reopened
+        .prepare("SELECT payload FROM matter_v16_legacy_sentinel WHERE id = 1")
+        .get()?.payload,
+      "v15-data-must-survive",
+    );
+    assert.deepEqual(reopened.prepare("PRAGMA integrity_check").all(), [
+      { integrity_check: "ok" },
+    ]);
+    assert.deepEqual(reopened.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    reopened.close();
   }
   assert.notEqual(
     readFileSync(databasePath).subarray(0, 16).toString("utf8"),
@@ -1067,33 +1510,48 @@ try {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
   assert.deepEqual(
     WORKSPACE_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   );
   assert.deepEqual(
     V14_MIGRATIONS.map((migration) => migration.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
   );
+  assert.deepEqual(
+    V15_MIGRATIONS.map((migration) => migration.version),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  );
+  assert.equal(
+    workspaceMigrationChecksum(MATTER_PROFILES_V15_MIGRATION),
+    FROZEN_V15_CHECKSUM,
+    "the committed v15 migration checksum is immutable",
+  );
   auditFreshInstallAndStrictConstraints();
   auditV14UpgradeChecksumAndIdempotence();
+  auditV15ClassificationUpgradeAndRestart();
   auditPostApplyFailureRollsBack();
-  auditSqlcipherV14Upgrade();
+  auditSqlcipherV15UpgradeAndRestart();
   console.log(
     JSON.stringify(
       {
         ok: true,
-        suite: "vera-matter-profile-migration-audit-v15",
-        current_version: 15,
+        suite: "vera-matter-profile-migration-audit-v16",
+        current_version: 16,
         checks: [
-          "clean SQLite v15 install",
-          "additive v14-to-v15 upgrade without Project backfill",
+          "clean SQLite v16 install",
+          "additive v14-to-v16 upgrade without Project backfill",
+          "additive v15-to-v16 classification upgrade without inferred backfill",
+          "legacy classification_required survives restart until explicitly selected",
+          "new Matter inserts require workspace_type and classified rows cannot return to null",
+          "strict workspace_type enum plus bounded NUL-safe jurisdiction",
           "strict enum, bounded text, canonical UTC, risk, and ordering checks",
           "Project one-to-zero-or-one cardinality and delete cascade",
           "profile-owned fail-closed Matter Policy defaults and normalized execution locations",
           "strict egress, retention, boolean, location, and cross-Project policy checks",
           "immutable ownership, immutable creation time, and monotonic update time",
-          "ordered checksum verification and idempotent rerun",
-          "post-DDL migration-record failure rolls back atomically",
-          "encrypted SQLCipher v14-to-v15 upgrade",
+          "frozen v15 and ordered v16 checksum verification with idempotent rerun",
+          "post-DDL v16 migration-record failure rolls back atomically to v15",
+          "pre-v16 executable fails closed and the current executable recovers",
+          "encrypted SQLCipher v15-to-v16 upgrade and restart",
         ],
       },
       null,
