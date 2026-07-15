@@ -11,20 +11,6 @@ import express, {
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { aletheiaRouter } from "./routes/aletheia";
-import { litigationRouter } from "./routes/litigation";
-import { durableAgentRunsRouter } from "./routes/durableAgentRuns";
-import { localGovernanceRouter } from "./routes/localGovernance";
-import { localModelsRouter } from "./routes/localModels";
-import { createLocalVoiceRouter } from "./routes/localVoice";
-import { createAletheiaLocalControlRouter } from "./routes/aletheiaLocalControl";
-import { legalResearchRouter } from "./routes/legalResearch";
-import { legalResearchIssuesRouter } from "./routes/legalResearchIssues";
-import { legalOpinionsRouter } from "./routes/legalOpinions";
-import { seedAletheiaDemoIfNeeded } from "./lib/aletheia/demoSeed";
-import { configureDurableAgentRuntimeFromEnvironment } from "./lib/aletheia/durableAgentRuntime";
-import { closeLocalModelRuntime } from "./lib/aletheia/localModelRuntime";
-import { closeLocalVoiceRuntime } from "./lib/aletheia/localVoiceRuntime";
 import { assertLocalEncryptionStartupPolicy } from "./lib/aletheia/localEnvelopeCrypto";
 import { assertComplianceDeploymentStartupPolicy } from "./lib/aletheia/localCompliancePreset";
 import {
@@ -89,6 +75,8 @@ type Closable = {
   close(): void | Promise<void>;
 };
 
+type LegacyRouterFactory = () => readonly Router[];
+
 export interface VeraWorkspaceRuntime
   extends
     WorkspaceV1RuntimePort,
@@ -121,6 +109,8 @@ export type VeraApplicationOptions = {
   auditAnchorStatus?: () => AuditAnchorStatus;
   auditWriteBlocked?: () => boolean;
   isDraining?: () => boolean;
+  legacyRouterFactory?: LegacyRouterFactory;
+  legacyRuntimeConfigured?: () => boolean;
 };
 
 export type VeraBootstrapDependencies = {
@@ -160,6 +150,79 @@ export class VeraStartupError extends Error {
     super(message);
     this.name = "VeraStartupError";
   }
+}
+
+function legacyRoutesEnabled(env: Environment): boolean {
+  return env.VERA_ENABLE_LEGACY_ROUTES === "true";
+}
+
+function legacyRuntimeEnabled(env: Environment): boolean {
+  return env.VERA_ENABLE_LEGACY_RUNTIME === "true";
+}
+
+/**
+ * Legacy modules have startup side effects, including local database and voice
+ * runtime construction. Keep every require inside this explicitly gated
+ * factory so the default Workspace process never evaluates those modules.
+ */
+function loadLegacyRouters(): readonly Router[] {
+  const { aletheiaRouter } =
+    require("./routes/aletheia") as typeof import("./routes/aletheia");
+  const { legalResearchRouter } =
+    require("./routes/legalResearch") as typeof import("./routes/legalResearch");
+  const { legalResearchIssuesRouter } =
+    require("./routes/legalResearchIssues") as typeof import("./routes/legalResearchIssues");
+  const { legalOpinionsRouter } =
+    require("./routes/legalOpinions") as typeof import("./routes/legalOpinions");
+  const { litigationRouter } =
+    require("./routes/litigation") as typeof import("./routes/litigation");
+  const { durableAgentRunsRouter } =
+    require("./routes/durableAgentRuns") as typeof import("./routes/durableAgentRuns");
+  const { localGovernanceRouter } =
+    require("./routes/localGovernance") as typeof import("./routes/localGovernance");
+  const { localModelsRouter } =
+    require("./routes/localModels") as typeof import("./routes/localModels");
+  const { createLocalVoiceRouter } =
+    require("./routes/localVoice") as typeof import("./routes/localVoice");
+  const { createAletheiaLocalControlRouter } =
+    require("./routes/aletheiaLocalControl") as typeof import("./routes/aletheiaLocalControl");
+
+  return [
+    aletheiaRouter,
+    legalResearchRouter,
+    legalResearchIssuesRouter,
+    legalOpinionsRouter,
+    litigationRouter,
+    durableAgentRunsRouter,
+    localGovernanceRouter,
+    localModelsRouter,
+    createLocalVoiceRouter(),
+    createAletheiaLocalControlRouter(),
+  ];
+}
+
+function configureLegacyDurableRuntime(): Closable | null {
+  const { configureDurableAgentRuntimeFromEnvironment } =
+    require("./lib/aletheia/durableAgentRuntime") as typeof import("./lib/aletheia/durableAgentRuntime");
+  return configureDurableAgentRuntimeFromEnvironment();
+}
+
+async function closeLegacyLocalModelRuntime(): Promise<void> {
+  const { closeLocalModelRuntime } =
+    require("./lib/aletheia/localModelRuntime") as typeof import("./lib/aletheia/localModelRuntime");
+  await closeLocalModelRuntime();
+}
+
+async function closeLegacyLocalVoiceRuntime(): Promise<void> {
+  const { closeLocalVoiceRuntime } =
+    require("./lib/aletheia/localVoiceRuntime") as typeof import("./lib/aletheia/localVoiceRuntime");
+  await closeLocalVoiceRuntime();
+}
+
+async function runLegacyDemoSeed(): Promise<unknown> {
+  const { seedAletheiaDemoIfNeeded } =
+    require("./lib/aletheia/demoSeed") as typeof import("./lib/aletheia/demoSeed");
+  return seedAletheiaDemoIfNeeded();
 }
 
 function envInt(env: Environment, name: string, fallback: number): number {
@@ -319,6 +382,8 @@ export function createVeraApplication(
   const shouldBlockAuditWrites =
     options.auditWriteBlocked ?? shouldFailClosedForAuditAnchor;
   const isDraining = options.isDraining ?? (() => false);
+  const legacyRoutesAreEnabled = legacyRoutesEnabled(env);
+  const legacyRuntimeIsEnabled = legacyRuntimeEnabled(env);
   const trustProxyHops = resolveTrustProxyHops(env);
   const app = express();
 
@@ -330,14 +395,6 @@ export function createVeraApplication(
     windowMs: hours(envInt(env, "RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
     max: envInt(env, "RATE_LIMIT_UPLOAD_MAX", 50),
     message: "Too many upload requests. Please try again later.",
-  });
-  const externalSourceLimiter = makeLimiter({
-    windowMs: minutes(
-      envInt(env, "RATE_LIMIT_EXTERNAL_SOURCE_WINDOW_MINUTES", 15),
-    ),
-    max: envInt(env, "RATE_LIMIT_EXTERNAL_SOURCE_MAX", 20),
-    message:
-      "Too many external-source retrieval requests. Please try again later.",
   });
   const modelProbeLimiter = makeModelProbeLimiter({
     windowMs: minutes(envInt(env, "RATE_LIMIT_MODEL_PROBE_WINDOW_MINUTES", 1)),
@@ -401,13 +458,23 @@ export function createVeraApplication(
     next();
   });
 
-  app.post(
-    "/aletheia/matters/:matterId/external-source/fetch",
-    externalSourceLimiter,
-  );
-  app.post("/aletheia/matters/:matterId/research/*", externalSourceLimiter);
-  app.post("/aletheia/matters/:matterId/documents", uploadLimiter);
-  app.post("/aletheia/matters/:matterId/documents/batch", uploadLimiter);
+  if (legacyRoutesAreEnabled) {
+    const externalSourceLimiter = makeLimiter({
+      windowMs: minutes(
+        envInt(env, "RATE_LIMIT_EXTERNAL_SOURCE_WINDOW_MINUTES", 15),
+      ),
+      max: envInt(env, "RATE_LIMIT_EXTERNAL_SOURCE_MAX", 20),
+      message:
+        "Too many external-source retrieval requests. Please try again later.",
+    });
+    app.post(
+      "/aletheia/matters/:matterId/external-source/fetch",
+      externalSourceLimiter,
+    );
+    app.post("/aletheia/matters/:matterId/research/*", externalSourceLimiter);
+    app.post("/aletheia/matters/:matterId/documents", uploadLimiter);
+    app.post("/aletheia/matters/:matterId/documents/batch", uploadLimiter);
+  }
 
   app.use((request, response, next) =>
     express.json({ limit: env.ALETHEIA_JSON_BODY_LIMIT ?? "5mb" })(
@@ -436,17 +503,13 @@ export function createVeraApplication(
     }
     next();
   };
-  app.use("/aletheia", mutationGuard);
-  app.use("/aletheia", aletheiaRouter);
-  app.use("/aletheia", legalResearchRouter);
-  app.use("/aletheia", legalResearchIssuesRouter);
-  app.use("/aletheia", legalOpinionsRouter);
-  app.use("/aletheia", litigationRouter);
-  app.use("/aletheia", durableAgentRunsRouter);
-  app.use("/aletheia", localGovernanceRouter);
-  app.use("/aletheia", localModelsRouter);
-  app.use("/aletheia", createLocalVoiceRouter());
-  app.use("/aletheia", createAletheiaLocalControlRouter());
+  if (legacyRoutesAreEnabled) {
+    app.use("/aletheia", mutationGuard);
+    const legacyRouters = (options.legacyRouterFactory ?? loadLegacyRouters)();
+    for (const legacyRouter of legacyRouters) {
+      app.use("/aletheia", legacyRouter);
+    }
+  }
 
   // Workspace API composition is intentionally singular: authenticate before
   // the audit mutation guard, then place the fixed Mike workflow namespace
@@ -498,10 +561,24 @@ export function createVeraApplication(
   );
   app.use("/api/v1", workspaceApi);
 
+  const legacyHealth = (runtimeConfigured: boolean) => ({
+    status: legacyRuntimeIsEnabled
+      ? runtimeConfigured
+        ? ("configured" as const)
+        : ("not_configured" as const)
+      : legacyRoutesAreEnabled
+        ? ("routes_only" as const)
+        : ("disabled" as const),
+    routesEnabled: legacyRoutesAreEnabled,
+    runtimeEnabled: legacyRuntimeIsEnabled,
+  });
+
   app.get("/health", (_request, response) => {
     try {
       const workspace = options.runtime.health();
       const audit = getAuditStatus();
+      const isLegacyRuntimeConfigured =
+        legacyRuntimeIsEnabled && options.legacyRuntimeConfigured?.() === true;
       const draining = isDraining() || workspace.draining;
       const healthy =
         workspace.started && !draining && (!audit.enabled || audit.healthy);
@@ -522,6 +599,9 @@ export function createVeraApplication(
             healthy: audit.healthy,
             protectionActive: audit.protection_active === true,
           },
+          matter: { status: "not_configured" },
+          conversation: { status: "not_configured" },
+          legacy: legacyHealth(isLegacyRuntimeConfigured),
         },
       });
     } catch {
@@ -538,6 +618,9 @@ export function createVeraApplication(
             },
           },
           audit: { enabled: false, healthy: false, protectionActive: false },
+          matter: { status: "not_configured" },
+          conversation: { status: "not_configured" },
+          legacy: legacyHealth(false),
         },
       });
     }
@@ -616,10 +699,10 @@ const defaultDependencies: VeraBootstrapDependencies = {
   auditAnchorStatus: auditAnchorRuntimeStatus,
   auditWriteBlocked: shouldFailClosedForAuditAnchor,
   createRuntime: createWorkspaceRuntime,
-  configureDurableRuntime: configureDurableAgentRuntimeFromEnvironment,
-  closeLocalModelRuntime,
-  closeLocalVoiceRuntime,
-  runDemoSeed: seedAletheiaDemoIfNeeded,
+  configureDurableRuntime: configureLegacyDurableRuntime,
+  closeLocalModelRuntime: closeLegacyLocalModelRuntime,
+  closeLocalVoiceRuntime: closeLegacyLocalVoiceRuntime,
+  runDemoSeed: runLegacyDemoSeed,
   listen: defaultListen,
 };
 
@@ -670,6 +753,7 @@ export async function bootstrapVeraApplication(
   options: VeraBootstrapOptions = {},
 ): Promise<VeraApplicationInstance> {
   const env = options.env ?? process.env;
+  const legacyRuntimeIsEnabled = legacyRuntimeEnabled(env);
   const binding = resolveVeraBindConfiguration(env, {
     ...(options.port !== undefined ? { port: options.port } : {}),
     allowPortZero: options.allowPortZero,
@@ -740,8 +824,12 @@ export async function bootstrapVeraApplication(
     auditAnchor = dependencies.startAuditAnchor();
     runtime = dependencies.createRuntime();
     await runtime.start();
-    legacyRuntimesConfigured = true;
-    durableRuntime = dependencies.configureDurableRuntime();
+    if (legacyRuntimeIsEnabled) {
+      // Mark configured before invoking the factory so partial Legacy startup
+      // is still cleaned up if configuration throws after creating a model.
+      legacyRuntimesConfigured = true;
+      durableRuntime = dependencies.configureDurableRuntime();
+    }
 
     const app = createVeraApplication({
       runtime,
@@ -749,8 +837,9 @@ export async function bootstrapVeraApplication(
       auditAnchorStatus: dependencies.auditAnchorStatus,
       auditWriteBlocked: dependencies.auditWriteBlocked,
       isDraining: () => draining,
+      legacyRuntimeConfigured: () => legacyRuntimesConfigured,
     });
-    if (demoSeedEnabled(env)) {
+    if (legacyRuntimeIsEnabled && demoSeedEnabled(env)) {
       await dependencies.runDemoSeed();
     }
     const handle = dependencies.listen(app, binding.port, binding.host);
