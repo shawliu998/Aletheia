@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { useVeraSettings } from "@/app/contexts/VeraSettingsContext";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n } from "@/app/i18n";
 import { listVeraProjects, VeraApiError } from "@/app/lib/veraApi";
 import { createVeraStudioDraftFromWorkflow } from "@/app/lib/veraDocumentStudioApi";
@@ -225,13 +226,18 @@ export function VeraWorkflowRunPanel({
   initialProjectId = null,
   boundProjectId = null,
   configuredModelProfileId = null,
+  executionConstraint = "available",
+  hasPromptStep = true,
 }: {
   workflow: VeraWorkflow;
   initialProjectId?: string | null;
   boundProjectId?: string | null;
   configuredModelProfileId?: string | null;
+  executionConstraint?: "available" | "non_inference_only";
+  hasPromptStep?: boolean;
 }) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, formatDate, errorMessage } = useI18n();
   const { models, settings, loadState: settingsLoadState } = useVeraSettings();
   const [capabilities, setCapabilities] =
@@ -398,7 +404,11 @@ export function VeraWorkflowRunPanel({
       busyAction ||
       workflow.metadata.type !== "assistant" ||
       capabilities?.execution_enabled !== true ||
-      !selectedModelId
+      (hasPromptStep &&
+        (settingsLoadState !== "ready" ||
+          !selectedModelId ||
+          !readyModels.some((model) => model.id === selectedModelId))) ||
+      (executionConstraint === "non_inference_only" && hasPromptStep)
     ) {
       return;
     }
@@ -411,7 +421,7 @@ export function VeraWorkflowRunPanel({
       const prepared = await startVeraWorkflowRun(workflow.id, {
         idempotency_key: idempotencyKey("run"),
         ...(selectedProjectId ? { project_id: selectedProjectId } : {}),
-        model_profile_id: selectedModelId,
+        ...(selectedModelId ? { model_profile_id: selectedModelId } : {}),
         ...(input ? { input_binding: input } : {}),
       });
       acceptPrepared(prepared);
@@ -507,7 +517,7 @@ export function VeraWorkflowRunPanel({
         { workflow_run_id: detail.run.id },
       );
       router.push(
-        `/projects/${draft.project_id}/documents/${draft.document_id}/studio`,
+        routes.documentStudioHref(draft.project_id, draft.document_id),
       );
     } catch {
       setDraftFailure(true);
@@ -537,7 +547,7 @@ export function VeraWorkflowRunPanel({
             </p>
             <button
               type="button"
-              onClick={() => router.push("/projects")}
+              onClick={() => router.push(routes.collectionHref)}
               className="mt-4 rounded-full bg-violet-700 px-4 py-2 text-xs font-medium text-white"
             >
               {t("workflows.tabular.action")}
@@ -578,9 +588,12 @@ export function VeraWorkflowRunPanel({
 
   const canRun =
     capabilities?.execution_enabled === true &&
-    settingsLoadState === "ready" &&
-    readyModels.length > 0 &&
-    Boolean(selectedModelId) &&
+    (!hasPromptStep ||
+      (settingsLoadState === "ready" &&
+        readyModels.length > 0 &&
+        Boolean(selectedModelId) &&
+        readyModels.some((model) => model.id === selectedModelId))) &&
+    !(executionConstraint === "non_inference_only" && hasPromptStep) &&
     busyAction === null;
   const configuredModelUnavailable = Boolean(
     configuredModelProfileId &&
@@ -618,6 +631,11 @@ export function VeraWorkflowRunPanel({
         {capabilities?.execution_enabled !== true && (
           <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {t("workflows.execution.unavailable")}
+          </p>
+        )}
+        {executionConstraint === "non_inference_only" && hasPromptStep && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {t("matters.capabilities.inferenceClosed")}
           </p>
         )}
         {readyModels.length === 0 && (

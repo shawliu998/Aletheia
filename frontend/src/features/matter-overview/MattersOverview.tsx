@@ -32,14 +32,35 @@ type ProfileAction = {
   mode: Exclude<MatterProfileModalMode, "create-matter">;
 } | null;
 
+function reconcileMatterStreams(
+  profiledItems: VeraMatterWire[],
+  absentItems: VeraMatterWire[],
+): { profiled: VeraMatterWire[]; absent: VeraMatterWire[] } {
+  const byId = new Map<string, VeraMatterWire>();
+  for (const item of [...profiledItems, ...absentItems]) {
+    if (item.project.status === "deleted") continue;
+    const current = byId.get(item.project.id);
+    if (!current || item.project.updated_at >= current.project.updated_at) {
+      byId.set(item.project.id, item);
+    }
+  }
+  const items = [...byId.values()];
+  return {
+    profiled: items.filter((item) => item.profile_state !== "absent"),
+    absent: items.filter((item) => item.profile_state === "absent"),
+  };
+}
+
 export function MattersOverview() {
   const router = useRouter();
   const { t, errorMessage, formatDate, formatNumber } = useI18n();
-  const [items, setItems] = useState<VeraMatterWire[]>([]);
+  const [profiled, setProfiled] = useState<VeraMatterWire[]>([]);
+  const [genericProjects, setGenericProjects] = useState<VeraMatterWire[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState<"profiled" | "absent" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [profiledCursor, setProfiledCursor] = useState<string | null>(null);
+  const [genericCursor, setGenericCursor] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [profileAction, setProfileAction] = useState<ProfileAction>(null);
   const firstRequestRef = useRef<AbortController | null>(null);
@@ -52,14 +73,31 @@ export function MattersOverview() {
     setLoading(true);
     setLoadError(null);
     try {
-      const page = await listVeraMatters({ limit: PAGE_SIZE }, controller.signal);
+      const [profiledPage, genericPage] = await Promise.all([
+        listVeraMatters(
+          { profile_state: "profiled", limit: PAGE_SIZE },
+          controller.signal,
+        ),
+        listVeraMatters(
+          { profile_state: "absent", limit: PAGE_SIZE },
+          controller.signal,
+        ),
+      ]);
       if (controller.signal.aborted) return;
-      setItems(page.items.filter((item) => item.project.status !== "deleted"));
-      setNextCursor(page.next_cursor);
+      const reconciled = reconcileMatterStreams(
+        profiledPage.items,
+        genericPage.items,
+      );
+      setProfiled(reconciled.profiled);
+      setGenericProjects(reconciled.absent);
+      setProfiledCursor(profiledPage.next_cursor);
+      setGenericCursor(genericPage.next_cursor);
     } catch (cause) {
       if (controller.signal.aborted) return;
-      setItems([]);
-      setNextCursor(null);
+      setProfiled([]);
+      setGenericProjects([]);
+      setProfiledCursor(null);
+      setGenericCursor(null);
       setLoadError(errorMessage(cause as Error));
     } finally {
       if (firstRequestRef.current === controller) firstRequestRef.current = null;
@@ -75,43 +113,70 @@ export function MattersOverview() {
     };
   }, [loadFirstPage]);
 
-  async function loadMore() {
-    if (!nextCursor || loadingMore) return;
+  async function loadMore(profileState: "profiled" | "absent") {
+    const nextCursor = profileState === "profiled" ? profiledCursor : genericCursor;
+    if (!nextCursor || loadingMore !== null) return;
     const controller = new AbortController();
     moreRequestRef.current?.abort();
     moreRequestRef.current = controller;
-    setLoadingMore(true);
+    setLoadingMore(profileState);
     setLoadError(null);
     try {
       const page = await listVeraMatters(
-        { cursor: nextCursor, limit: PAGE_SIZE },
+        { profile_state: profileState, cursor: nextCursor, limit: PAGE_SIZE },
         controller.signal,
       );
       if (controller.signal.aborted) return;
-      setItems((current) => {
+      const merge = (
+        current: VeraMatterWire[],
+        incoming: VeraMatterWire[],
+        removeIds: Set<string>,
+      ) => {
         const byId = new Map(current.map((item) => [item.project.id, item]));
-        for (const item of page.items) {
+        for (const id of removeIds) byId.delete(id);
+        for (const item of incoming) {
           if (item.project.status !== "deleted") byId.set(item.project.id, item);
         }
         return [...byId.values()];
-      });
-      setNextCursor(page.next_cursor);
+      };
+      const incomingProfiled = page.items.filter(
+        (item) => item.profile_state !== "absent",
+      );
+      const incomingAbsent = page.items.filter(
+        (item) => item.profile_state === "absent",
+      );
+      const profiledIds = new Set(
+        incomingProfiled.map((item) => item.project.id),
+      );
+      const absentIds = new Set(incomingAbsent.map((item) => item.project.id));
+      setProfiled((current) => merge(current, incomingProfiled, absentIds));
+      setGenericProjects((current) =>
+        merge(current, incomingAbsent, profiledIds),
+      );
+      if (profileState === "profiled") {
+        setProfiledCursor(page.next_cursor);
+      } else {
+        setGenericCursor(page.next_cursor);
+      }
     } catch (cause) {
       if (!controller.signal.aborted) setLoadError(errorMessage(cause as Error));
     } finally {
       if (moreRequestRef.current === controller) moreRequestRef.current = null;
-      if (!controller.signal.aborted) setLoadingMore(false);
+      if (!controller.signal.aborted) setLoadingMore(null);
     }
   }
 
-  const profiled = items.filter((item) => item.profile_state !== "absent");
-  const genericProjects = items.filter((item) => item.profile_state === "absent");
-
   function replaceMatter(saved: VeraMatterWire) {
-    setItems((current) => [
-      saved,
-      ...current.filter((item) => item.project.id !== saved.project.id),
-    ]);
+    setProfiled((current) =>
+      saved.profile_state === "absent"
+        ? current.filter((item) => item.project.id !== saved.project.id)
+        : [saved, ...current.filter((item) => item.project.id !== saved.project.id)],
+    );
+    setGenericProjects((current) =>
+      saved.profile_state === "absent"
+        ? [saved, ...current.filter((item) => item.project.id !== saved.project.id)]
+        : current.filter((item) => item.project.id !== saved.project.id),
+    );
   }
 
   function row(item: VeraMatterWire) {
@@ -207,7 +272,7 @@ export function MattersOverview() {
         </div>
       </PageHeader>
 
-      {loadError && items.length > 0 && (
+      {loadError && profiled.length + genericProjects.length > 0 && (
         <div
           role="alert"
           className="flex items-center justify-between gap-3 border-y border-red-100 bg-red-50 px-4 py-2 text-xs text-red-700 md:px-10"
@@ -268,7 +333,7 @@ export function MattersOverview() {
               </TableRow>
             ))}
           </TableBody>
-        ) : loadError && items.length === 0 ? (
+        ) : loadError && profiled.length + genericProjects.length === 0 ? (
           <TableEmptyState>
             <FolderKanban className="mb-4 h-8 w-8 text-gray-300" />
             <p className="font-serif text-2xl font-medium text-gray-900">
@@ -281,7 +346,7 @@ export function MattersOverview() {
               {t("common.actions.retry")}
             </button>
           </TableEmptyState>
-        ) : items.length === 0 ? (
+        ) : profiled.length + genericProjects.length === 0 ? (
           <TableEmptyState>
             <FolderKanban className="mb-4 h-8 w-8 text-gray-300" />
             <p className="font-serif text-2xl font-medium text-gray-900">
@@ -302,16 +367,23 @@ export function MattersOverview() {
               </div>
             )}
             {profiled.map(row)}
+            {(profiledCursor || loadingMore === "profiled") && (
+              <div className="flex h-12 items-center justify-center border-b border-gray-50">
+                <button type="button" disabled={loadingMore !== null} onClick={() => void loadMore("profiled")} className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-40">
+                  {loadingMore === "profiled" ? t("matters.loadingMore") : t("matters.loadMore")}
+                </button>
+              </div>
+            )}
             {genericProjects.length > 0 && (
               <div className="flex h-9 items-center border-b border-gray-100 bg-gray-50 px-4 text-xs font-semibold text-gray-600 md:px-10">
                 {t("matters.sections.genericProjects", { count: genericProjects.length })}
               </div>
             )}
             {genericProjects.map(row)}
-            {(nextCursor || loadingMore) && (
+            {(genericCursor || loadingMore === "absent") && (
               <div className="flex h-12 items-center justify-center border-b border-gray-50">
-                <button type="button" disabled={loadingMore} onClick={() => void loadMore()} className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-40">
-                  {loadingMore ? t("matters.loadingMore") : t("matters.loadMore")}
+                <button type="button" disabled={loadingMore !== null} onClick={() => void loadMore("absent")} className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-40">
+                  {loadingMore === "absent" ? t("matters.loadingMore") : t("matters.loadMore")}
                 </button>
               </div>
             )}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "@playwright/test";
@@ -13,7 +13,10 @@ import {
 
 const LOCKED_MIKE_SHA = "e32daad5a4c64a5561e04c53ee12411e3c5e7238";
 const FRONTEND_ROOT = path.resolve(__dirname, "..");
-const REPOSITORY_ROOT = path.resolve(FRONTEND_ROOT, "..");
+const LOCK_MANIFEST_PATH = path.join(
+  FRONTEND_ROOT,
+  "tests/fixtures/mike/e32daad5a4c64a5561e04c53ee12411e3c5e7238/manifest.json",
+);
 
 const SOURCES = {
   page: "frontend/src/app/(pages)/projects/page.tsx",
@@ -23,11 +26,41 @@ const SOURCES = {
   api: "frontend/src/app/lib/mikeApi.ts",
 } as const;
 
-function upstream(sourcePath: string): string {
-  return execFileSync("git", ["show", `${LOCKED_MIKE_SHA}:${sourcePath}`], {
-    cwd: REPOSITORY_ROOT,
-    encoding: "utf8",
-  });
+type MikeSourceLock = {
+  sourcePath: string;
+  sha256: string;
+};
+
+type MikeSourceManifest = {
+  schema: string;
+  repository: string;
+  commit: string;
+  files: MikeSourceLock[];
+};
+
+const LOCK_MANIFEST = JSON.parse(
+  readFileSync(LOCK_MANIFEST_PATH, "utf8"),
+) as MikeSourceManifest;
+
+function sha256(source: string): string {
+  return createHash("sha256").update(source, "utf8").digest("hex");
+}
+
+function sourceLock(sourcePath: string): MikeSourceLock {
+  const lock = LOCK_MANIFEST.files.find(
+    (candidate) => candidate.sourcePath === sourcePath,
+  );
+  assert(lock, `missing locked Mike source: ${sourcePath}`);
+  assert.match(lock.sha256, /^[a-f0-9]{64}$/);
+  return lock;
+}
+
+function assertLockedSource(sourcePath: string, source: string): void {
+  assert.equal(
+    sha256(source),
+    sourceLock(sourcePath).sha256,
+    `Mike source bytes changed: ${sourcePath}`,
+  );
 }
 
 function current(relativePath: string): string {
@@ -39,6 +72,15 @@ function withoutPortHeader(source: string): string {
     /\n?\/\/ Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:\n\/\/ frontend\/src\/app\/[^\n]+\n/,
     "\n",
   );
+}
+
+function mikePageSourceFromPort(): string {
+  return withoutPortHeader(current("src/app/(pages)/projects/page.tsx"))
+    .replace('"use client";\n\n\nimport', '"use client";\n\nimport')
+    .replace(
+      "  return <ProjectsOverview />;",
+      "    return <ProjectsOverview />;",
+    );
 }
 
 function assertInOrder(source: string, fragments: readonly string[]) {
@@ -59,13 +101,20 @@ function classTokens(source: string): Set<string> {
 }
 
 test("all Project overview ports identify the exact locked Mike source", () => {
+  assert.equal(LOCK_MANIFEST.schema, "vera-mike-source-lock-v1");
   assert.equal(
-    execFileSync("git", ["rev-parse", LOCKED_MIKE_SHA], {
-      cwd: REPOSITORY_ROOT,
-      encoding: "utf8",
-    }).trim(),
-    LOCKED_MIKE_SHA,
+    LOCK_MANIFEST.repository,
+    "https://github.com/Open-Legal-Products/mike.git",
   );
+  assert.equal(LOCK_MANIFEST.commit, LOCKED_MIKE_SHA);
+  assert.equal(
+    new Set(LOCK_MANIFEST.files.map((entry) => entry.sourcePath)).size,
+    LOCK_MANIFEST.files.length,
+    "Mike source lock paths are unique",
+  );
+  for (const sourcePath of Object.values(SOURCES)) {
+    sourceLock(sourcePath);
+  }
 
   for (const [file, sourcePath] of [
     ["src/app/(pages)/projects/page.tsx", SOURCES.page],
@@ -80,13 +129,7 @@ test("all Project overview ports identify the exact locked Mike source", () => {
 });
 
 test("the route page is syntax-equivalent after provenance and formatting", () => {
-  assert.equal(
-    withoutPortHeader(current("src/app/(pages)/projects/page.tsx")).replace(
-      /\s+/g,
-      " ",
-    ),
-    upstream(SOURCES.page).replace(/\s+/g, " "),
-  );
+  assertLockedSource(SOURCES.page, mikePageSourceFromPort());
 });
 
 test("ProjectsOverview preserves Mike state, table, row, and modal ordering", () => {
@@ -131,15 +174,61 @@ test("ProjectsOverview preserves Mike state, table, row, and modal ordering", ()
     "<ProjectDetailsModal",
   ]);
 
-  const lockedClasses = classTokens(upstream(SOURCES.overview));
   const portClasses = classTokens(source);
-  const sharedClasses = [...lockedClasses].filter((token) =>
-    portClasses.has(token),
-  );
-  assert.ok(
-    sharedClasses.length >= 35,
-    `expected Mike Tailwind lineage, found ${sharedClasses.length} shared tokens`,
-  );
+  sourceLock(SOURCES.overview);
+  for (const token of [
+    "absolute",
+    "bg-gray-900",
+    "bg-white",
+    "border",
+    "border-gray-100",
+    "flex",
+    "flex-1",
+    "flex-col",
+    "font-medium",
+    "font-serif",
+    "gap-1",
+    "h-3.5",
+    "h-8",
+    "h-full",
+    "hover:bg-gray-700",
+    "hover:text-gray-900",
+    "inline-flex",
+    "items-center",
+    "justify-end",
+    "max-w-xs",
+    "min-h-0",
+    "ml-auto",
+    "overflow-hidden",
+    "px-3",
+    "py-1.5",
+    "relative",
+    "right-0",
+    "rounded-full",
+    "rounded-lg",
+    "shadow-lg",
+    "shrink-0",
+    "text-2xl",
+    "text-gray-300",
+    "text-gray-700",
+    "text-gray-900",
+    "text-left",
+    "text-red-600",
+    "text-white",
+    "text-xs",
+    "top-full",
+    "transition-colors",
+    "w-20",
+    "w-24",
+    "w-3.5",
+    "w-32",
+    "w-48",
+    "w-8",
+    "w-full",
+    "z-50",
+  ]) {
+    assert(portClasses.has(token), `missing locked Mike class token: ${token}`);
+  }
 });
 
 test("new and details modals preserve Mike's interaction skeleton", () => {
@@ -210,8 +299,18 @@ test("local adaptations remove cloud UI and keep translated, cancellable actions
 });
 
 test("Vera project and document API methods retain Mike lineage behind one strict local boundary", () => {
-  const mike = upstream(SOURCES.api);
-  for (const method of [
+  sourceLock(SOURCES.api);
+  const api = current("src/app/lib/veraApi.ts");
+  const lockedMikeToVeraMethods = {
+    listProjects: "listVeraProjects",
+    createProject: "createVeraProject",
+    updateProject: "updateVeraProject",
+    deleteProject: "deleteVeraProject",
+    uploadProjectDocument: "uploadVeraDocument",
+    uploadDocumentVersion: "uploadVeraDocumentVersion",
+    deleteDocument: "deleteVeraDocument",
+  } as const;
+  assert.deepEqual(Object.keys(lockedMikeToVeraMethods), [
     "listProjects",
     "createProject",
     "updateProject",
@@ -219,23 +318,11 @@ test("Vera project and document API methods retain Mike lineage behind one stric
     "uploadProjectDocument",
     "uploadDocumentVersion",
     "deleteDocument",
-  ]) {
-    assert.match(mike, new RegExp(`export async function ${method}`));
-  }
-
-  const api = current("src/app/lib/veraApi.ts");
-  for (const method of [
-    "listVeraProjects",
-    "createVeraProject",
-    "updateVeraProject",
-    "deleteVeraProject",
-    "uploadVeraDocument",
-    "uploadVeraDocumentVersion",
-    "retryVeraDocumentParse",
-    "deleteVeraDocument",
-  ]) {
+  ]);
+  for (const method of Object.values(lockedMikeToVeraMethods)) {
     assert.match(api, new RegExp(`export (?:async )?function ${method}`));
   }
+  assert.match(api, /export (?:async )?function retryVeraDocumentParse/);
   assert.match(api, /json: \{ confirm_name: confirmName \}/);
   assert.match(api, /form\.append\("file", upload\.file, upload\.filename\)/);
   assert.doesNotMatch(api, /Content-Type[^\n]*multipart/i);

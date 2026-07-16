@@ -49,6 +49,7 @@ import {
 } from "@/app/lib/veraProjectSourceApi";
 import { ProjectCitationSourceViewer } from "./ProjectCitationSourceViewer";
 import { ProjectSectionToolbar } from "./ProjectWorkspace";
+import { useWorkspaceRoutes } from "./WorkspaceRouteAdapter";
 
 interface Props {
   projectId: string;
@@ -87,6 +88,7 @@ function shortId(value: string) {
 
 export function DocumentStudioView({ projectId, documentId }: Props) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, formatDate, formatFileSize } = useI18n();
   const [document, setDocument] = useState<VeraStudioDocumentWire | null>(null);
   const [versions, setVersions] = useState<VeraStudioVersionsWire | null>(null);
@@ -825,7 +827,7 @@ export function DocumentStudioView({ projectId, documentId }: Props) {
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <button
                 type="button"
-                onClick={() => router.push(`/projects/${projectId}`)}
+                onClick={() => router.push(routes.documentsHref(projectId))}
                 aria-label={t("studio.back")}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800"
               >

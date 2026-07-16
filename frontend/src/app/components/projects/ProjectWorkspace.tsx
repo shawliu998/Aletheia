@@ -32,6 +32,7 @@ import {
     ProjectPageHeader,
     type ProjectWorkspaceSection,
 } from "./ProjectPageParts";
+import { useWorkspaceRoutes } from "./WorkspaceRouteAdapter";
 
 type ProjectWorkspaceValue = {
     projectId: string;
@@ -178,7 +179,9 @@ function activeSectionFromSegments(
 ): ProjectWorkspaceSection {
     if (segments[0] === "assistant") return "assistant";
     if (segments[0] === "workflows") return "workflows";
-    if (segments[0] === "tabular-reviews") return "reviews";
+    if (segments[0] === "tabular-reviews" || segments[0] === "review") {
+        return "reviews";
+    }
     return "documents";
 }
 
@@ -190,6 +193,7 @@ export function ProjectWorkspaceProvider({
     children: ReactNode;
 }) {
     const router = useRouter();
+    const routes = useWorkspaceRoutes();
     const segments = useSelectedLayoutSegments();
     const { t, errorMessage } = useI18n();
     const [project, setProject] = useState<VeraProjectWire | null>(null);
@@ -370,7 +374,7 @@ export function ProjectWorkspaceProvider({
         try {
             await deleteVeraProject(projectId, project.name);
             setDeleteStatus("deleted");
-            router.replace("/projects");
+            router.replace(routes.collectionHref);
         } catch (error) {
             setDeleteStatus("idle");
             setDeleteError(errorMessage(error as Error));
@@ -386,7 +390,7 @@ export function ProjectWorkspaceProvider({
                     project={project}
                     search={search}
                     loading={projectLoading}
-                    onBackToProjects={() => router.push("/projects")}
+                    onBackToProjects={() => router.push(routes.collectionHref)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
                 />
@@ -461,6 +465,15 @@ export function ProjectSectionToolbar({
     const { activeSection, projectId } = useProjectWorkspace();
     const { t } = useI18n();
     const router = useRouter();
+    const routes = useWorkspaceRoutes();
+    if (routes.kind === "matter") {
+        if (!actions) return null;
+        return (
+            <div className="flex h-10 items-center justify-end border-b border-gray-200 px-4 md:px-10">
+                <div className="flex items-center gap-2">{actions}</div>
+            </div>
+        );
+    }
     const items = [
         { id: "documents", label: t("documents.title"), disabled: false },
         { id: "assistant", label: t("assistant.title"), disabled: false },
@@ -480,13 +493,13 @@ export function ProjectSectionToolbar({
                         aria-current={activeSection === item.id ? "page" : undefined}
                         onClick={() => {
                             if (item.id === "documents") {
-                                router.push(`/projects/${projectId}`);
+                                router.push(routes.documentsHref(projectId));
                             } else if (item.id === "assistant") {
-                                router.push(`/projects/${projectId}/assistant`);
+                                router.push(routes.assistantHref(projectId));
                             } else if (item.id === "workflows") {
-                                router.push(`/projects/${projectId}/workflows`);
+                                router.push(routes.workflowsHref(projectId));
                             } else if (item.id === "reviews") {
-                                router.push(`/projects/${projectId}/tabular-reviews`);
+                                router.push(routes.tabularReviewsHref(projectId));
                             }
                         }}
                         className={`text-xs transition-colors disabled:cursor-not-allowed ${

@@ -6,8 +6,11 @@ import test from "node:test";
 import {
   createVeraMatter,
   createVeraMatterProfile,
+  parseVeraMatterPolicyWire,
   parseVeraMatterPageWire,
   parseVeraMatterWire,
+  updateVeraMatter,
+  updateVeraMatterPolicy,
   updateVeraMatterProfile,
   VERA_WORKSPACE_TYPES,
 } from "../src/app/lib/veraMatterApi.ts";
@@ -49,16 +52,16 @@ function profileWire(workspaceType: string | null = "transaction") {
 
 function capabilities(
   profile: "create" | "classify" | "edit" | "unavailable",
-  inference:
-    | "workspace_compatibility"
-    | "policy_gate_closed"
-    | "unavailable",
+  inference: "available" | "policy_gate_closed" | "unavailable",
 ) {
   return {
     matter_profile: profile,
-    inference,
+    assistant: inference,
+    workflows:
+      inference === "policy_gate_closed" ? "non_inference_only" : inference,
+    tabular: inference,
     review: "unavailable",
-    drafts: "document_scoped",
+    drafts: inference === "unavailable" ? "unavailable" : "document_scoped",
   };
 }
 
@@ -76,7 +79,7 @@ function matterWire(
       matter_profile: null,
       profile_state: "absent",
       capabilities:
-        lifecycleCapabilities ?? capabilities("create", "workspace_compatibility"),
+        lifecycleCapabilities ?? capabilities("create", "available"),
     };
   }
   return {
@@ -120,7 +123,7 @@ test("Matter wire accepts the three truthful profile states and broad taxonomy",
       const readOnly = parseVeraMatterWire(matterWire(state, lifecycle));
       assert.equal(readOnly.profile_state, state);
       assert.equal(readOnly.capabilities.matter_profile, "unavailable");
-      assert.equal(readOnly.capabilities.inference, "unavailable");
+      assert.equal(readOnly.capabilities.assistant, "unavailable");
     }
   }
   assert.equal(
@@ -166,7 +169,10 @@ test("Matter wire fails closed on old litigation fields and capability drift", (
   assert.throws(() =>
     parseVeraMatterWire({
       ...matterWire("ready"),
-      capabilities: capabilities("edit", "workspace_compatibility"),
+      capabilities: {
+        ...capabilities("edit", "available"),
+        assistant: "workspace_compatibility",
+      },
     }),
   );
   assert.throws(() =>
@@ -217,22 +223,78 @@ test("Matter mutations reject unbounded, unknown, and unclassified input before 
       unknown: true,
     } as never),
   );
+  await assert.rejects(updateVeraMatter(PROJECT_ID, {}));
+  await assert.rejects(
+    updateVeraMatter(PROJECT_ID, {
+      project: { name: " padded " },
+    }),
+  );
+  await assert.rejects(
+    updateVeraMatter(PROJECT_ID, {
+      matter_profile: { workspace_type: "research" },
+    } as never),
+  );
+  await assert.rejects(
+    updateVeraMatterPolicy(PROJECT_ID, {
+      external_egress_mode: "allowed_by_policy",
+      execution_locations: ["local", "local"],
+      allow_external_legal_sources: false,
+      allow_word_bridge: false,
+    }),
+  );
+});
+
+test("Matter Policy wire is exact, declared, and fails closed", () => {
+  const policy = {
+    project_id: PROJECT_ID,
+    external_egress_mode: "approval",
+    execution_locations: ["local", "firm_private"],
+    allow_external_legal_sources: false,
+    allow_word_bridge: true,
+    created_at: NOW,
+    updated_at: NOW,
+  };
+  assert.equal(parseVeraMatterPolicyWire(policy).external_egress_mode, "approval");
+  assert.throws(() =>
+    parseVeraMatterPolicyWire({
+      ...policy,
+      execution_locations: ["localhost"],
+    }),
+  );
+  assert.throws(() =>
+    parseVeraMatterPolicyWire({
+      ...policy,
+      execution_locations: ["local", "local"],
+    }),
+  );
+  assert.throws(() => parseVeraMatterPolicyWire({ ...policy, inferred: true }));
 });
 
 test("Gate 1 IA preserves deep links while exposing only truthful Matter surfaces", async () => {
   const root = path.resolve(import.meta.dirname, "..");
   const read = (relative: string) =>
     readFile(path.join(root, relative), "utf8");
-  const [sidebar, navigation, list, detail, modal, api, config, mattersPage] =
+  const [sidebar, navigation, shell, routes, projectWorkspace, list, detail, modal, settingsSource, api, config, mattersPage, matterLayout, matterSettingsPage, matterWorkflow, workflowList, workflowEditor, workflowRunPanel, tabularReview] =
     await Promise.all([
       read("src/app/components/vera-shell/VeraSidebar.tsx"),
       read("src/features/matter-overview/MatterNavigation.tsx"),
+      read("src/features/matter-overview/MatterWorkspaceShell.tsx"),
+      read("src/app/components/projects/WorkspaceRouteAdapter.tsx"),
+      read("src/app/components/projects/ProjectWorkspace.tsx"),
       read("src/features/matter-overview/MattersOverview.tsx"),
       read("src/features/matter-overview/MatterWorkspaceOverview.tsx"),
       read("src/features/matter-overview/MatterProfileModal.tsx"),
+      read("src/features/matter-overview/MatterSettings.tsx"),
       read("src/app/lib/veraMatterApi.ts"),
       read("next.config.ts"),
       read("src/app/(pages)/matters/page.tsx"),
+      read("src/app/(pages)/matters/[id]/layout.tsx"),
+      read("src/app/(pages)/matters/[id]/settings/page.tsx"),
+      read("src/app/(pages)/matters/[id]/workflows/[workflowId]/page.tsx"),
+      read("src/app/components/workflows/VeraWorkflowList.tsx"),
+      read("src/app/components/workflows/VeraWorkflowEditor.tsx"),
+      read("src/app/components/workflows/VeraWorkflowRunPanel.tsx"),
+      read("src/app/components/tabular/TabularReviewView.tsx"),
     ]);
 
   const assistant = sidebar.indexOf('labelKey: "nav.assistant"');
@@ -249,23 +311,75 @@ test("Gate 1 IA preserves deep links while exposing only truthful Matter surface
 
   assert.match(config, /source: "\/projects"[\s\S]*destination: "\/matters"/);
   assert.match(mattersPage, /<MattersOverview \/>/);
-  assert.match(navigation, /`\/projects\/\$\{projectId\}`/);
-  assert.match(navigation, /`\/projects\/\$\{projectId\}\/workflows`/);
-  assert.match(navigation, /!inferenceAvailable \? \(/);
-  assert.match(navigation, /capabilities\.inference === "unavailable"/);
+  assert.match(navigation, /const base = `\/matters\/\$\{projectId\}`/);
+  assert.doesNotMatch(navigation, /\/projects\//);
+  assert.match(navigation, /capabilities\.assistant === "available"/);
+  assert.match(navigation, /capabilities\.tabular === "available"/);
+  assert.match(navigation, /capabilities\.workflows === "non_inference_only"/);
+  assert.match(navigation, /matterCapabilityReasonKey\(capabilities\.assistant\)/);
+  assert.match(navigation, /matterCapabilityReasonKey\(capabilities\.tabular\)/);
+  assert.match(navigation, /matterCapabilityReasonKey\(capabilities\.workflows\)/);
+  assert.match(navigation, /matters\.capabilities\.tabularCompatibilityLabel/);
+  assert.match(navigation, /matters\.capabilities\.inferenceStatus/);
+  assert.match(shell, /matterCapabilityTitleKey/);
+  assert.match(shell, /matterCapabilityReasonKey/);
   assert.match(navigation, /matters\.navigation\.review/);
   assert.match(navigation, /matters\.navigation\.drafts/);
+  assert.match(navigation, /matters\.navigation\.settings/);
   assert.match(navigation, /disabled[\s\S]*aria-disabled="true"/);
+  assert.match(matterLayout, /<MatterWorkspaceShell params=\{params\}>/);
+  assert.match(shell, /WorkspaceRouteProvider adapter=\{MATTER_WORKSPACE_ROUTES\}/);
+  assert.match(shell, /<ProjectWorkspaceProvider projectId=\{id\}>/);
+  assert.match(projectWorkspace, /routes\.kind === "matter"/);
+  assert.match(projectWorkspace, /if \(!actions\) return null/);
+  assert.match(projectWorkspace, /\{actions\}/);
+  assert.match(shell, /MatterCapabilityBoundary/);
+  assert.match(routes, /documentsHref: \(projectId\) => `\/matters\/\$\{projectId\}\/documents`/);
+  assert.match(routes, /tabularReviewsHref: \(projectId\) => `\/matters\/\$\{projectId\}\/review`/);
+  assert.match(matterWorkflow, /executionConstraint=\{executionConstraint\}/);
+  assert.match(workflowEditor, /definition\.steps\.some\(\(step\) => step\.type === "prompt"\)/);
+  assert.match(workflowRunPanel, /executionConstraint === "non_inference_only" && hasPromptStep/);
+  assert.match(workflowRunPanel, /settingsLoadState !== "ready"/);
+  assert.match(workflowRunPanel, /readyModels\.some\(\(model\) => model\.id === selectedModelId\)/);
+  assert.match(workflowList, /routes\.workflowHref\(projectId, created\.id\)/);
+  assert.match(workflowEditor, /router\.(?:push|replace)\(workflowsHref\)/);
+  assert.match(workflowRunPanel, /routes\.documentStudioHref\(draft\.project_id, draft\.document_id\)/);
+  assert.match(tabularReview, /routes\.tabularReviewHref\(updated\.project_id, reviewId\)/);
+  assert.match(tabularReview, /routes\.tabularReviewsHref\(projectId\)/);
+  assert.doesNotMatch(
+    `${workflowList}\n${workflowEditor}\n${workflowRunPanel}\n${tabularReview}`,
+    /`\/projects\/\$\{[^`]+(?:documents|tabular-reviews)/,
+  );
+  assert.match(matterSettingsPage, /MatterCapabilityBoundary capability="matter_profile"/);
+  assert.match(settingsSource, /await updateVeraMatter\(matter\.project\.id, pendingMatterUpdate\)/);
+  assert.match(settingsSource, /setMatter\(saved\)/);
+  assert.match(settingsSource, /await updateVeraMatterPolicy\(matter\.project\.id, policyDraft\)/);
+  assert.match(settingsSource, /cause instanceof VeraApiError && cause\.status === 404/);
+  assert.match(settingsSource, /external_egress_mode: "disabled"/);
+  assert.match(settingsSource, /execution_locations: \[\]/);
+  assert.match(settingsSource, /setPolicyDraft\(\{ \.\.\.MISSING_POLICY_DRAFT \}\)/);
+  assert.match(settingsSource, /policyMissing \|\|/);
+  assert.match(settingsSource, /setPolicyMissing\(false\)/);
+  assert.match(settingsSource, /matters\.settings\.policyMissing/);
+  assert.match(settingsSource, /href="\/settings\/models"/);
+  assert.doesNotMatch(settingsSource, /updateVeraMatter[\s\S]*updateVeraMatterPolicy[\s\S]*Promise\.all/);
+  assert.match(api, /const MATTER_UPDATE_KEYS = \["project", "profile"\]/);
+  assert.doesNotMatch(api, /MATTER_UPDATE_KEYS = [^\n]*matter_profile/);
 
-  assert.match(list, /profile_state !== "absent"/);
-  assert.match(list, /profile_state === "absent"/);
+  assert.match(list, /profile_state: "profiled"/);
+  assert.match(list, /profile_state: "absent"/);
+  assert.match(list, /profiledCursor/);
+  assert.match(list, /genericCursor/);
+  assert.match(list, /reconcileMatterStreams/);
+  assert.match(list, /incomingProfiled/);
+  assert.match(list, /incomingAbsent/);
   assert.match(
     list,
     /mode:\s*action === "create" \? "create-profile" : "edit-profile"/,
   );
-  assert.match(detail, /capabilities\.inference === "policy_gate_closed"/);
+  assert.match(detail, /capabilities\.assistant === "policy_gate_closed"/);
   assert.match(detail, /capabilities\.matter_profile !== "unavailable"/);
-  assert.match(detail, /capabilities\.inference === "unavailable"/);
+  assert.match(detail, /capabilities\.assistant === "unavailable"/);
   assert.match(list, /action === "unavailable"/);
   assert.match(detail, /project\.tabular_review_count/);
   assert.match(modal, /workspace_type: form\.workspaceType/);

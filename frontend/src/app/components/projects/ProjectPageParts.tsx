@@ -13,6 +13,7 @@ import type {
     VeraDocumentVersionWire,
     VeraProjectWire,
 } from "@/app/lib/veraWireTypes";
+import { useWorkspaceRoutes } from "./WorkspaceRouteAdapter";
 
 export type ProjectWorkspaceSection =
     | "documents"
@@ -132,12 +133,13 @@ export function ProjectPageHeader({
 }) {
     const { t } = useI18n();
     const router = useRouter();
+    const routes = useWorkspaceRoutes();
     return (
         <PageHeader
             loading={loading}
             breadcrumbs={[
                 {
-                    label: t("projects.title"),
+                    label: t(routes.kind === "matter" ? "matters.title" : "projects.title"),
                     onClick: onBackToProjects,
                     title: t("common.actions.back"),
                 },
@@ -159,14 +161,14 @@ export function ProjectPageHeader({
                         title: t("projects.deleteConfirm.action"),
                     },
                 ],
-                {
+                ...(routes.kind === "project" ? [{
                     actions: [
                         {
                             icon: <MessageSquare className="h-4 w-4" />,
                             label: <span className="hidden sm:inline">{t("assistant.newChat")}</span>,
                             onClick: () => {
                                 if (project) {
-                                    router.push(`/projects/${project.id}/assistant`);
+                                    router.push(routes.assistantHref(project.id));
                                 }
                             },
                         },
@@ -175,7 +177,7 @@ export function ProjectPageHeader({
                             label: <span className="hidden sm:inline">{t("workflows.title")}</span>,
                             onClick: () => {
                                 if (project) {
-                                    router.push(`/projects/${project.id}/workflows`);
+                                    router.push(routes.workflowsHref(project.id));
                                 }
                             },
                         },
@@ -184,12 +186,12 @@ export function ProjectPageHeader({
                             label: <span className="hidden sm:inline">{t("tabular.title")}</span>,
                             onClick: () => {
                                 if (project) {
-                                    router.push(`/projects/${project.id}/tabular-reviews`);
+                                    router.push(routes.tabularReviewsHref(project.id));
                                 }
                             },
                         },
                     ],
-                },
+                }] : []),
             ]}
         />
     );

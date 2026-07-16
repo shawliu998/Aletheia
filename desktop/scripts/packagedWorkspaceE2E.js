@@ -59,8 +59,8 @@ const GATE1_MATTER = Object.freeze({
 });
 const GATE1_MATTER_HEALTH = Object.freeze({
   status: "ready",
-  schemaVersion: 16,
-  inferencePolicy: "gate_closed",
+  schemaVersion: 17,
+  inferencePolicy: "minimal_unified",
 });
 const MATTER_VIEW_KEYS = [
   "capabilities",
@@ -95,11 +95,50 @@ const MATTER_PROFILE_KEYS = [
   "workspace_type",
 ];
 const MATTER_CAPABILITY_KEYS = [
+  "assistant",
   "drafts",
-  "inference",
   "matter_profile",
   "review",
+  "tabular",
+  "workflows",
 ];
+const MODEL_PRIVACY_KEYS = [
+  "configured",
+  "created_at",
+  "declaration_basis",
+  "execution_location",
+  "model_profile_enabled",
+  "model_profile_id",
+  "retention",
+  "sensitive_data_allowed",
+  "training_use",
+  "updated_at",
+];
+const MATTER_POLICY_KEYS = [
+  "allow_external_legal_sources",
+  "allow_word_bridge",
+  "created_at",
+  "execution_locations",
+  "external_egress_mode",
+  "project_id",
+  "updated_at",
+];
+const MATTER_AVAILABLE_CAPABILITIES = Object.freeze({
+  matter_profile: "edit",
+  assistant: "available",
+  workflows: "available",
+  tabular: "available",
+  review: "unavailable",
+  drafts: "document_scoped",
+});
+const MATTER_CLOSED_CAPABILITIES = Object.freeze({
+  matter_profile: "edit",
+  assistant: "policy_gate_closed",
+  workflows: "non_inference_only",
+  tabular: "policy_gate_closed",
+  review: "unavailable",
+  drafts: "document_scoped",
+});
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const API_TIMEOUT_MS = 180_000;
 const POLL_TIMEOUT_MS = 180_000;
@@ -161,7 +200,12 @@ function assertMatterCounts(project, expected) {
   }
 }
 
-function assertGate1MatterProjection(view, projectId, counts) {
+function assertGate1MatterProjection(
+  view,
+  projectId,
+  counts,
+  capabilities = MATTER_AVAILABLE_CAPABILITIES,
+) {
   assertExactKeys(view, MATTER_VIEW_KEYS, "Matter view");
   assertExactKeys(view.project, MATTER_PROJECT_KEYS, "Matter project projection");
   assertExactKeys(view.matter_profile, MATTER_PROFILE_KEYS, "Matter Profile");
@@ -194,12 +238,7 @@ function assertGate1MatterProjection(view, projectId, counts) {
   assertIsoTimestamp(view.matter_profile.created_at, "Matter Profile created_at");
   assertIsoTimestamp(view.matter_profile.updated_at, "Matter Profile updated_at");
   assert.equal(view.profile_state, "ready");
-  assert.deepEqual(view.capabilities, {
-    matter_profile: "edit",
-    inference: "policy_gate_closed",
-    review: "unavailable",
-    drafts: "document_scoped",
-  });
+  assert.deepEqual(view.capabilities, capabilities);
 }
 
 function assertGenericProjectMatterProjection(view, projectId, counts) {
@@ -222,10 +261,37 @@ function assertGenericProjectMatterProjection(view, projectId, counts) {
   assert.equal(view.profile_state, "absent");
   assert.deepEqual(view.capabilities, {
     matter_profile: "create",
-    inference: "workspace_compatibility",
+    assistant: "available",
+    workflows: "available",
+    tabular: "available",
     review: "unavailable",
     drafts: "document_scoped",
   });
+}
+
+function assertModelPrivacy(value, modelProfileId) {
+  assertExactKeys(value, MODEL_PRIVACY_KEYS, "model privacy declaration");
+  assert.equal(value.model_profile_id, modelProfileId);
+  assert.equal(value.configured, true);
+  assert.equal(value.declaration_basis, "user_or_admin_declared");
+  assert.equal(value.model_profile_enabled, true);
+  assert.equal(value.execution_location, "confidential_remote");
+  assert.equal(value.retention, "zero");
+  assert.equal(value.training_use, "prohibited");
+  assert.equal(value.sensitive_data_allowed, true);
+  assertIsoTimestamp(value.created_at, "model privacy created_at");
+  assertIsoTimestamp(value.updated_at, "model privacy updated_at");
+}
+
+function assertMatterPolicy(value, projectId) {
+  assertExactKeys(value, MATTER_POLICY_KEYS, "Matter Policy");
+  assert.equal(value.project_id, projectId);
+  assert.equal(value.external_egress_mode, "allowed_by_policy");
+  assert.deepEqual(value.execution_locations, ["confidential_remote"]);
+  assert.equal(value.allow_external_legal_sources, false);
+  assert.equal(value.allow_word_bridge, false);
+  assertIsoTimestamp(value.created_at, "Matter Policy created_at");
+  assertIsoTimestamp(value.updated_at, "Matter Policy updated_at");
 }
 
 function providerCallSnapshot(calls) {
@@ -823,6 +889,7 @@ async function assertMatterNavigation(page, projectId) {
       ["复核", "Review"],
       ["工作流", "Workflows"],
       ["草稿", "Drafts"],
+      ["设置", "Settings"],
     ];
     return [...element.children].map((child) => {
       const text = (child.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -842,28 +909,24 @@ async function assertMatterNavigation(page, projectId) {
   });
   assert.deepEqual(
     entries.map((entry) => entry.index),
-    [0, 1, 2, 3, 4, 5],
-    "Matter navigation must be Overview, Documents, Assistant, Review, Workflows, Drafts in exact order.",
+    [0, 1, 2, 3, 4, 5, 6],
+    "Matter navigation must be Overview, Documents, Assistant, Review, Workflows, Drafts, Settings in exact order.",
   );
   assert.equal(entries[0].tag, "A");
   assert.equal(entries[0].ariaCurrent, "page");
   assert.equal(entries[0].href, `/matters/${projectId}`);
   assert.equal(entries[1].tag, "A");
-  assert.equal(entries[1].href, `/projects/${projectId}`);
-  assert.equal(entries[2].tag, "BUTTON");
-  assert.equal(entries[2].disabled, true);
-  assert.equal(entries[2].ariaDisabled, "true");
-  assert.match(entries[2].title, /策略|policy/i);
-  assert.equal(entries[3].tag, "BUTTON");
-  assert.equal(entries[3].disabled, true);
-  assert.equal(entries[3].ariaDisabled, "true");
-  assert.match(entries[3].title, /Gate 2/);
+  assert.equal(entries[1].href, `/matters/${projectId}/documents`);
+  assert.equal(entries[2].tag, "A");
+  assert.equal(entries[2].href, `/matters/${projectId}/assistant`);
+  assert.equal(entries[3].tag, "A");
+  assert.equal(entries[3].href, `/matters/${projectId}/review`);
   assert.equal(entries[4].tag, "A");
-  assert.equal(entries[4].href, `/projects/${projectId}/workflows`);
-  assert.equal(entries[5].tag, "BUTTON");
-  assert.equal(entries[5].disabled, true);
-  assert.equal(entries[5].ariaDisabled, "true");
-  assert.match(entries[5].title, /文档|document/i);
+  assert.equal(entries[4].href, `/matters/${projectId}/workflows`);
+  assert.equal(entries[5].tag, "A");
+  assert.equal(entries[5].href, `/matters/${projectId}/drafts`);
+  assert.equal(entries[6].tag, "A");
+  assert.equal(entries[6].href, `/matters/${projectId}/settings`);
 }
 
 async function assertMatterRenderer(page, projectId) {
@@ -878,15 +941,22 @@ async function assertMatterRenderer(page, projectId) {
     GATE1_MATTER.practice,
   ]);
   const visible = await page.locator("body").innerText();
-  assert.match(visible, /事项推理策略尚未配置|Matter inference policy is not configured/);
+  assert.doesNotMatch(
+    visible,
+    /事项推理策略尚未配置|Matter inference policy is not configured/,
+  );
   await assertMatterNavigation(page, projectId);
   await assertTopNavigation(page);
 }
 
-async function assertAssistantRenderer(page, projectId, chatId) {
+async function assertAssistantRenderer(page, projectId, chatId, kind = "project") {
+  const route =
+    kind === "matter"
+      ? `/matters/${projectId}/assistant/chat/${chatId}`
+      : `/projects/${projectId}/assistant/chat/${chatId}`;
   await navigateAndAssertVisibleText(
     page,
-    `/projects/${projectId}/assistant/chat/${chatId}`,
+    route,
     [
       "第一份文件约定甲方三十日内付款",
       "第二份文件约定乙方可在重大违约后解除",
@@ -1077,6 +1147,15 @@ async function main() {
   let mock = null;
   let mockSummary = null;
   let modelProfileId = null;
+  let gate1MatterId = null;
+  let gate1MatterChatId = null;
+  let gate1MatterDocumentIds = [];
+  let gate1MatterSourceIds = [];
+  let gate1MatterChatBeforeRestart = null;
+  let gate1MatterSourcesBeforeRestart = null;
+  let gate1MatterBeforeRestart = null;
+  let gate1MatterPolicyBeforeRestart = null;
+  let modelPrivacyBeforeRestart = null;
   let credentialDeleted = false;
   let completed = false;
   try {
@@ -1140,6 +1219,22 @@ async function main() {
     });
     assert.equal(model.enabled, true);
     assert.equal(model.is_default, true);
+    modelPrivacyBeforeRestart = await apiJson(
+      token,
+      `/model-profiles/${modelProfileId}/privacy`,
+      {
+        method: "PATCH",
+        json: {
+          // The policy declaration is explicit. It deliberately does not infer
+          // execution locality from this test's loopback mock provider URL.
+          execution_location: "confidential_remote",
+          retention: "zero",
+          training_use: "prohibited",
+          sensitive_data_allowed: true,
+        },
+      },
+    );
+    assertModelPrivacy(modelPrivacyBeforeRestart, modelProfileId);
 
     const project = await apiJson(token, "/projects", {
       method: "POST",
@@ -1392,57 +1487,188 @@ async function main() {
       json: GATE1_MATTER,
       expected: [201],
     });
+    gate1MatterId = gate1Matter.project.id;
     assertGate1MatterProjection(gate1Matter, gate1Matter.project.id, {
       document_count: 0,
       chat_count: 0,
       tabular_review_count: 0,
       workflow_count: 0,
+    }, MATTER_CLOSED_CAPABILITIES);
+
+    const matterDefaults = await apiJson(token, "/settings", {
+      method: "PATCH",
+      json: {
+        default_model_profile_id: modelProfileId,
+        default_project_id: gate1MatterId,
+      },
     });
+    assert.equal(matterDefaults.default_model_profile_id, modelProfileId);
+    assert.equal(matterDefaults.default_project_id, gate1MatterId);
+
+    gate1MatterPolicyBeforeRestart = await apiJson(
+      token,
+      `/matters/${gate1MatterId}/policy`,
+      {
+        method: "PATCH",
+        json: {
+          external_egress_mode: "allowed_by_policy",
+          execution_locations: ["confidential_remote"],
+          allow_external_legal_sources: false,
+          allow_word_bridge: false,
+        },
+      },
+    );
+    assertMatterPolicy(gate1MatterPolicyBeforeRestart, gate1MatterId);
+
+    const enabledGate1Matter = await apiJson(
+      token,
+      `/matters/${gate1MatterId}`,
+    );
+    assertGate1MatterProjection(enabledGate1Matter, gate1MatterId, {
+      document_count: 0,
+      chat_count: 0,
+      tabular_review_count: 0,
+      workflow_count: 0,
+    });
+    assert.equal(
+      enabledGate1Matter.project.default_model_profile_id,
+      null,
+      "The Matter projection keeps the Project override null while the existing Settings owner supplies the effective Workspace default.",
+    );
+
+    const matterFirstUpload = await uploadTextDocument(
+      token,
+      gate1MatterId,
+      "alpha-contract.txt",
+      DOCUMENT_ONE,
+    );
+    const matterSecondUpload = await uploadTextDocument(
+      token,
+      gate1MatterId,
+      "beta-contract.txt",
+      DOCUMENT_TWO,
+    );
+    gate1MatterDocumentIds = [
+      matterFirstUpload.document.id,
+      matterSecondUpload.document.id,
+    ];
+    await pollUntil("Matter documents", async () => {
+      const documents = await apiJson(
+        token,
+        `/projects/${gate1MatterId}/documents?limit=100`,
+      );
+      for (const document of documents.filter((item) =>
+        gate1MatterDocumentIds.includes(item.id),
+      )) {
+        if (document.status === "error") {
+          throw new Error("A packaged Matter TXT document failed local parsing.");
+        }
+      }
+      return gate1MatterDocumentIds.every(
+        (id) => documents.find((document) => document.id === id)?.status === "ready",
+      )
+        ? documents
+        : undefined;
+    });
+    for (const documentId of gate1MatterDocumentIds) {
+      const captured = await apiJson(
+        token,
+        `/projects/${gate1MatterId}/sources/document-snapshots`,
+        {
+          method: "POST",
+          json: { document_id: documentId },
+          expected: [200, 201],
+        },
+      );
+      assert.equal(captured.snapshot.project_id, gate1MatterId);
+      assert.equal(captured.snapshot.kind, "project_document");
+      assert.equal(captured.snapshot.source_record_id, documentId);
+      assert.equal(captured.snapshot.license.basis, "user_provided");
+      assert.equal(captured.snapshot.license.model_use, "permitted");
+      gate1MatterSourceIds.push(captured.snapshot.id);
+    }
 
     const callsBeforeMatterInference = providerCallSnapshot(mock.calls);
-    const gatedMatterAssistant = await apiJson(
+    const acceptedMatterAssistant = await apiJson(
       token,
-      `/projects/${gate1Matter.project.id}/chat`,
+      `/projects/${gate1MatterId}/chat`,
       {
         method: "POST",
         json: {
           messages: [
             {
               role: "user",
-              content: "Gate 1 Matter 必须在 Provider 边界前安全拒绝本次模型调用。",
+              content: "请为当前事项比较两份合同中的付款和解除约定，并给出精确引用。",
             },
           ],
           model_profile_id: modelProfileId,
-          attached_documents: [],
+          attached_documents: [
+            {
+              filename: "alpha-contract.txt",
+              document_id: gate1MatterDocumentIds[0],
+            },
+            {
+              filename: "beta-contract.txt",
+              document_id: gate1MatterDocumentIds[1],
+            },
+          ],
         },
         expected: [202],
       },
     );
-    const gatedMatterJob = await pollUntil("Matter inference policy gate", async () => {
+    gate1MatterChatId = acceptedMatterAssistant.chat_id;
+    await pollUntil("Matter Assistant generation", async () => {
       const job = await apiJson(
         token,
-        `/assistant/jobs/${gatedMatterAssistant.job_id}`,
+        `/assistant/jobs/${acceptedMatterAssistant.job_id}`,
       );
       if (!job.terminal) return undefined;
-      assert.equal(job.status, "failed");
+      assert.equal(job.status, "complete", "Matter Assistant generation did not complete.");
       return job;
     });
-    assert.equal(JSON.stringify(gatedMatterJob).includes(providerSecret), false);
+    assert.equal(
+      mock.calls.assistantTurns,
+      callsBeforeMatterInference.assistantTurns + 2,
+      "Matter Assistant must reach the provider for its tool and final turns.",
+    );
+    assert.equal(
+      mock.calls.assistantToolCalls,
+      callsBeforeMatterInference.assistantToolCalls + 1,
+      "Matter Assistant must execute a real document tool call.",
+    );
+    const matterChat = await apiJson(token, `/chat/${gate1MatterChatId}`);
+    gate1MatterChatBeforeRestart = matterChat;
+    const matterAssistantMessage = matterChat.messages.find(
+      (message) => message.role === "assistant",
+    );
+    assert.ok(matterAssistantMessage);
+    assert.equal(assistantMessageText(matterAssistantMessage), ASSISTANT_VISIBLE_ANSWER);
     assert.deepEqual(
-      providerCallSnapshot(mock.calls),
-      callsBeforeMatterInference,
-      "Gate 1 Matter inference must fail before any provider request.",
+      matterAssistantMessage.citations.map((citation) => citation.document_id).sort(),
+      [...gate1MatterDocumentIds].sort(),
+    );
+    assert.deepEqual(
+      matterAssistantMessage.citations.map((citation) => citation.quote),
+      [DOCUMENT_ONE_PAYMENT_QUOTE, DOCUMENT_TWO_TERMINATION_QUOTE],
+    );
+    gate1MatterSourcesBeforeRestart = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/sources?limit=100`,
+    );
+    assert.deepEqual(
+      gate1MatterSourcesBeforeRestart.sources.map((source) => source.id).sort(),
+      [...gate1MatterSourceIds].sort(),
     );
 
-    const gate1MatterBeforeRestart = await apiJson(
+    gate1MatterBeforeRestart = await apiJson(
       token,
-      `/matters/${gate1Matter.project.id}`,
+      `/matters/${gate1MatterId}`,
     );
     assertGate1MatterProjection(
       gate1MatterBeforeRestart,
-      gate1Matter.project.id,
+      gate1MatterId,
       {
-        document_count: 0,
+        document_count: 2,
         chat_count: 1,
         tabular_review_count: 0,
         workflow_count: 0,
@@ -1452,9 +1678,9 @@ async function main() {
     const listedBeforeRestart = assertMatterListPage(
       matterListBeforeRestart,
       project.id,
-      gate1Matter.project.id,
+      gate1MatterId,
       {
-        document_count: 0,
+        document_count: 2,
         chat_count: 1,
         tabular_review_count: 0,
         workflow_count: 0,
@@ -1462,12 +1688,18 @@ async function main() {
     );
     assert.deepEqual(listedBeforeRestart.matter, gate1MatterBeforeRestart);
     await assertMattersListRenderer(packaged.page);
-    await assertMatterRenderer(packaged.page, gate1Matter.project.id);
+    await assertMatterRenderer(packaged.page, gate1MatterId);
+    await assertAssistantRenderer(
+      packaged.page,
+      gate1MatterId,
+      gate1MatterChatId,
+      "matter",
+    );
 
     assert.deepEqual(mock.failures, []);
     assert.equal(mock.calls.probes, 1);
-    assert.equal(mock.calls.assistantTurns, 2);
-    assert.equal(mock.calls.assistantToolCalls, 1);
+    assert.equal(mock.calls.assistantTurns, 4);
+    assert.equal(mock.calls.assistantToolCalls, 2);
     assert.equal(mock.calls.workflowTurns, 1);
     assert.equal(mock.calls.tabularTurns, 4);
     assert.deepEqual(
@@ -1478,16 +1710,6 @@ async function main() {
     await mock.close();
     mock = null;
     await assertMockUnavailable(providerPort);
-
-    const clearedModel = await apiJson(
-      token,
-      `/model-profiles/${modelProfileId}/credential`,
-      { method: "DELETE" },
-    );
-    assert.equal(clearedModel.credential.status, "missing");
-    assert.equal(clearedModel.enabled, false);
-    assert.equal(clearedModel.is_default, false);
-    credentialDeleted = true;
 
     await closePackagedVera(packaged.app);
     packaged = null;
@@ -1503,9 +1725,18 @@ async function main() {
     await assertMockUnavailable(providerPort);
 
     const persistedModel = await apiJson(token, `/model-profiles/${modelProfileId}`);
-    assert.equal(persistedModel.enabled, false);
-    assert.equal(persistedModel.is_default, false);
-    assert.equal(persistedModel.credential.status, "missing");
+    assert.equal(persistedModel.enabled, true);
+    assert.equal(persistedModel.is_default, true);
+    assert.equal(persistedModel.credential.status, "configured");
+    const persistedPrivacy = await apiJson(
+      token,
+      `/model-profiles/${modelProfileId}/privacy`,
+    );
+    assertModelPrivacy(persistedPrivacy, modelProfileId);
+    assert.deepEqual(persistedPrivacy, modelPrivacyBeforeRestart);
+    const persistedSettings = await apiJson(token, "/settings");
+    assert.equal(persistedSettings.default_model_profile_id, modelProfileId);
+    assert.equal(persistedSettings.default_project_id, gate1MatterId);
     const persistedProject = await apiJson(token, `/projects/${project.id}`);
     assert.equal(persistedProject.name, project.name);
     assert.deepEqual(
@@ -1538,10 +1769,10 @@ async function main() {
     assert.ok(persistedTabular.cells.every((cell) => cell.sources.length >= 1));
     const persistedGate1Matter = await apiJson(
       token,
-      `/matters/${gate1Matter.project.id}`,
+      `/matters/${gate1MatterId}`,
     );
-    assertGate1MatterProjection(persistedGate1Matter, gate1Matter.project.id, {
-      document_count: 0,
+    assertGate1MatterProjection(persistedGate1Matter, gate1MatterId, {
+      document_count: 2,
       chat_count: 1,
       tabular_review_count: 0,
       workflow_count: 0,
@@ -1555,15 +1786,91 @@ async function main() {
     const listedAfterRestart = assertMatterListPage(
       persistedMatterList,
       project.id,
-      gate1Matter.project.id,
+      gate1MatterId,
       {
-        document_count: 0,
+        document_count: 2,
         chat_count: 1,
         tabular_review_count: 0,
         workflow_count: 0,
       },
     );
     assert.deepEqual(listedAfterRestart.matter, gate1MatterBeforeRestart);
+    const persistedMatterPolicy = await apiJson(
+      token,
+      `/matters/${gate1MatterId}/policy`,
+    );
+    assertMatterPolicy(persistedMatterPolicy, gate1MatterId);
+    assert.deepEqual(persistedMatterPolicy, gate1MatterPolicyBeforeRestart);
+    const persistedMatterProject = await apiJson(
+      token,
+      `/projects/${gate1MatterId}`,
+    );
+    assert.deepEqual(
+      persistedMatterProject.documents.map((document) => document.id).sort(),
+      [...gate1MatterDocumentIds].sort(),
+    );
+    assert.ok(
+      persistedMatterProject.documents.every(
+        (document) => document.status === "ready",
+      ),
+    );
+    const persistedMatterChat = await apiJson(
+      token,
+      `/chat/${gate1MatterChatId}`,
+    );
+    assert.deepEqual(persistedMatterChat, gate1MatterChatBeforeRestart);
+    const persistedMatterAssistant = persistedMatterChat.messages.find(
+      (message) => message.role === "assistant",
+    );
+    assert.ok(persistedMatterAssistant);
+    assert.equal(
+      assistantMessageText(persistedMatterAssistant),
+      ASSISTANT_VISIBLE_ANSWER,
+    );
+    assert.deepEqual(
+      persistedMatterAssistant.citations
+        .map((citation) => citation.document_id)
+        .sort(),
+      [...gate1MatterDocumentIds].sort(),
+    );
+    assert.deepEqual(
+      persistedMatterAssistant.citations.map((citation) => citation.quote),
+      [DOCUMENT_ONE_PAYMENT_QUOTE, DOCUMENT_TWO_TERMINATION_QUOTE],
+    );
+    const persistedMatterSources = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/sources?limit=100`,
+    );
+    assert.deepEqual(
+      persistedMatterSources,
+      gate1MatterSourcesBeforeRestart,
+    );
+    assert.deepEqual(
+      persistedMatterSources.sources.map((source) => source.id).sort(),
+      [...gate1MatterSourceIds].sort(),
+    );
+    for (const [index, snapshotId] of gate1MatterSourceIds.entries()) {
+      const detail = await apiJson(
+        token,
+        `/projects/${gate1MatterId}/sources/${snapshotId}`,
+      );
+      assert.equal(detail.snapshot.project_id, gate1MatterId);
+      assert.equal(
+        detail.snapshot.source_record_id,
+        gate1MatterDocumentIds[index],
+      );
+      const content = await apiJson(
+        token,
+        `/projects/${gate1MatterId}/sources/${snapshotId}/content?limit=20`,
+      );
+      assert.equal(content.snapshot_id, snapshotId);
+      assert.equal(content.document.document_id, gate1MatterDocumentIds[index]);
+      assert.ok(
+        content.chunks.some((chunk) =>
+          chunk.text.includes(index === 0 ? "VERA-E2E-ALPHA" : "VERA-E2E-BETA"),
+        ),
+      );
+    }
 
     await assertAssistantRenderer(
       packaged.page,
@@ -1575,7 +1882,14 @@ async function main() {
     await navigateAndAssertVisibleText(packaged.page, "/assistant", []);
     await assertVeraUi(packaged.page);
     await assertMattersListRenderer(packaged.page);
-    await assertMatterRenderer(packaged.page, gate1Matter.project.id);
+    await assertMatterRenderer(packaged.page, gate1MatterId);
+    await assertAssistantRenderer(
+      packaged.page,
+      gate1MatterId,
+      gate1MatterChatId,
+      "matter",
+    );
+    await assertMatterRenderer(packaged.page, gate1MatterId);
     const visibleText = await packaged.page.locator("body").innerText();
     assert.equal(visibleText.includes(providerSecret), false);
     assert.equal(visibleText.includes(DOCUMENT_ONE), false);
@@ -1583,12 +1897,22 @@ async function main() {
     await packaged.page.screenshot({ path: evidencePath, fullPage: false });
     assert.ok(fs.statSync(evidencePath).size > 10_000);
 
+    const clearedModel = await apiJson(
+      token,
+      `/model-profiles/${modelProfileId}/credential`,
+      { method: "DELETE" },
+    );
+    assert.equal(clearedModel.credential.status, "missing");
+    assert.equal(clearedModel.enabled, false);
+    assert.equal(clearedModel.is_default, false);
+    credentialDeleted = true;
+
     completed = true;
     process.stdout.write(
       `${JSON.stringify(
         {
           ok: true,
-          suite: "vera-packaged-workspace-e2e-gate1-v2",
+          suite: "vera-packaged-workspace-e2e-gate1-v3",
           evidence: "docs/evidence/vera-gate1-matter-packaged-restart.png",
           isolated_workspace_database_bytes: packaged.workspaceDatabaseBytes,
           provider_calls: {
@@ -1601,9 +1925,26 @@ async function main() {
           matter_health: GATE1_MATTER_HEALTH,
           matter: {
             project_id: persistedGate1Matter.project.id,
+            project_default_model_profile_id:
+              persistedGate1Matter.project.default_model_profile_id,
+            effective_workspace_default_model_profile_id: modelProfileId,
             workspace_type: persistedGate1Matter.matter_profile.workspace_type,
             profile_state: persistedGate1Matter.profile_state,
             capabilities: persistedGate1Matter.capabilities,
+            privacy: {
+              declaration_basis: persistedPrivacy.declaration_basis,
+              execution_location: persistedPrivacy.execution_location,
+              retention: persistedPrivacy.retention,
+              training_use: persistedPrivacy.training_use,
+              sensitive_data_allowed: persistedPrivacy.sensitive_data_allowed,
+            },
+            policy: {
+              external_egress_mode:
+                persistedMatterPolicy.external_egress_mode,
+              execution_locations: persistedMatterPolicy.execution_locations,
+            },
+            source_snapshot_ids: [...gate1MatterSourceIds],
+            assistant_chat_id: gate1MatterChatId,
             counts: {
               documents: persistedGate1Matter.project.document_count,
               chats: persistedGate1Matter.project.chat_count,
@@ -1615,19 +1956,24 @@ async function main() {
           checks: [
             "exact production Matter health on both packaged launches",
             "exact packaged Assistant Matters Workflows Review Settings navigation with truthful Review disablement and no top-level Projects or Tabular",
-            "generic OpenAI-compatible profile credential test enable default",
+            "generic OpenAI-compatible profile credential test enable Workspace default and explicit confidential-remote privacy declaration",
             "generic Project with two locally parsed TXT documents",
             "Assistant streaming fetch_documents and exact persisted citations",
             "prompt plus output Workflow definition with real durable execution I/O",
             "2x2 Tabular structured generation with exact sources and CSV/XLSX export",
             "atomic classified Matter creation with bounded Project and Profile metadata",
             "Matter list projection separates the generic Project absent state from the ready classified Matter",
-            "Matter Overview and exact Documents Assistant Review Workflows Drafts navigation with truthful Gate 1 capability disablement",
-            "Matter Assistant job fails at the policy boundary with zero additional provider calls",
+            "Matter effective Workspace default through the existing Settings owner while the Project override remains truthfully null",
+            "complete allowed-by-policy Matter Policy for the explicit confidential-remote execution declaration",
+            "strict six-field Matter capabilities with Review Center unavailable and existing Tabular compatibility available",
+            "Matter Overview and exact Documents Assistant Review Workflows Drafts Settings navigation under Matter routes",
+            "Matter Assistant reaches the provider for tool and final turns and persists exact citations",
+            "Matter-owned document source snapshots retain exact local content across restart",
             "same SQLCipher data and blob keys across an offline second launch",
             "private non-plaintext SQLCipher database inside the isolated profile",
             "persisted project documents chat messages workflow run and Tabular results",
-            "exact Matter Profile classification metadata counts state and capabilities after offline restart",
+            "exact Matter Profile privacy policy default model chat citations sources counts state and capabilities after offline restart",
+            "provider credential deletion disables and clears the default model after persistence assertions",
             "redacted second-launch Gate 1 Matter Overview screenshot evidence",
           ],
         },

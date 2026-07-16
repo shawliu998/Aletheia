@@ -11,6 +11,7 @@ import {
   ProjectSectionToolbar,
   useProjectWorkspace,
 } from "@/app/components/projects/ProjectWorkspace";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { VeraApiError } from "@/app/lib/veraApi";
@@ -24,6 +25,7 @@ export default function ProjectAssistantChatPage({
 }) {
   const { id: projectId, chatId } = use(params);
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { errorMessage, t } = useI18n();
   const { setSidebarOpen } = useSidebar();
   const workspace = useProjectWorkspace();
@@ -79,7 +81,7 @@ export default function ProjectAssistantChatPage({
               <button
                 type="button"
                 onClick={() =>
-                  router.replace(`/projects/${projectId}/assistant`)
+                  router.replace(routes.assistantHref(projectId))
                 }
                 className="rounded-full border border-gray-200 bg-white px-4 py-1.5 text-xs font-medium text-gray-700"
               >

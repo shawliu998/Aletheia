@@ -60,7 +60,7 @@ test("Studio stays inside Project documents and uses only real capability/API st
     /studio_capability\?\.editable !== true && \([\s\S]*documents\.newVersion/,
   );
   assert.match(documents, /createVeraStudioDocument/);
-  assert.match(documents, /documents\/\$\{document\.id\}\/studio/);
+  assert.match(documents, /routes\.documentStudioHref\(projectId, document\.id\)/);
   assert.match(route, /DocumentStudioView/);
   for (const helper of [
     "getVeraStudioDocument",

@@ -9,15 +9,18 @@ import {
   disableVeraModelProfile,
   enableVeraModelProfile,
   getVeraModelSettingsStatus,
+  getVeraModelPrivacyDeclaration,
   getVeraWorkspaceSettings,
   listVeraModelProfiles,
   parseVeraModelProfile,
+  parseVeraModelPrivacyDeclaration,
   parseVeraModelSettingsStatus,
   patchVeraWorkspaceSettings,
   putVeraModelCredential,
   setDefaultVeraModelProfile,
   testVeraModelProfile,
   updateVeraModelProfile,
+  updateVeraModelPrivacyDeclaration,
 } from "../src/app/lib/veraModelSettingsApi.ts";
 import {
   submitVeraCredentialInput,
@@ -108,6 +111,43 @@ function status() {
     models: [model()],
   };
 }
+
+function privacy(overrides: Record<string, unknown> = {}) {
+  return {
+    model_profile_id: PROFILE_ID,
+    configured: true,
+    declaration_basis: "user_or_admin_declared",
+    model_profile_enabled: false,
+    execution_location: "firm_private",
+    retention: "zero",
+    training_use: "prohibited",
+    sensitive_data_allowed: false,
+    created_at: NOW,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+test("model privacy declaration is exact, declared, and secret-free", () => {
+  const parsed = parseVeraModelPrivacyDeclaration(privacy());
+  assert.equal(parsed.configured, true);
+  assert.equal(parsed.declaration_basis, "user_or_admin_declared");
+  assert.equal(parsed.model_profile_enabled, false);
+  assert.throws(() =>
+    parseVeraModelPrivacyDeclaration(privacy({ configured: false })),
+  );
+  assert.throws(() =>
+    parseVeraModelPrivacyDeclaration(
+      privacy({ declaration_basis: "url_inferred" }),
+    ),
+  );
+  assert.throws(() =>
+    parseVeraModelPrivacyDeclaration(privacy({ execution_location: "localhost" })),
+  );
+  assert.throws(() =>
+    parseVeraModelPrivacyDeclaration(privacy({ credential_ref: "secret" })),
+  );
+});
 
 test("model settings parser accepts only the strict secret-free canonical wire", () => {
   const parsed = parseVeraModelSettingsStatus(status());
@@ -319,7 +359,9 @@ test("canonical Settings and model-profile methods use only the declared routes"
     ) {
       return new Response(null, { status: 204 });
     }
-    const body = url.endsWith("/settings/status")
+    const body = url.endsWith(`/model-profiles/${PROFILE_ID}/privacy`)
+      ? privacy()
+      : url.endsWith("/settings/status")
       ? status()
       : url.endsWith("/settings")
         ? settings()
@@ -354,6 +396,13 @@ test("canonical Settings and model-profile methods use only the declared routes"
         vision: false,
       },
     });
+    await getVeraModelPrivacyDeclaration(PROFILE_ID);
+    await updateVeraModelPrivacyDeclaration(PROFILE_ID, {
+      execution_location: "local",
+      retention: "unknown",
+      training_use: "unknown",
+      sensitive_data_allowed: false,
+    });
     await putVeraModelCredential(PROFILE_ID, credential);
     await deleteVeraModelCredential(PROFILE_ID);
     await testVeraModelProfile(PROFILE_ID);
@@ -374,6 +423,8 @@ test("canonical Settings and model-profile methods use only the declared routes"
         ["/model-profiles", "GET"],
         ["/model-profiles", "POST"],
         [`/model-profiles/${PROFILE_ID}`, "PATCH"],
+        [`/model-profiles/${PROFILE_ID}/privacy`, "GET"],
+        [`/model-profiles/${PROFILE_ID}/privacy`, "PATCH"],
         [`/model-profiles/${PROFILE_ID}/credential`, "PUT"],
         [`/model-profiles/${PROFILE_ID}/credential`, "DELETE"],
         [`/model-profiles/${PROFILE_ID}/test`, "POST"],
@@ -390,7 +441,7 @@ test("canonical Settings and model-profile methods use only the declared routes"
       );
       assert.equal(call.url.includes(TOKEN), false);
     }
-    assert.deepEqual(JSON.parse(String(calls[6]?.init?.body)), {
+    assert.deepEqual(JSON.parse(String(calls[8]?.init?.body)), {
       secret: credential,
     });
     assert.deepEqual(JSON.parse(String(calls[5]?.init?.body)), {
@@ -402,7 +453,13 @@ test("canonical Settings and model-profile methods use only the declared routes"
         vision: false,
       },
     });
-    assert.equal(String(calls[6]?.url).includes(credential), false);
+    assert.deepEqual(JSON.parse(String(calls[7]?.init?.body)), {
+      execution_location: "local",
+      retention: "unknown",
+      training_use: "unknown",
+      sensitive_data_allowed: false,
+    });
+    assert.equal(String(calls[8]?.url).includes(credential), false);
   } finally {
     globalThis.fetch = originalFetch;
     if (priorWindow) Object.defineProperty(globalThis, "window", priorWindow);
@@ -421,6 +478,21 @@ test("settings mutations reject unexpected or ambiguous request fields before fe
     await assert.rejects(
       patchVeraWorkspaceSettings({ secret: "no" } as never),
       /settings update is invalid/i,
+    );
+    await assert.rejects(
+      updateVeraModelPrivacyDeclaration(PROFILE_ID, {
+        execution_location: "local",
+      } as never),
+      /privacy declaration is invalid/i,
+    );
+    await assert.rejects(
+      updateVeraModelPrivacyDeclaration(PROFILE_ID, {
+        execution_location: "localhost" as never,
+        retention: "zero",
+        training_use: "prohibited",
+        sensitive_data_allowed: false,
+      }),
+      /privacy declaration is invalid/i,
     );
     await assert.rejects(createVeraModelProfile({}), /request is invalid/i);
     await assert.rejects(

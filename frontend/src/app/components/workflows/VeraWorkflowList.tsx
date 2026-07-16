@@ -25,6 +25,7 @@ import { PageHeader } from "@/app/components/vera-shell/PageHeader";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { useI18n } from "@/app/i18n";
 import { VeraApiError } from "@/app/lib/veraApi";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import {
   SkeletonLine,
   TableBody,
@@ -56,6 +57,7 @@ export function VeraWorkflowList({
   projectId?: string | null;
 } = {}) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, errorMessage } = useI18n();
   const [workflows, setWorkflows] = useState<VeraWorkflow[]>([]);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
@@ -146,9 +148,9 @@ export function VeraWorkflowList({
       setWorkflows((current) => [created, ...current]);
       setCreateOpen(false);
       router.push(
-        `/workflows/${encodeURIComponent(created.id)}${
-          projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""
-        }`,
+        projectId
+          ? routes.workflowHref(projectId, created.id)
+          : `/workflows/${encodeURIComponent(created.id)}`,
       );
     } catch (error) {
       setOperationError(
@@ -232,9 +234,9 @@ export function VeraWorkflowList({
 
   function openWorkflow(workflowId: string) {
     router.push(
-      `/workflows/${encodeURIComponent(workflowId)}${
-        projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""
-      }`,
+      projectId
+        ? routes.workflowHref(projectId, workflowId)
+        : `/workflows/${encodeURIComponent(workflowId)}`,
     );
   }
 

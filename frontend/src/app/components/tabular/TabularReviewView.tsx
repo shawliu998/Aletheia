@@ -21,6 +21,7 @@ import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { PageHeader } from "@/app/components/vera-shell/PageHeader";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n } from "@/app/i18n";
 import { listVeraProjects } from "@/app/lib/veraApi";
 import {
@@ -125,6 +126,7 @@ export function TabularReviewView({
   projectId?: string;
 }) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, errorMessage } = useI18n();
   const [detail, setDetail] = useState<VeraTabularReviewDetail | null>(null);
   const [projects, setProjects] = useState<VeraProjectWire[]>([]);
@@ -442,13 +444,13 @@ export function TabularReviewView({
           ...(projectId
             ? [
                 {
-                  label: t("projects.title"),
-                  onClick: () => router.push("/projects"),
+                  label: t(routes.kind === "matter" ? "matters.title" : "projects.title"),
+                  onClick: () => router.push(routes.collectionHref),
                 },
                 {
                   label: project?.name ?? t("projects.title"),
                   onClick: () =>
-                    router.push(`/projects/${projectId}/tabular-reviews`),
+                    router.push(routes.tabularReviewsHref(projectId)),
                 },
               ]
             : [
@@ -770,8 +772,11 @@ export function TabularReviewView({
                 : {}),
             });
             if (projectId && updated.project_id !== projectId) {
+              if (!updated.project_id) {
+                throw new Error(t("tabular.errors.projectScope"));
+              }
               router.replace(
-                `/projects/${updated.project_id}/tabular-reviews/${reviewId}`,
+                routes.tabularReviewHref(updated.project_id, reviewId),
               );
             } else {
               await reload();
@@ -850,7 +855,7 @@ export function TabularReviewView({
             await deleteVeraTabularReview(reviewId);
             router.replace(
               projectId
-                ? `/projects/${projectId}/tabular-reviews`
+                ? routes.tabularReviewsHref(projectId)
                 : "/tabular-review",
             );
           })

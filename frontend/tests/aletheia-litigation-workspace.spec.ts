@@ -942,9 +942,10 @@ test("counsel corrects a source-bound event and recalculates from immutable line
   await originalEventRow
     .getByLabel("Corrected event title")
     .fill("Service of complaint corrected by clerk receipt");
+  const correctedEventLocalDateTime = "2026-07-12T10:00";
   await originalEventRow
     .getByLabel("Corrected event date and time")
-    .fill("2026-07-12T10:00");
+    .fill(correctedEventLocalDateTime);
   const correctionReason =
     "The clerk-issued correction records service two days later than the initial receipt.";
   await originalEventRow.getByLabel("Correction reason").fill(correctionReason);
@@ -963,7 +964,7 @@ test("counsel corrects a source-bound event and recalculates from immutable line
     .click();
   expect((await correctionRequest).postDataJSON()).toEqual({
     title: "Service of complaint corrected by clerk receipt",
-    occurredAt: "2026-07-12T02:00:00.000Z",
+    occurredAt: new Date(correctedEventLocalDateTime).toISOString(),
     reason: correctionReason,
   });
   const correctionWrite = await correctionResponse;

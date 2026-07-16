@@ -132,6 +132,9 @@ test("document mutations use the single Vera transport helpers", () => {
         current("src/app/components/projects/ProjectDocumentsView.tsx"),
         current("src/app/components/shared/AddProjectDocsModal.tsx"),
     ].join("\n");
+    const routes = current(
+        "src/app/components/projects/WorkspaceRouteAdapter.tsx",
+    );
     for (const helper of [
         "uploadVeraDocument",
         "uploadVeraDocumentVersion",
@@ -151,7 +154,11 @@ test("document mutations use the single Vera transport helpers", () => {
         source,
         /FormData|multipart|["'`]\/api\/v1/,
     );
-    assert.match(source, /`\/projects\/\$\{projectId\}\/documents\/\$\{/);
+    assert.match(source, /routes\.documentStudioHref\(projectId,/);
+    assert.match(
+        routes,
+        /`\/projects\/\$\{projectId\}\/documents\/\$\{documentId\}\/studio`/,
+    );
 });
 
 test("active document parsing is wired through the mutation-aware coordinator", () => {

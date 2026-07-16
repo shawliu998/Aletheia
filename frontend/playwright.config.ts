@@ -26,6 +26,10 @@ const anchorPublicKey = path.join(anchorKeyDir, "public.pem");
 
 export default defineConfig({
   testDir: "./tests",
+  // Source-contract tests use `*.test.ts` and run under `tsx --test`.
+  // Preserve the complete Playwright E2E gate while keeping those Node-only
+  // modules out of Playwright's CommonJS collection path.
+  testMatch: ["**/*.spec.ts"],
   timeout: 90_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
@@ -56,6 +60,7 @@ export default defineConfig({
         ALETHEIA_DATA_DIR: dataDir,
         ALETHEIA_LOCAL_USER_ID: "local-user",
         ALETHEIA_LOCAL_USER_EMAIL: "local@aletheia.internal",
+        VERA_ENABLE_LEGACY_ROUTES: "true",
         ALETHEIA_AUDIT_ANCHOR_ENABLED: "true",
         ALETHEIA_AUDIT_ANCHOR_DIR: anchorDir,
         ALETHEIA_AUDIT_ANCHOR_PRIVATE_KEY_FILE: anchorPrivateKey,

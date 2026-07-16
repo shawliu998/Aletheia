@@ -66,6 +66,7 @@ import {
     ProjectSectionToolbar,
     useProjectWorkspace,
 } from "./ProjectWorkspace";
+import { useWorkspaceRoutes } from "./WorkspaceRouteAdapter";
 
 interface Props {
     projectId: string;
@@ -87,6 +88,7 @@ const VERA_FOLDER_DRAG = "application/vera-folder";
 
 export function ProjectDocumentsView({ projectId }: Props) {
     const router = useRouter();
+    const routes = useWorkspaceRoutes();
     const {
         project,
         documents,
@@ -588,7 +590,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
             });
             setNewDraftOpen(false);
             router.push(
-                `/projects/${projectId}/documents/${created.document_id}/studio`,
+                routes.documentStudioHref(projectId, created.document_id),
             );
         });
 
@@ -866,7 +868,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
                                 icon={FilePenLine}
                                 onClick={() =>
                                     router.push(
-                                        `/projects/${projectId}/documents/${document.id}/studio`,
+                                        routes.documentStudioHref(projectId, document.id),
                                     )
                                 }
                             />

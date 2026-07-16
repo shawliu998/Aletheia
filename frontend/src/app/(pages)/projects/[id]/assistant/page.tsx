@@ -10,6 +10,7 @@ import {
   ProjectSectionToolbar,
   useProjectWorkspace,
 } from "@/app/components/projects/ProjectWorkspace";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useVeraSettings } from "@/app/contexts/VeraSettingsContext";
 import {
@@ -28,6 +29,7 @@ export default function ProjectAssistantPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { errorMessage, t } = useI18n();
   const workspace = useProjectWorkspace();
   const { saveChat, loadChats } = useChatHistoryContext();
@@ -87,7 +89,7 @@ export default function ProjectAssistantPage({
         projectId: id,
         ...(defaultModelId ? { modelProfileId: defaultModelId } : {}),
       });
-      router.push(`/projects/${id}/assistant/chat/${chatId}`);
+      router.push(routes.assistantChatHref(id, chatId));
     } catch (error) {
       setFailure(error);
     } finally {
@@ -208,7 +210,7 @@ export default function ProjectAssistantPage({
         renameValue={renameValue}
         onSelectedIdsChange={setSelectedIds}
         onOpen={(chatId) =>
-          router.push(`/projects/${id}/assistant/chat/${chatId}`)
+          router.push(routes.assistantChatHref(id, chatId))
         }
         onCreate={() => void create()}
         onDelete={remove}
