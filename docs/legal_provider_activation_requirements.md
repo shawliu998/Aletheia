@@ -2,17 +2,19 @@
 
 Date: 2026-07-16
 
-Status: external activation checklist; no Provider is approved or live
+Status: technical MCP PoC passed; production activation remains closed
 
 ## 1. Current state
 
-Vera's active product is the local general legal workspace on `main` at
-`5611699e46552a20bf42ce84396a8e65aa139d16`, Workspace schema v17.
+Vera's active product is the local general legal workspace, Workspace schema
+v18.
 
-PKULaw (法宝) and YuanDian (元典) are **not activated** in the active Workspace
-product. Retained Legacy adapters, response fixtures, contract tests, a saved
-configuration, or a successful test double do not establish a licensed live
-integration. The code-owned production activation gate remains closed.
+YuanDian (元典) has an active fixed-endpoint Provider Hub and a separately
+invoked technical acceptance has completed real bounded search and source read.
+It is **not production-activated**: the accepted output is transient, no durable
+legal citation is created, and retention/export/model-use rights remain
+undeclared. Retained Legacy adapters, fixtures, and fakes are not live evidence.
+The code-owned production activation gate remains closed.
 
 Vera must not guess a vendor endpoint, credential type, request field,
 pagination rule, response shape, source identifier, or authorization right.

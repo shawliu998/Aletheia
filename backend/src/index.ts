@@ -55,7 +55,10 @@ export async function main(): Promise<VeraApplicationInstance> {
         ? {
             dependencies: {
               createRuntime: () =>
-                createWorkspaceRuntime({ credentialStore: credentialClient }),
+                createWorkspaceRuntime({
+                  credentialStore: credentialClient,
+                  legalProviderCredentialStore: credentialClient,
+                }),
             },
           }
         : {},

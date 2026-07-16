@@ -2,292 +2,178 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  AletheiaApiError,
-  listAletheiaLegalSourceProviders,
-  parseAletheiaLegalSourceProvider,
-  parseAletheiaLegalSourceProvidersResponse,
-  removeAletheiaLegalSourceSecret,
-  saveAletheiaLegalSourceSecret,
-} from "../src/app/lib/aletheiaApi.ts";
+  VeraLegalSourceApiError,
+  createVeraLegalSourceProvider,
+  disableVeraLegalSourceProvider,
+  enableVeraLegalSourceProvider,
+  listVeraLegalSourceProviders,
+  parseVeraLegalSourceProvider,
+  parseVeraLegalSourceProviderResponse,
+  parseVeraLegalSourceProvidersResponse,
+  removeVeraLegalSourceSecret,
+  saveVeraLegalSourceSecret,
+  testVeraLegalSourceProvider,
+} from "../src/app/lib/veraLegalSourceApi.ts";
 
-const TOKEN = "legal-source-client-audit-token";
-const API_BASE = "http://127.0.0.1:43123";
+const TOKEN = "legal-source-client-audit-token-0123456789";
+const API_BASE = "http://127.0.0.1:43123/api/v1";
+const ID = "018f3b20-7788-7abc-8def-0123456789ab";
+const SCHEMA = "vera-workspace-legal-provider-hub-v1";
 
-function capabilities(fetchFullText = true) {
+function capabilities() {
+  return [
+    { capability: "law", enabled: true },
+    { capability: "case", enabled: true },
+    { capability: "company", enabled: false },
+  ];
+}
+
+function passedTest() {
   return {
-    search: true,
-    fetchFullText,
-    pagination: false,
-    getByCitation: false,
-    jurisdictionFilter: false,
-    asOfDateFilter: false,
-    structuredFilters: false,
-    dynamicToolInvocation: false,
-    requiresExplicitEgressApproval: true,
-    documentKinds: fetchFullText
-      ? ["statute", "judicial_interpretation", "case", "other"]
-      : ["statute", "judicial_interpretation", "other"],
+    status: "passed",
+    error_code: null,
+    retryable: false,
+    latency_ms: 42,
+    tested_at: "2026-07-16T01:02:03.004Z",
   };
 }
 
-function dataUsePolicy(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function failedTest(error_code = "authentication_failed") {
   return {
-    basis: "not_declared",
-    retention: "not_declared",
-    export: "not_declared",
-    modelUse: "not_declared",
+    status: "failed",
+    error_code,
+    retryable: false,
+    latency_ms: null,
+    tested_at: "2026-07-16T01:02:03.004Z",
+  };
+}
+
+function profile(overrides: Record<string, unknown> = {}) {
+  return {
+    id: ID,
+    provider: "yuandian",
+    endpoint_set_id: "yuandian-official-mcp-v1",
+    enabled: true,
+    credential_configured: true,
+    usage_policy: {
+      retention: "not_declared",
+      local_processing: "transient_only",
+      model_use: "prohibited_pending_authorization",
+      export: "prohibited_pending_authorization",
+    },
+    capabilities: capabilities(),
+    revision: 4,
+    connection_revision: 3,
+    credential_revision: 2,
+    connection_test: passedTest(),
+    status: "activation_gate_closed",
     ...overrides,
   };
 }
 
-function declaredDataUsePolicy(): Record<string, unknown> {
-  return {
-    basis: "deployment_contract",
-    retention: "full_text_ttl",
-    export: "exact_quotes_only",
-    modelUse: "local_only",
-  };
-}
+const invalidResponse = (error: unknown) =>
+  error instanceof VeraLegalSourceApiError &&
+  error.status === 502 &&
+  error.code === "INVALID_RESPONSE";
 
-type ProviderOptions = {
-  hasSecret?: boolean;
-  encryptionEnabled?: boolean;
-  endpointConfigured?: boolean;
-  allowlisted?: boolean;
-  credentialReferenceConfigured?: boolean;
-  connectionStatus?: Record<string, unknown>;
-  dataUsePolicy?: Record<string, unknown>;
-  fetchFullText?: boolean;
-};
-
-function expectedReason(
-  options: Required<
-    Pick<
-      ProviderOptions,
-      | "hasSecret"
-      | "encryptionEnabled"
-      | "endpointConfigured"
-      | "allowlisted"
-      | "credentialReferenceConfigured"
-    >
-  >,
-) {
-  if (!options.endpointConfigured) return "endpoint_missing";
-  if (!options.allowlisted) return "endpoint_not_allowlisted";
-  if (!options.credentialReferenceConfigured) {
-    return "credential_reference_missing";
-  }
-  if (!options.encryptionEnabled) return "secret_storage_unavailable";
-  if (!options.hasSecret) return "credential_unavailable";
-  return null;
-}
-
-function provider(
-  providerId: "pkulaw" | "yuandian" | "wolters" = "pkulaw",
-  input: ProviderOptions = {},
-) {
-  const options = {
-    hasSecret: input.hasSecret ?? true,
-    encryptionEnabled: input.encryptionEnabled ?? true,
-    endpointConfigured: input.endpointConfigured ?? true,
-    allowlisted: input.allowlisted ?? true,
-    credentialReferenceConfigured: input.credentialReferenceConfigured ?? true,
-  };
-  const reason = expectedReason(options);
-  return {
-    provider: providerId,
-    deploymentReady:
-      options.endpointConfigured &&
-      options.allowlisted &&
-      options.credentialReferenceConfigured,
-    ...options,
-    contractVersion: "vera-legal-research-provider-v2",
-    integration: "authorized_provider_adapter",
-    capabilities: capabilities(input.fetchFullText ?? true),
-    dataUsePolicy: input.dataUsePolicy ?? declaredDataUsePolicy(),
-    connectionStatus:
-      input.connectionStatus ??
-      (reason
-        ? { state: "unavailable", reason, connectionTested: false }
-        : {
-            state: "configured_unverified",
-            reason: null,
-            connectionTested: false,
-          }),
-  };
-}
-
-function closedGateProvider(
-  providerId: "pkulaw" | "yuandian" | "wolters" = "pkulaw",
-  input: ProviderOptions = {},
-) {
-  return provider(providerId, {
-    ...input,
-    dataUsePolicy: input.dataUsePolicy ?? dataUsePolicy(),
-    connectionStatus: {
-      state: "unavailable",
-      reason: "activation_gate_closed",
-      connectionTested: false,
-    },
+test("active legal-provider parser accepts the single YuanDian profile and all eight truthful states", () => {
+  const parsed = parseVeraLegalSourceProvidersResponse({
+    schema_version: SCHEMA,
+    providers: [profile()],
   });
-}
+  assert.equal(parsed.schema_version, SCHEMA);
+  assert.equal(parsed.providers.length, 1);
+  assert.equal(parsed.providers[0]?.provider, "yuandian");
+  assert.equal(parsed.providers[0]?.status, "activation_gate_closed");
+  assert.equal(parsed.providers[0]?.connection_test?.status, "passed");
 
-function response() {
-  return {
-    schemaVersion: "vera-legal-source-provider-status-v2",
-    localOnly: true,
-    detail: "Authorized legal-source deployment and local credential status.",
-    providers: [
-      closedGateProvider("pkulaw", { fetchFullText: false }),
-      closedGateProvider("yuandian"),
-      closedGateProvider("wolters", { hasSecret: false }),
-    ],
-  };
-}
-
-function invalidResponse(error: unknown) {
-  return (
-    error instanceof AletheiaApiError &&
-    error.status === 502 &&
-    error.code === "INVALID_RESPONSE"
-  );
-}
-
-test("legal-source parser preserves the complete truthful provider-neutral wire", () => {
-  const parsed = parseAletheiaLegalSourceProvidersResponse(response());
-  assert.equal(parsed.schemaVersion, "vera-legal-source-provider-status-v2");
-  assert.equal(parsed.localOnly, true);
-  assert.equal(parsed.providers.length, 3);
-  assert.deepEqual(parsed.providers[0]?.connectionStatus, {
-    state: "unavailable",
-    reason: "activation_gate_closed",
-    connectionTested: false,
-  });
-  assert.deepEqual(parsed.providers[1]?.connectionStatus, {
-    state: "unavailable",
-    reason: "activation_gate_closed",
-    connectionTested: false,
-  });
-  assert.deepEqual(parsed.providers[2]?.connectionStatus, {
-    state: "unavailable",
-    reason: "activation_gate_closed",
-    connectionTested: false,
-  });
-  assert.equal(parsed.providers[0]?.capabilities.search, true);
-  assert.equal(parsed.providers[0]?.capabilities.fetchFullText, false);
-  assert.equal(parsed.providers[1]?.capabilities.fetchFullText, true);
-
-  const pkulawEnterpriseJson = parseAletheiaLegalSourceProvider(
-    provider("pkulaw", { fetchFullText: true }),
-  );
-  assert.equal(pkulawEnterpriseJson.capabilities.fetchFullText, true);
-
-  const policyBlocked = parseAletheiaLegalSourceProvider(
-    provider("pkulaw", {
-      hasSecret: false,
-      dataUsePolicy: dataUsePolicy(),
-      connectionStatus: {
-        state: "unavailable",
-        reason: "data_use_policy_undeclared",
-        connectionTested: false,
-      },
+  const fixtures = [
+    profile({ status: "unavailable" }),
+    profile({
+      status: "not_configured",
+      enabled: false,
+      credential_configured: false,
+      connection_test: null,
     }),
-  );
-  assert.equal(
-    policyBlocked.connectionStatus.reason,
-    "data_use_policy_undeclared",
-  );
-
-  const declaredPolicy = parseAletheiaLegalSourceProvider(
-    provider("pkulaw", {
-      dataUsePolicy: dataUsePolicy({
-        basis: "deployment_contract",
-        retention: "full_text_ttl",
-        export: "exact_quotes_only",
-        modelUse: "local_only",
-      }),
+    profile({
+      status: "configured_unverified",
+      enabled: false,
+      connection_test: null,
     }),
-  );
-  assert.deepEqual(declaredPolicy.dataUsePolicy, {
-    basis: "deployment_contract",
-    retention: "full_text_ttl",
-    export: "exact_quotes_only",
-    modelUse: "local_only",
-  });
-
-  for (const fixture of [
-    provider("pkulaw", {
-      endpointConfigured: false,
-      allowlisted: false,
+    profile({ status: "ready" }),
+    profile({
+      status: "authentication_failed",
+      connection_test: failedTest("authentication_failed"),
     }),
-    provider("pkulaw", { allowlisted: false }),
-    provider("pkulaw", { credentialReferenceConfigured: false }),
-    provider("pkulaw", { hasSecret: false }),
-    provider("pkulaw", { encryptionEnabled: false }),
-    provider("pkulaw", {
-      connectionStatus: {
-        state: "unavailable",
-        reason: "secret_storage_unavailable",
-        connectionTested: false,
-      },
+    profile({
+      status: "license_restricted",
+      connection_test: failedTest("license_restricted"),
     }),
-  ]) {
-    assert.equal(
-      parseAletheiaLegalSourceProvider(fixture).connectionStatus.state,
+    profile({ status: "activation_gate_closed" }),
+    profile({
+      status: "temporarily_unavailable",
+      connection_test: failedTest("timeout"),
+    }),
+  ];
+  assert.deepEqual(
+    fixtures.map((fixture) => parseVeraLegalSourceProvider(fixture).status),
+    [
       "unavailable",
-    );
-  }
+      "not_configured",
+      "configured_unverified",
+      "ready",
+      "authentication_failed",
+      "license_restricted",
+      "activation_gate_closed",
+      "temporarily_unavailable",
+    ],
+  );
+
+  assert.equal(
+    parseVeraLegalSourceProviderResponse({
+      schema_version: SCHEMA,
+      profile: profile(),
+    }).profile.status,
+    "activation_gate_closed",
+  );
 });
 
-test("legal-source parser preserves the backend closed-gate precedence before credential state", () => {
-  for (const fixture of [
-    closedGateProvider("pkulaw", { hasSecret: false }),
-    closedGateProvider("pkulaw", { encryptionEnabled: false }),
-    closedGateProvider("pkulaw", {
-      hasSecret: false,
-      encryptionEnabled: false,
-    }),
-  ]) {
-    assert.deepEqual(
-      parseAletheiaLegalSourceProvider(fixture).connectionStatus,
-      {
-        state: "unavailable",
-        reason: "activation_gate_closed",
-        connectionTested: false,
-      },
-    );
-  }
+test("passed test remains activation_gate_closed and is never promoted by the client", () => {
+  const closed = parseVeraLegalSourceProvider(profile());
+  assert.equal(closed.connection_test?.status, "passed");
+  assert.equal(closed.status, "activation_gate_closed");
+  assert.notEqual(closed.status, "ready");
 
   assert.throws(
     () =>
-      parseAletheiaLegalSourceProvider(
-        closedGateProvider("pkulaw", {
-          endpointConfigured: false,
-          allowlisted: false,
-        }),
+      parseVeraLegalSourceProvider(
+        profile({ status: "ready", enabled: false }),
+      ),
+    invalidResponse,
+  );
+  assert.throws(
+    () =>
+      parseVeraLegalSourceProvider(
+        profile({ status: "ready", connection_test: null }),
       ),
     invalidResponse,
   );
 });
 
-test("legal-source parser rejects leaks, unknown providers, and contradictory legacy test states", () => {
+test("parser rejects fake providers, incomplete capability sets, contradictions, and sensitive or raw transport fields", () => {
   for (const sensitiveField of [
     "secret",
+    "credential_reference",
     "credentialRef",
-    "credentialReference",
     "endpoint",
-    "path",
-    "encryptedSecret",
-    "lastTestStatus",
-    "lastTestAt",
-    "internalOnly",
+    "endpoint_url",
+    "raw_url",
+    "mcp_schema",
   ]) {
     assert.throws(
       () =>
-        parseAletheiaLegalSourceProvider({
-          ...provider(),
+        parseVeraLegalSourceProvider({
+          ...profile(),
           [sensitiveField]: "must-not-cross-wire",
         }),
       invalidResponse,
@@ -295,77 +181,62 @@ test("legal-source parser rejects leaks, unknown providers, and contradictory le
     );
   }
 
-  const poisonedTop = response() as Record<string, unknown>;
-  poisonedTop.credentialReferences = ["must-not-cross-wire"];
-  assert.throws(
-    () => parseAletheiaLegalSourceProvidersResponse(poisonedTop),
-    invalidResponse,
-  );
+  for (const invalid of [
+    profile({ provider: "pkulaw" }),
+    profile({ endpoint_set_id: "https://raw.vendor.example/mcp" }),
+    profile({ capabilities: capabilities().slice(0, 2) }),
+    profile({
+      capabilities: [capabilities()[0], capabilities()[0], capabilities()[2]],
+    }),
+    profile({ connection_revision: 5 }),
+    profile({ credential_revision: 4 }),
+    profile({
+      usage_policy: {
+        retention: "no_retention",
+        local_processing: "transient_only",
+        model_use: "permitted",
+        export: "permitted",
+      },
+    }),
+    profile({
+      connection_test: {
+        ...passedTest(),
+        error_code: "transport_error",
+      },
+    }),
+    profile({
+      connection_test: {
+        ...failedTest(),
+        error_code: null,
+      },
+    }),
+    profile({
+      status: "configured_unverified",
+      connection_test: passedTest(),
+    }),
+  ]) {
+    assert.throws(() => parseVeraLegalSourceProvider(invalid), invalidResponse);
+  }
+
   assert.throws(
     () =>
-      parseAletheiaLegalSourceProvidersResponse({
-        ...response(),
+      parseVeraLegalSourceProvidersResponse({
+        schema_version: SCHEMA,
         providers: [
-          provider("pkulaw"),
-          provider("yuandian"),
-          { ...provider("wolters"), provider: "unknown" },
+          profile(),
+          { ...profile(), id: "118f3b20-7788-7abc-8def-0123456789ab" },
         ],
       }),
     invalidResponse,
   );
-
-  for (const contradictory of [
-    { ...provider(), deploymentReady: false },
-    {
-      ...provider(),
-      hasSecret: false,
-      connectionStatus: {
-        state: "configured_unverified",
-        reason: null,
-        connectionTested: false,
-      },
-    },
-    {
-      ...provider(),
-      connectionStatus: {
-        state: "configured_unverified",
-        reason: null,
-        connectionTested: true,
-      },
-    },
-    {
-      ...provider(),
-      connectionStatus: {
-        state: "unavailable",
-        reason: "connection_test_failed",
-        connectionTested: true,
-      },
-    },
-    {
-      ...provider(),
-      endpointConfigured: false,
-      allowlisted: true,
-      deploymentReady: false,
-      connectionStatus: {
-        state: "unavailable",
-        reason: "endpoint_missing",
-        connectionTested: false,
-      },
-    },
-    {
-      ...provider("pkulaw", { hasSecret: false }),
-      connectionStatus: {
-        state: "unavailable",
-        reason: "secret_storage_unavailable",
-        connectionTested: false,
-      },
-    },
-  ]) {
-    assert.throws(
-      () => parseAletheiaLegalSourceProvider(contradictory),
-      invalidResponse,
-    );
-  }
+  assert.throws(
+    () =>
+      parseVeraLegalSourceProviderResponse({
+        schema_version: SCHEMA,
+        profile: { ...profile(), credential_reference: "keychain://leak" },
+      }),
+    invalidResponse,
+  );
 });
 
 function installDesktop() {
@@ -375,7 +246,7 @@ function installDesktop() {
     value: {
       aletheiaDesktop: {
         async getInfo() {
-          return { backendUrl: API_BASE };
+          return { workspaceApiUrl: API_BASE };
         },
         async getAuthToken() {
           return TOKEN;
@@ -389,63 +260,75 @@ function installDesktop() {
   };
 }
 
-test("legal-source API authenticates list/save/remove and never returns or accepts leaked secrets", async () => {
+test("API uses authenticated Active routes and every mutation parses the strict profile envelope", async () => {
   const restoreWindow = installDesktop();
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const queue: Array<{ status: number; body?: unknown }> = [
-    { status: 200, body: response() },
-    { status: 200, body: closedGateProvider("pkulaw") },
-    { status: 204 },
-    {
-      status: 200,
-      body: { ...provider("pkulaw"), secret: "server-leak" },
-    },
+  const profileEnvelope = { schema_version: SCHEMA, profile: profile() };
+  const queue = [
+    { schema_version: SCHEMA, providers: [profile()] },
+    profileEnvelope,
+    profileEnvelope,
+    profileEnvelope,
+    profileEnvelope,
+    profileEnvelope,
+    profileEnvelope,
   ];
   globalThis.fetch = (async (input, init) => {
     calls.push({ url: String(input), init });
-    const next = queue.shift();
-    assert(next);
-    return new Response(
-      next.body === undefined ? null : JSON.stringify(next.body),
-      {
-        status: next.status,
-        headers:
-          next.body === undefined
-            ? undefined
-            : { "Content-Type": "application/json" },
-      },
-    );
+    const body = queue.shift();
+    assert(body);
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }) as typeof fetch;
 
   try {
-    const listed = await listAletheiaLegalSourceProviders();
-    assert.equal(listed.providers.length, 3);
-    const secret = "client-secret-sent-once";
-    assert.equal(
-      await saveAletheiaLegalSourceSecret("pkulaw", secret),
-      undefined,
-    );
-    await removeAletheiaLegalSourceSecret("pkulaw");
-    await assert.rejects(
-      () => saveAletheiaLegalSourceSecret("pkulaw", "second-secret"),
-      invalidResponse,
-    );
+    await listVeraLegalSourceProviders();
+    await createVeraLegalSourceProvider();
+    const secret = "submitted-only-once";
+    await saveVeraLegalSourceSecret(ID, 7, secret);
+    await removeVeraLegalSourceSecret(ID, 7);
+    await testVeraLegalSourceProvider(ID, 7);
+    await enableVeraLegalSourceProvider(ID, 7);
+    await disableVeraLegalSourceProvider(ID, 7);
 
-    assert.equal(calls.length, 4);
-    for (const call of calls) {
+    assert.deepEqual(
+      calls.map(({ url }) => url),
+      [
+        `${API_BASE}/legal-providers`,
+        `${API_BASE}/legal-providers/yuandian`,
+        `${API_BASE}/legal-providers/${ID}/credential`,
+        `${API_BASE}/legal-providers/${ID}/credential`,
+        `${API_BASE}/legal-providers/${ID}/test`,
+        `${API_BASE}/legal-providers/${ID}/enable`,
+        `${API_BASE}/legal-providers/${ID}/disable`,
+      ],
+    );
+    assert.deepEqual(
+      calls.map(({ init }) => init?.method ?? "GET"),
+      ["GET", "POST", "PUT", "DELETE", "POST", "POST", "POST"],
+    );
+    assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), {});
+    assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), {
+      expected_revision: 7,
+      secret,
+    });
+    for (const call of calls.slice(3)) {
+      assert.deepEqual(JSON.parse(String(call.init?.body)), {
+        expected_revision: 7,
+      });
+    }
+    for (const { init } of calls) {
       assert.equal(
-        new Headers(call.init?.headers).get("authorization"),
+        new Headers(init?.headers).get("authorization"),
         `Bearer ${TOKEN}`,
       );
-      assert.equal(call.init?.cache, "no-store");
+      assert.equal(init?.cache, "no-store");
+      assert.equal(init?.credentials, "omit");
+      assert.equal(init?.redirect, "error");
     }
-    assert.equal(calls[0]?.url, `${API_BASE}/aletheia/providers`);
-    assert.equal(calls[0]?.init?.method, undefined);
-    assert.equal(calls[1]?.init?.method, "PUT");
-    assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { secret });
-    assert.equal(calls[2]?.init?.method, "DELETE");
-    assert.equal(calls[3]?.init?.method, "PUT");
   } finally {
     globalThis.fetch = originalFetch;
     restoreWindow();

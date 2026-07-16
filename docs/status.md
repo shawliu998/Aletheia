@@ -51,18 +51,21 @@ Implemented and wired in source:
 
 Current production Assistant tools are `list_documents`, `read_document`,
 `fetch_documents`, and `find_in_document`, plus `read_studio_document` and
-`suggest_studio_edit` for compatible Studio targets. Legal research tools,
-Agent-created Drafts, and production Workflow tools are not yet wired. The
-immediate refactor composes existing tools behind one registry without changing
-behavior; later slices add the authorized-provider and Agent-to-Draft loop.
+`suggest_studio_edit` for compatible Studio targets. The trusted optional tool
+registry now also has bounded `search_legal_sources` and `read_legal_source`
+modules for the YuanDian technical acceptance path, but the default production
+Assistant does not register them while the activation gate is closed.
+Agent-created Drafts and production Workflow tools are not yet wired.
 
-No production legal provider is claimed ready. Retained PKULaw/YuanDian Legacy
-adapters and contract tests do not prove a licensed live integration. The
-activation gate remains closed until official endpoint and wire contracts,
-valid credentials, licensed test access, and display/retention/export/model-use
-rights are documented and live acceptance succeeds. Vera will not guess an
-endpoint or substitute scraping, browser cookies, private interfaces, web
-search, or a fake provider.
+No production legal provider is claimed ready. The active Workspace now owns a
+v18 YuanDian Provider Hub, Keychain-only credential operations, authenticated
+configuration/test APIs, and the Settings surface. A separately invoked live
+technical acceptance completed bounded search and source read against the fixed
+official MCP endpoints. That proves transport compatibility only: results stay
+transient and are not durable legal citations. The activation gate remains
+closed until retention, export, and model-use rights are documented and the
+durable Source Snapshot/Citation path is accepted. Vera does not substitute
+scraping, browser cookies, private interfaces, web search, or a fake provider.
 
 Current local packaged acceptance remains **unsigned, unnotarized, and
 local-only**. It is not a signed release baseline. Developer ID signing,

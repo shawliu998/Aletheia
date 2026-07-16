@@ -149,9 +149,11 @@ const zhCN = {
     capabilities: {
       inferenceStatus: "事项推理能力状态",
       availableTitle: "可用",
-      available: "事项策略允许此推理能力；运行时仍会校验模型声明、连接状态和服务端策略。",
+      available:
+        "事项策略允许此推理能力；运行时仍会校验模型声明、连接状态和服务端策略。",
       nonInferenceOnlyTitle: "仅非推理工作流",
-      nonInferenceOnly: "只能运行不包含 prompt 步骤的确定性工作流；任何模型推理都会被拒绝。",
+      nonInferenceOnly:
+        "只能运行不包含 prompt 步骤的确定性工作流；任何模型推理都会被拒绝。",
       approvalRequiredTitle: "需要逐次批准",
       inferenceClosedTitle: "事项推理策略尚未配置",
       inferenceClosed:
@@ -159,7 +161,8 @@ const zhCN = {
       approvalRequired:
         "当前策略要求逐次批准。Vera 不会在此版本中创建任务或启动模型调用。",
       unavailableTitle: "能力不可用",
-      unavailable: "服务端明确标记此事项能力不可用；界面不会推断或开放替代执行路径。",
+      unavailable:
+        "服务端明确标记此事项能力不可用；界面不会推断或开放替代执行路径。",
       tabularCompatibilityLabel: "复核（表格兼容面）",
       readOnlyTitle: "此事项当前只读",
       readOnly:
@@ -175,16 +178,19 @@ const zhCN = {
       generalTitle: "General",
       generalOwner: "这些字段属于 Project，由 Project Repository 持久化。",
       profileTitle: "Legal profile",
-      profileOwner: "这些字段属于 Matter Profile，由 Matter Profile Repository 持久化。General 与 Legal profile 使用一次原子保存。",
+      profileOwner:
+        "这些字段属于 Matter Profile，由 Matter Profile Repository 持久化。General 与 Legal profile 使用一次原子保存。",
       policyTitle: "Policy",
-      policyOwner: "事项策略独立保存；执行位置和模型数据处理属性均是用户或管理员声明，不由 Vera 根据 URL 推断。",
+      policyOwner:
+        "事项策略独立保存；执行位置和模型数据处理属性均是用户或管理员声明，不由 Vera 根据 URL 推断。",
       saveMatter: "原子保存 General 与 Legal profile",
       savePolicy: "保存事项策略",
       unchanged: "没有需要保存的更改。",
       saved: "已保存。",
       profileRequired: "请先在概览中创建 Matter Profile，再配置此事项。",
       policyUnavailable: "无法加载事项策略；当前值保持关闭且不能保存。",
-      policyMissing: "此事项尚未保存策略。当前未保存草稿为全拒绝：外部传输已禁用、未允许任何执行位置或外部集成；只有明确保存后才会成为持久策略。",
+      policyMissing:
+        "此事项尚未保存策略。当前未保存草稿为全拒绝：外部传输已禁用、未允许任何执行位置或外部集成；只有明确保存后才会成为持久策略。",
       approvalNotice: "此策略要求审批，但当前版本不会创建任务或执行模型调用。",
       externalEgressMode: "外部传输模式",
       externalEgressModes: {
@@ -193,7 +199,8 @@ const zhCN = {
         allowed_by_policy: "策略允许",
       },
       executionLocations: "允许的执行位置声明",
-      executionLocationsHint: "只选择机构已确认允许的位置。Vera 不会把 localhost 或 URL 当作本地执行证据。",
+      executionLocationsHint:
+        "只选择机构已确认允许的位置。Vera 不会把 localhost 或 URL 当作本地执行证据。",
       locations: {
         local: "本地",
         firm_private: "机构私有环境",
@@ -203,10 +210,12 @@ const zhCN = {
       externalLegalSources: "允许外部法律来源",
       wordBridge: "允许 Word Bridge",
       modelPrivacyTitle: "模型隐私声明",
-      modelPrivacyMissing: "模型隐私声明按模型配置管理。任何缺失或未知的保留、训练用途、敏感数据许可或执行位置声明都会保持策略拒绝。",
+      modelPrivacyMissing:
+        "模型隐私声明按模型配置管理。任何缺失或未知的保留、训练用途、敏感数据许可或执行位置声明都会保持策略拒绝。",
       openModelSettings: "打开模型设置",
       errors: {
-        matterSave: "无法保存 General 与 Legal profile；服务端未确认时界面不会更新已保存状态。",
+        matterSave:
+          "无法保存 General 与 Legal profile；服务端未确认时界面不会更新已保存状态。",
         policySave: "无法保存事项策略；之前的策略仍然有效。",
       },
     },
@@ -996,7 +1005,8 @@ const zhCN = {
       },
       privacy: {
         title: "模型隐私声明",
-        description: "这些值必须由用户或管理员依据 Provider 与机构政策声明；Vera 不会从 Base URL 或 localhost 推断。",
+        description:
+          "这些值必须由用户或管理员依据 Provider 与机构政策声明；Vera 不会从 Base URL 或 localhost 推断。",
         loading: "正在读取隐私声明。",
         undeclared: "未声明。缺失声明时所有推理策略保持拒绝。",
         loadFailed: "无法读取隐私声明；当前状态按未声明处理。",
@@ -1004,7 +1014,8 @@ const zhCN = {
         saved: "隐私声明已保存。",
         saveFailed: "无法保存隐私声明；之前的声明保持不变。",
         completeRequired: "首次保存和后续更新都必须明确提交全部四项声明。",
-        localhostWarning: "localhost 或回环 URL 不等于本地执行；只有明确选择“本地”才构成该声明。",
+        localhostWarning:
+          "localhost 或回环 URL 不等于本地执行；只有明确选择“本地”才构成该声明。",
         unknownWarning: "保留或训练用途为“未知”会导致推理策略拒绝。",
         declarationBasis: "用户或管理员声明",
         enabledSnapshot: "声明返回时模型已启用",
@@ -1052,12 +1063,12 @@ const zhCN = {
     legalSources: {
       title: "法律数据源",
       description:
-        "查看候选与受控法律数据源的本地部署、凭据、能力与数据使用声明。此页面不会向 Provider 发起请求。",
+        "配置唯一受支持的元典法律数据源，安全管理本地凭据，并执行显式连接测试与启停。",
       loading: "正在读取本地法律数据源状态。",
       providerContract: "授权适配器 · 本地配置状态",
       localStatus: {
         title: "仅显示本地配置状态",
-        body: "“已配置但未验证”不等于“已连接”。Vera 只检查本机部署与加密凭据是否就绪，不会从此页面联系 Provider；在数据使用政策完整声明且留存执行门禁完成前，生产外呼保持关闭。",
+        body: "“已配置但未验证”不等于“已连接”；连接测试通过也不等于生产可用。activation_gate_closed 是独立的策略门禁状态，绝不会显示为 ready。",
       },
       providers: {
         pkulaw: "北大法宝",
@@ -1065,7 +1076,13 @@ const zhCN = {
         wolters: "威科先行",
       },
       status: {
+        notConfigured: "未配置",
         configuredUnverified: "已配置但未验证",
+        ready: "已就绪",
+        authenticationFailed: "认证失败",
+        licenseRestricted: "许可受限",
+        activationGateClosed: "生产启用门禁关闭",
+        temporarilyUnavailable: "暂时不可用",
         unavailable: "不可用",
         configuredUnverifiedBody:
           "本地配置和凭据可用，但未执行 Provider 网络验证，不能据此判断已连接；当前生产外呼门禁仍关闭。",
@@ -1105,6 +1122,28 @@ const zhCN = {
           case: "案例",
           other: "其他",
         },
+        names: {
+          law: "法律法规检索",
+          case: "案例检索",
+          company: "企业信息（非法律权威来源）",
+        },
+        enabled: "已启用",
+        disabled: "未启用",
+      },
+      connection: {
+        title: "连接测试",
+        untested: "尚未测试；配置状态不能证明连接成功。",
+        passed: "当前连接版本测试通过，但仍须满足独立生产启用门禁。",
+        failed: "当前连接版本测试失败。",
+        test: "测试连接",
+      },
+      activation: {
+        enabled: "Provider 配置已启用",
+        disabled: "Provider 配置已停用",
+        enable: "启用配置",
+        disable: "停用配置",
+        gateClosed:
+          "配置启用与生产就绪是不同状态；当前生产启用门禁仍关闭，不会把测试通过伪装为 ready。",
       },
       credential: {
         title: "本地密钥",
@@ -1115,7 +1154,7 @@ const zhCN = {
         inputLabel: "新密钥",
         placeholder: "粘贴新密钥（不会回显）",
         description:
-          "密钥通过本机 API 一次性提交，输入框会在请求前立即清空。后端仅在 SQLCipher 中保存应用层密文，绝不向界面回显明文。",
+          "密钥通过本机 API 一次性提交，输入框会在请求前立即清空。后端使用系统安全凭据存储，绝不向界面回显明文或凭据引用。",
         actionsReady: "部署和本地加密均已就绪，可以安全保存、替换或移除密钥。",
         deploymentDisabled:
           "部署尚未就绪，保存和替换已停用；仍可移除已有本地密钥。",
@@ -1140,6 +1179,7 @@ const zhCN = {
           "以下内容来自部署契约；未声明的权限一律不能从 API 可访问性中推断。",
         basis: "声明依据",
         retention: "保留策略",
+        localProcessing: "Vera 本地处理",
         export: "导出策略",
         modelUse: "模型使用策略",
         notDeclaredWarning:
@@ -1148,6 +1188,7 @@ const zhCN = {
           "Vera 会在到期后执行单向逻辑 tombstone 并阻止引用、导出和模型使用；旧版精确引文仍无法单独物理清除，因此这不代表原文已从加密数据库删除。",
         values: {
           notDeclared: "未声明",
+          transientOnly: "仅瞬时处理，不持久化 Provider 内容",
           deploymentContract: "部署契约",
           noRetention: "不保留",
           metadataOnly: "仅元数据",
@@ -1161,8 +1202,15 @@ const zhCN = {
         },
       },
       empty: {
-        title: "没有可显示的法律数据源",
-        body: "本地服务未返回受支持的 Provider。Vera 不会创建占位配置。",
+        title: "尚未配置元典法律数据源",
+        body: "仅可通过本地服务创建受支持的元典配置；Vera 不会在界面中伪造 Provider。",
+        action: "配置元典",
+      },
+      feedback: {
+        created: "元典配置已创建。",
+        testComplete: "连接测试已完成，状态来自本地服务。",
+        enabled: "Provider 配置已启用；生产门禁状态仍独立判定。",
+        disabled: "Provider 配置已停用。",
       },
       errors: {
         loadTitle: "法律数据源状态不可用",
@@ -1458,9 +1506,11 @@ const enUS = {
     capabilities: {
       inferenceStatus: "Matter inference capability status",
       availableTitle: "Available",
-      available: "Matter Policy allows this inference capability. Runtime still checks model declarations, connection state, and server policy.",
+      available:
+        "Matter Policy allows this inference capability. Runtime still checks model declarations, connection state, and server policy.",
       nonInferenceOnlyTitle: "Non-inference workflows only",
-      nonInferenceOnly: "Only deterministic workflows without prompt steps may run. Any model inference is denied.",
+      nonInferenceOnly:
+        "Only deterministic workflows without prompt steps may run. Any model inference is denied.",
       approvalRequiredTitle: "Per-use approval required",
       inferenceClosedTitle: "Matter inference policy is not configured",
       inferenceClosed:
@@ -1468,7 +1518,8 @@ const enUS = {
       approvalRequired:
         "The current policy requires per-use approval. Vera will not create a job or start a model call in this version.",
       unavailableTitle: "Capability unavailable",
-      unavailable: "The server explicitly marks this Matter capability unavailable. The interface will not infer or open an alternate execution path.",
+      unavailable:
+        "The server explicitly marks this Matter capability unavailable. The interface will not infer or open an alternate execution path.",
       tabularCompatibilityLabel: "Review (Tabular compatibility)",
       readOnlyTitle: "This Matter is read-only",
       readOnly:
@@ -1481,21 +1532,29 @@ const enUS = {
     },
     settings: {
       title: "Matter settings",
-      subtitle: "Project details, the legal Matter Profile, and Matter Policy retain clear data ownership.",
+      subtitle:
+        "Project details, the legal Matter Profile, and Matter Policy retain clear data ownership.",
       generalTitle: "General",
-      generalOwner: "These fields belong to Project and are persisted by the Project Repository.",
+      generalOwner:
+        "These fields belong to Project and are persisted by the Project Repository.",
       profileTitle: "Legal profile",
-      profileOwner: "These fields belong to Matter Profile and are persisted by the Matter Profile Repository. General and Legal profile use one atomic save.",
+      profileOwner:
+        "These fields belong to Matter Profile and are persisted by the Matter Profile Repository. General and Legal profile use one atomic save.",
       policyTitle: "Policy",
-      policyOwner: "Matter Policy is saved separately. Execution location and model data-handling attributes are user or administrator declarations; Vera does not infer them from URLs.",
+      policyOwner:
+        "Matter Policy is saved separately. Execution location and model data-handling attributes are user or administrator declarations; Vera does not infer them from URLs.",
       saveMatter: "Atomically save General and Legal profile",
       savePolicy: "Save Matter Policy",
       unchanged: "There are no changes to save.",
       saved: "Saved.",
-      profileRequired: "Create a Matter Profile from Overview before configuring this Matter.",
-      policyUnavailable: "Matter Policy could not be loaded. Values remain closed and cannot be saved.",
-      policyMissing: "This Matter has no saved Policy. The unsaved draft denies everything: external egress is disabled and no execution locations or external integrations are allowed. It becomes durable only after an explicit save.",
-      approvalNotice: "This policy requires approval, but this version will not create a job or execute a model call.",
+      profileRequired:
+        "Create a Matter Profile from Overview before configuring this Matter.",
+      policyUnavailable:
+        "Matter Policy could not be loaded. Values remain closed and cannot be saved.",
+      policyMissing:
+        "This Matter has no saved Policy. The unsaved draft denies everything: external egress is disabled and no execution locations or external integrations are allowed. It becomes durable only after an explicit save.",
+      approvalNotice:
+        "This policy requires approval, but this version will not create a job or execute a model call.",
       externalEgressMode: "External egress mode",
       externalEgressModes: {
         disabled: "Disabled",
@@ -1503,7 +1562,8 @@ const enUS = {
         allowed_by_policy: "Allowed by policy",
       },
       executionLocations: "Allowed execution-location declarations",
-      executionLocationsHint: "Select only locations confirmed by your institution. Vera does not treat localhost or a URL as evidence of local execution.",
+      executionLocationsHint:
+        "Select only locations confirmed by your institution. Vera does not treat localhost or a URL as evidence of local execution.",
       locations: {
         local: "Local",
         firm_private: "Firm-private environment",
@@ -1513,11 +1573,14 @@ const enUS = {
       externalLegalSources: "Allow external legal sources",
       wordBridge: "Allow Word Bridge",
       modelPrivacyTitle: "Model privacy declarations",
-      modelPrivacyMissing: "Model privacy declarations are managed per model profile. Missing or unknown retention, training-use, sensitive-data, or execution-location declarations keep policy denied.",
+      modelPrivacyMissing:
+        "Model privacy declarations are managed per model profile. Missing or unknown retention, training-use, sensitive-data, or execution-location declarations keep policy denied.",
       openModelSettings: "Open model settings",
       errors: {
-        matterSave: "General and Legal profile could not be saved. The UI does not update persisted state without server confirmation.",
-        policySave: "Matter Policy could not be saved. The previous policy remains active.",
+        matterSave:
+          "General and Legal profile could not be saved. The UI does not update persisted state without server confirmation.",
+        policySave:
+          "Matter Policy could not be saved. The previous policy remains active.",
       },
     },
     form: {
@@ -2351,16 +2414,23 @@ const enUS = {
       },
       privacy: {
         title: "Model privacy declaration",
-        description: "These values must be declared by a user or administrator from provider and institutional policy. Vera does not infer them from a Base URL or localhost.",
+        description:
+          "These values must be declared by a user or administrator from provider and institutional policy. Vera does not infer them from a Base URL or localhost.",
         loading: "Loading the privacy declaration.",
-        undeclared: "Undeclared. Inference policy remains denied while the declaration is missing.",
-        loadFailed: "The privacy declaration could not be read. The current state is treated as undeclared.",
+        undeclared:
+          "Undeclared. Inference policy remains denied while the declaration is missing.",
+        loadFailed:
+          "The privacy declaration could not be read. The current state is treated as undeclared.",
         save: "Save complete declaration",
         saved: "Privacy declaration saved.",
-        saveFailed: "The privacy declaration could not be saved. The previous declaration remains active.",
-        completeRequired: "Initial save and every later update must explicitly submit all four declarations.",
-        localhostWarning: "localhost or a loopback URL does not mean local execution. Only explicitly selecting Local creates that declaration.",
-        unknownWarning: "Unknown retention or training use causes inference policy to deny.",
+        saveFailed:
+          "The privacy declaration could not be saved. The previous declaration remains active.",
+        completeRequired:
+          "Initial save and every later update must explicitly submit all four declarations.",
+        localhostWarning:
+          "localhost or a loopback URL does not mean local execution. Only explicitly selecting Local creates that declaration.",
+        unknownWarning:
+          "Unknown retention or training use causes inference policy to deny.",
         declarationBasis: "User or administrator declared",
         enabledSnapshot: "Model enabled when this declaration was returned",
         disabledSnapshot: "Model disabled when this declaration was returned",
@@ -2407,12 +2477,12 @@ const enUS = {
     legalSources: {
       title: "Legal sources",
       description:
-        "Review local deployment, credentials, audited capabilities, and data-use declarations for candidate and controlled legal sources. This page never calls a provider.",
+        "Configure the single supported YuanDian legal source, manage its local credential safely, and explicitly test or enable the profile.",
       loading: "Reading local legal-source status.",
       providerContract: "Authorized adapter · local configuration status",
       localStatus: {
         title: "Local configuration status only",
-        body: "Configured but unverified does not mean connected. Vera checks only local deployment and encrypted-credential readiness and never contacts a provider from this page. Production egress stays closed until the data-use policy is complete and retention enforcement is ready.",
+        body: "Configured but unverified does not mean connected, and a passed connection test does not mean production-ready. activation_gate_closed is an independent policy state and is never displayed as ready.",
       },
       providers: {
         pkulaw: "PKULAW (北大法宝)",
@@ -2420,7 +2490,13 @@ const enUS = {
         wolters: "Wolters Kluwer China (威科先行)",
       },
       status: {
+        notConfigured: "Not configured",
         configuredUnverified: "Configured, not verified",
+        ready: "Ready",
+        authenticationFailed: "Authentication failed",
+        licenseRestricted: "License restricted",
+        activationGateClosed: "Production activation gate closed",
+        temporarilyUnavailable: "Temporarily unavailable",
         unavailable: "Unavailable",
         configuredUnverifiedBody:
           "Local configuration and a credential are available, but no provider network verification was performed. This is not proof of a connection, and the production egress gate remains closed.",
@@ -2463,6 +2539,30 @@ const enUS = {
           case: "Cases",
           other: "Other",
         },
+        names: {
+          law: "Statutes and regulations",
+          case: "Case research",
+          company: "Company data (not legal authority)",
+        },
+        enabled: "Enabled",
+        disabled: "Disabled",
+      },
+      connection: {
+        title: "Connection test",
+        untested:
+          "Not tested; configuration alone does not prove connectivity.",
+        passed:
+          "The current connection revision passed, but the independent production activation gate still applies.",
+        failed: "The current connection revision failed its test.",
+        test: "Test connection",
+      },
+      activation: {
+        enabled: "Provider profile enabled",
+        disabled: "Provider profile disabled",
+        enable: "Enable profile",
+        disable: "Disable profile",
+        gateClosed:
+          "Profile enablement and production readiness are separate. The production activation gate remains closed and a passed test is never presented as ready.",
       },
       credential: {
         title: "Local secret",
@@ -2473,7 +2573,7 @@ const enUS = {
         inputLabel: "New secret",
         placeholder: "Paste a new secret (never displayed)",
         description:
-          "The secret is submitted once over the local API and the field is cleared before the request. The backend stores only application-layer ciphertext in SQLCipher and never returns the plaintext to the UI.",
+          "The secret is submitted once over the local API and the field is cleared before the request. The backend uses the system credential store and never returns plaintext or a credential reference to the UI.",
         actionsReady:
           "Deployment and local encryption are ready for secure secret storage, replacement, or removal.",
         deploymentDisabled:
@@ -2501,6 +2601,7 @@ const enUS = {
           "These values come from the deployment contract. Rights that are not declared cannot be inferred from API access.",
         basis: "Declaration basis",
         retention: "Retention policy",
+        localProcessing: "Vera local processing",
         export: "Export policy",
         modelUse: "Model-use policy",
         notDeclaredWarning:
@@ -2509,6 +2610,8 @@ const enUS = {
           "At expiry Vera applies a one-way logical tombstone and blocks citation, export, and model use. Legacy exact quotes cannot yet be physically erased independently, so this does not mean the text was deleted from the encrypted database.",
         values: {
           notDeclared: "Not declared",
+          transientOnly:
+            "Transient processing; provider content is not persisted",
           deploymentContract: "Deployment contract",
           noRetention: "No retention",
           metadataOnly: "Metadata only",
@@ -2522,8 +2625,17 @@ const enUS = {
         },
       },
       empty: {
-        title: "No legal sources to display",
-        body: "The local service returned no supported providers. Vera will not create placeholder configuration.",
+        title: "YuanDian is not configured",
+        body: "Only the local service can create the supported YuanDian profile. Vera never fabricates a provider in the UI.",
+        action: "Configure YuanDian",
+      },
+      feedback: {
+        created: "The YuanDian profile was created.",
+        testComplete:
+          "The connection test completed; this status came from the local service.",
+        enabled:
+          "The provider profile was enabled; production gate status remains independent.",
+        disabled: "The provider profile was disabled.",
       },
       errors: {
         loadTitle: "Legal-source status unavailable",

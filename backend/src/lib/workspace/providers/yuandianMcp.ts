@@ -155,6 +155,8 @@ export class YuanDianMcpAdapterError extends Error {
     readonly code:
       | "configuration_error"
       | "credential_unavailable"
+      | "authentication_failed"
+      | "license_restricted"
       | "policy_violation"
       | "transport_error"
       | "response_invalid",
@@ -379,6 +381,18 @@ export function createGuardedYuanDianMcpFetch(input: {
       throw adapterError(
         "policy_violation",
         "YuanDian MCP redirects are prohibited.",
+      );
+    }
+    if (response.status === 401) {
+      throw adapterError(
+        "authentication_failed",
+        "YuanDian MCP authentication failed.",
+      );
+    }
+    if (response.status === 403) {
+      throw adapterError(
+        "license_restricted",
+        "YuanDian MCP access is not licensed for this operation.",
       );
     }
     if (response.url) {
@@ -697,6 +711,18 @@ function assertBusinessSuccess(envelope: Record<string, unknown>) {
       throw adapterError(
         "response_invalid",
         "YuanDian MCP business status is invalid.",
+      );
+    }
+    if (envelope.code === 401) {
+      throw adapterError(
+        "authentication_failed",
+        "YuanDian MCP authentication failed.",
+      );
+    }
+    if (envelope.code === 403) {
+      throw adapterError(
+        "license_restricted",
+        "YuanDian MCP access is not licensed for this operation.",
       );
     }
     if (envelope.code !== 200 && envelope.code !== 201) {

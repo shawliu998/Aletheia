@@ -9,15 +9,14 @@ import {
 } from "react";
 import {
   AlertCircle,
-  CheckCircle2,
-  CircleX,
-  Database,
   KeyRound,
   Loader2,
   LockKeyhole,
   RefreshCw,
   Scale,
   ShieldCheck,
+  Unplug,
+  Wifi,
 } from "lucide-react";
 import {
   useI18n,
@@ -32,13 +31,16 @@ import {
 import { VERA_LEGAL_SOURCE_CREDENTIAL_MAX_CHARACTERS } from "@/app/lib/veraCredentialLimits";
 import {
   VeraLegalSourceApiError,
+  createVeraLegalSourceProvider,
+  disableVeraLegalSourceProvider,
+  enableVeraLegalSourceProvider,
   listVeraLegalSourceProviders,
   removeVeraLegalSourceSecret,
   saveVeraLegalSourceSecret,
-  type VeraLegalSourceDataUsePolicy,
+  testVeraLegalSourceProvider,
+  type VeraLegalSourceCapabilityName,
   type VeraLegalSourceProvider,
-  type VeraLegalSourceProviderId,
-  type VeraLegalSourceUnavailableReason,
+  type VeraLegalSourceStatus,
 } from "@/app/lib/veraLegalSourceApi";
 import { AccountSection } from "../AccountSection";
 import {
@@ -49,81 +51,38 @@ import {
 } from "../accountStyles";
 
 type LoadState = "loading" | "ready" | "error";
-type CredentialOperation = {
-  provider: VeraLegalSourceProviderId;
-  kind: "save" | "remove";
-};
-type ProviderFeedback = {
-  provider: VeraLegalSourceProviderId;
-  kind: "saved" | "removed" | "saved_refresh_failed" | "removed_refresh_failed";
-};
-type ProviderFailure = {
-  provider: VeraLegalSourceProviderId;
-  error: BackendErrorDescriptor;
-};
+type OperationKind =
+  "create" | "save" | "remove" | "test" | "enable" | "disable";
+type Operation = { id: string; kind: OperationKind };
+type Feedback = { id: string; kind: OperationKind };
+type ProviderFailure = { id: string; error: BackendErrorDescriptor };
 
-const PROVIDER_NAME_KEYS = {
-  pkulaw: "settings.legalSources.providers.pkulaw",
-  yuandian: "settings.legalSources.providers.yuandian",
-  wolters: "settings.legalSources.providers.wolters",
-} as const satisfies Record<VeraLegalSourceProviderId, MessageKey>;
+const STATUS_KEYS = {
+  unavailable: "settings.legalSources.status.unavailable",
+  not_configured: "settings.legalSources.status.notConfigured",
+  configured_unverified: "settings.legalSources.status.configuredUnverified",
+  ready: "settings.legalSources.status.ready",
+  authentication_failed: "settings.legalSources.status.authenticationFailed",
+  license_restricted: "settings.legalSources.status.licenseRestricted",
+  activation_gate_closed: "settings.legalSources.status.activationGateClosed",
+  temporarily_unavailable:
+    "settings.legalSources.status.temporarilyUnavailable",
+} as const satisfies Record<VeraLegalSourceStatus, MessageKey>;
 
-const DOCUMENT_KIND_KEYS = {
-  statute: "settings.legalSources.capabilities.kinds.statute",
-  judicial_interpretation:
-    "settings.legalSources.capabilities.kinds.judicialInterpretation",
-  case: "settings.legalSources.capabilities.kinds.case",
-  other: "settings.legalSources.capabilities.kinds.other",
-} as const satisfies Record<
-  VeraLegalSourceProvider["capabilities"]["documentKinds"][number],
-  MessageKey
->;
-
-type DataUseValue =
-  VeraLegalSourceDataUsePolicy[keyof VeraLegalSourceDataUsePolicy];
-
-const DATA_USE_VALUE_KEYS = {
-  not_declared: "settings.legalSources.policy.values.notDeclared",
-  deployment_contract: "settings.legalSources.policy.values.deploymentContract",
-  no_retention: "settings.legalSources.policy.values.noRetention",
-  metadata_only: "settings.legalSources.policy.values.metadataOnly",
-  full_text_ttl: "settings.legalSources.policy.values.fullTextTtl",
-  full_text_permitted: "settings.legalSources.policy.values.fullTextPermitted",
-  prohibited: "settings.legalSources.policy.values.prohibited",
-  exact_quotes_only: "settings.legalSources.policy.values.exactQuotesOnly",
-  reviewed_work_product:
-    "settings.legalSources.policy.values.reviewedWorkProduct",
-  permitted: "settings.legalSources.policy.values.permitted",
-  local_only: "settings.legalSources.policy.values.localOnly",
-} as const satisfies Record<DataUseValue, MessageKey>;
-
-const UNAVAILABLE_REASON_KEYS = {
-  endpoint_missing: "settings.legalSources.status.reasons.endpointMissing",
-  endpoint_not_allowlisted:
-    "settings.legalSources.status.reasons.endpointNotAllowlisted",
-  credential_reference_missing:
-    "settings.legalSources.status.reasons.credentialReferenceMissing",
-  activation_gate_closed:
-    "settings.legalSources.status.reasons.activationGateClosed",
-  data_use_policy_undeclared:
-    "settings.legalSources.status.reasons.dataUsePolicyUndeclared",
-  credential_unavailable:
-    "settings.legalSources.status.reasons.credentialUnavailable",
-  secret_storage_unavailable:
-    "settings.legalSources.status.reasons.secretStorageUnavailable",
-} as const satisfies Record<VeraLegalSourceUnavailableReason, MessageKey>;
+const CAPABILITY_KEYS = {
+  law: "settings.legalSources.capabilities.names.law",
+  case: "settings.legalSources.capabilities.names.case",
+  company: "settings.legalSources.capabilities.names.company",
+} as const satisfies Record<VeraLegalSourceCapabilityName, MessageKey>;
 
 const FEEDBACK_KEYS = {
-  saved: "settings.legalSources.credential.saved",
-  removed: "settings.legalSources.credential.removed",
-  saved_refresh_failed: "settings.legalSources.credential.savedRefreshFailed",
-  removed_refresh_failed:
-    "settings.legalSources.credential.removedRefreshFailed",
-} as const satisfies Record<ProviderFeedback["kind"], MessageKey>;
-
-function credentialActionsReady(provider: VeraLegalSourceProvider): boolean {
-  return provider.deploymentReady && provider.encryptionEnabled;
-}
+  create: "settings.legalSources.feedback.created",
+  save: "settings.legalSources.credential.saved",
+  remove: "settings.legalSources.credential.removed",
+  test: "settings.legalSources.feedback.testComplete",
+  enable: "settings.legalSources.feedback.enabled",
+  disable: "settings.legalSources.feedback.disabled",
+} as const satisfies Record<OperationKind, MessageKey>;
 
 function safeFailure(error: unknown): BackendErrorDescriptor {
   if (error instanceof VeraLegalSourceApiError) {
@@ -138,45 +97,38 @@ function safeFailure(error: unknown): BackendErrorDescriptor {
 export default function LegalSourceSettingsPage() {
   const { t, errorMessage } = useI18n();
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [providers, setProviders] = useState<
-    readonly VeraLegalSourceProvider[]
-  >([]);
+  const [profiles, setProfiles] = useState<readonly VeraLegalSourceProvider[]>(
+    [],
+  );
   const [loadFailure, setLoadFailure] = useState<BackendErrorDescriptor | null>(
     null,
   );
-  const [refreshing, setRefreshing] = useState(false);
-  const [operation, setOperation] = useState<CredentialOperation | null>(null);
   const [providerFailure, setProviderFailure] =
     useState<ProviderFailure | null>(null);
-  const [feedback, setFeedback] = useState<ProviderFeedback | null>(null);
-  const [removeConfirmProvider, setRemoveConfirmProvider] =
-    useState<VeraLegalSourceProviderId | null>(null);
-  const requestSequence = useRef(0);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [operation, setOperation] = useState<Operation | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [removeTargetId, setRemoveTargetId] = useState<string | null>(null);
   const mounted = useRef(false);
+  const requestSequence = useRef(0);
   const hasLoaded = useRef(false);
 
-  const loadProviders = useCallback(
-    async (showLoading: boolean): Promise<boolean> => {
+  const loadProfiles = useCallback(
+    async (showLoading: boolean): Promise<void> => {
       const sequence = ++requestSequence.current;
       if (showLoading) setLoadState("loading");
       setRefreshing(true);
       setLoadFailure(null);
       try {
-        const response = await listVeraLegalSourceProviders();
-        if (!mounted.current || sequence !== requestSequence.current) {
-          return false;
-        }
+        const result = await listVeraLegalSourceProviders();
+        if (!mounted.current || sequence !== requestSequence.current) return;
         hasLoaded.current = true;
-        setProviders(response.providers);
+        setProfiles(result.providers);
         setLoadState("ready");
-        return true;
       } catch (error) {
-        if (!mounted.current || sequence !== requestSequence.current) {
-          return false;
-        }
+        if (!mounted.current || sequence !== requestSequence.current) return;
         setLoadFailure(safeFailure(error));
         if (!hasLoaded.current) setLoadState("error");
-        return false;
       } finally {
         if (mounted.current && sequence === requestSequence.current) {
           setRefreshing(false);
@@ -188,78 +140,102 @@ export default function LegalSourceSettingsPage() {
 
   useEffect(() => {
     mounted.current = true;
-    void loadProviders(true);
+    void loadProfiles(true);
     return () => {
       mounted.current = false;
       requestSequence.current += 1;
     };
-  }, [loadProviders]);
+  }, [loadProfiles]);
+
+  function applyProfile(profile: VeraLegalSourceProvider) {
+    setProfiles((current) => {
+      const existing = current.some(({ id }) => id === profile.id);
+      return existing
+        ? current.map((item) => (item.id === profile.id ? profile : item))
+        : [profile];
+    });
+  }
+
+  async function createProfile() {
+    if (operation || refreshing || profiles.length !== 0) return;
+    setOperation({ id: "new", kind: "create" });
+    setProviderFailure(null);
+    setFeedback(null);
+    try {
+      const profile = await createVeraLegalSourceProvider();
+      if (!mounted.current) return;
+      applyProfile(profile);
+      setFeedback({ id: profile.id, kind: "create" });
+    } catch (error) {
+      if (mounted.current) setLoadFailure(safeFailure(error));
+    } finally {
+      if (mounted.current) setOperation(null);
+    }
+  }
 
   async function saveCredential(
-    provider: VeraLegalSourceProvider,
+    profile: VeraLegalSourceProvider,
     field: Pick<HTMLInputElement, "value">,
   ) {
-    if (operation || refreshing || !credentialActionsReady(provider)) return;
-    setOperation({ provider: provider.provider, kind: "save" });
+    if (operation || refreshing) return;
+    setOperation({ id: profile.id, kind: "save" });
     setProviderFailure(null);
     setFeedback(null);
     try {
       await submitVeraCredentialInput(
         field,
-        (secret) => saveVeraLegalSourceSecret(provider.provider, secret),
-        {
-          maxCharacters: VERA_LEGAL_SOURCE_CREDENTIAL_MAX_CHARACTERS,
+        async (secret) => {
+          const updated = await saveVeraLegalSourceSecret(
+            profile.id,
+            profile.revision,
+            secret,
+          );
+          if (mounted.current) applyProfile(updated);
         },
+        { maxCharacters: VERA_LEGAL_SOURCE_CREDENTIAL_MAX_CHARACTERS },
       );
-      const refreshed = await loadProviders(false);
       if (!mounted.current) return;
-      setFeedback({
-        provider: provider.provider,
-        kind: refreshed ? "saved" : "saved_refresh_failed",
-      });
+      setFeedback({ id: profile.id, kind: "save" });
     } catch (error) {
-      if (!mounted.current) return;
-      setProviderFailure({
-        provider: provider.provider,
-        error: safeFailure(error),
-      });
+      if (mounted.current) {
+        setProviderFailure({ id: profile.id, error: safeFailure(error) });
+      }
     } finally {
       field.value = "";
       if (mounted.current) setOperation(null);
     }
   }
 
-  async function removeCredential(provider: VeraLegalSourceProvider) {
-    if (operation || refreshing || !provider.hasSecret) {
-      return;
-    }
-    setOperation({ provider: provider.provider, kind: "remove" });
+  async function mutate(
+    profile: VeraLegalSourceProvider,
+    kind: Exclude<OperationKind, "create" | "save">,
+  ) {
+    if (operation || refreshing) return;
+    setOperation({ id: profile.id, kind });
     setProviderFailure(null);
     setFeedback(null);
     try {
-      await removeVeraLegalSourceSecret(provider.provider);
+      const updated = await (kind === "remove"
+        ? removeVeraLegalSourceSecret(profile.id, profile.revision)
+        : kind === "test"
+          ? testVeraLegalSourceProvider(profile.id, profile.revision)
+          : kind === "enable"
+            ? enableVeraLegalSourceProvider(profile.id, profile.revision)
+            : disableVeraLegalSourceProvider(profile.id, profile.revision));
       if (!mounted.current) return;
-      setRemoveConfirmProvider(null);
-      const refreshed = await loadProviders(false);
-      if (!mounted.current) return;
-      setFeedback({
-        provider: provider.provider,
-        kind: refreshed ? "removed" : "removed_refresh_failed",
-      });
+      applyProfile(updated);
+      if (kind === "remove") setRemoveTargetId(null);
+      setFeedback({ id: profile.id, kind });
     } catch (error) {
-      if (!mounted.current) return;
-      setProviderFailure({
-        provider: provider.provider,
-        error: safeFailure(error),
-      });
+      if (mounted.current) {
+        setProviderFailure({ id: profile.id, error: safeFailure(error) });
+      }
     } finally {
       if (mounted.current) setOperation(null);
     }
   }
 
-  const removeTarget = providers.find(
-    (provider) => provider.provider === removeConfirmProvider,
-  );
+  const removeTarget = profiles.find(({ id }) => id === removeTargetId);
 
   if (loadState === "loading") {
     return (
@@ -283,7 +259,7 @@ export default function LegalSourceSettingsPage() {
         action={
           <button
             type="button"
-            onClick={() => void loadProviders(true)}
+            onClick={() => void loadProfiles(true)}
             className={accountGlassButtonClassName}
           >
             {t("common.actions.retry")}
@@ -296,7 +272,7 @@ export default function LegalSourceSettingsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div>
           <h2 className="font-serif text-2xl font-medium text-gray-900 dark:text-gray-100">
             {t("settings.legalSources.title")}
           </h2>
@@ -308,8 +284,8 @@ export default function LegalSourceSettingsPage() {
           type="button"
           disabled={refreshing || operation !== null}
           aria-busy={refreshing}
-          onClick={() => void loadProviders(false)}
-          className={`${accountGlassButtonClassName} inline-flex h-9 shrink-0 items-center gap-1.5`}
+          onClick={() => void loadProfiles(false)}
+          className={`${accountGlassButtonClassName} inline-flex h-9 items-center gap-1.5`}
         >
           <RefreshCw
             className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
@@ -322,14 +298,14 @@ export default function LegalSourceSettingsPage() {
       <AccountSection className="p-4">
         <div className="flex items-start gap-3">
           <ShieldCheck
-            className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
+            className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
             aria-hidden="true"
           />
-          <div className="space-y-1">
+          <div>
             <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
               {t("settings.legalSources.localStatus.title")}
             </p>
-            <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
               {t("settings.legalSources.localStatus.body")}
             </p>
           </div>
@@ -337,23 +313,15 @@ export default function LegalSourceSettingsPage() {
       </AccountSection>
 
       {loadFailure && (
-        <div
+        <p
           role="alert"
-          className="flex flex-col gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
         >
-          <span>{errorMessage(loadFailure)}</span>
-          <button
-            type="button"
-            disabled={refreshing || operation !== null}
-            onClick={() => void loadProviders(false)}
-            className={accountGlassButtonClassName}
-          >
-            {t("common.actions.retry")}
-          </button>
-        </div>
+          {errorMessage(loadFailure)}
+        </p>
       )}
 
-      {providers.length === 0 ? (
+      {profiles.length === 0 ? (
         <AccountSection className="p-6 text-center">
           <Scale className="mx-auto h-5 w-5 text-gray-400" aria-hidden="true" />
           <h3 className="mt-3 text-base font-medium text-gray-900 dark:text-gray-100">
@@ -362,32 +330,39 @@ export default function LegalSourceSettingsPage() {
           <p className="mx-auto mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">
             {t("settings.legalSources.empty.body")}
           </p>
+          <button
+            type="button"
+            disabled={operation !== null || refreshing}
+            onClick={() => void createProfile()}
+            className={`${accountGlassPrimaryButtonClassName} mt-4 inline-flex items-center gap-1.5`}
+          >
+            {operation?.kind === "create" && (
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                aria-hidden="true"
+              />
+            )}
+            {t("settings.legalSources.empty.action")}
+          </button>
         </AccountSection>
       ) : (
-        <div className="space-y-4" aria-busy={refreshing}>
-          {providers.map((provider) => (
-            <ProviderCard
-              key={provider.provider}
-              provider={provider}
-              operation={operation}
-              refreshing={refreshing}
-              failure={
-                providerFailure?.provider === provider.provider
-                  ? providerFailure.error
-                  : null
-              }
-              feedback={
-                feedback?.provider === provider.provider ? feedback.kind : null
-              }
-              onSave={(field) => void saveCredential(provider, field)}
-              onRemove={() => {
-                setProviderFailure(null);
-                setFeedback(null);
-                setRemoveConfirmProvider(provider.provider);
-              }}
-            />
-          ))}
-        </div>
+        profiles.map((profile) => (
+          <ProviderCard
+            key={profile.id}
+            profile={profile}
+            operation={operation}
+            refreshing={refreshing}
+            failure={
+              providerFailure?.id === profile.id ? providerFailure.error : null
+            }
+            feedback={feedback?.id === profile.id ? feedback.kind : null}
+            onSave={(field) => void saveCredential(profile, field)}
+            onRemove={() => setRemoveTargetId(profile.id)}
+            onTest={() => void mutate(profile, "test")}
+            onEnable={() => void mutate(profile, "enable")}
+            onDisable={() => void mutate(profile, "disable")}
+          />
+        ))
       )}
 
       <ConfirmPopup
@@ -396,29 +371,23 @@ export default function LegalSourceSettingsPage() {
         message={
           removeTarget
             ? t("settings.legalSources.credential.removeConfirmBody", {
-                provider: t(PROVIDER_NAME_KEYS[removeTarget.provider]),
+                provider: t("settings.legalSources.providers.yuandian"),
               })
             : undefined
         }
         confirmLabel={t("settings.legalSources.credential.remove")}
-        confirmStatus={
-          operation?.kind === "remove" &&
-          operation.provider === removeTarget?.provider
-            ? "loading"
-            : "idle"
-        }
+        confirmStatus={operation?.kind === "remove" ? "loading" : "idle"}
         confirmDisabled={
-          !removeTarget ||
-          !removeTarget.hasSecret ||
-          Boolean(operation) ||
+          !removeTarget?.credential_configured ||
+          operation !== null ||
           refreshing
         }
         cancelDisabled={operation?.kind === "remove"}
         onCancel={() => {
-          if (!operation) setRemoveConfirmProvider(null);
+          if (!operation) setRemoveTargetId(null);
         }}
         onConfirm={() => {
-          if (removeTarget) void removeCredential(removeTarget);
+          if (removeTarget) void mutate(removeTarget, "remove");
         }}
       />
     </div>
@@ -426,38 +395,39 @@ export default function LegalSourceSettingsPage() {
 }
 
 function ProviderCard({
-  provider,
+  profile,
   operation,
   refreshing,
   failure,
   feedback,
   onSave,
   onRemove,
+  onTest,
+  onEnable,
+  onDisable,
 }: {
-  provider: VeraLegalSourceProvider;
-  operation: CredentialOperation | null;
+  profile: VeraLegalSourceProvider;
+  operation: Operation | null;
   refreshing: boolean;
   failure: BackendErrorDescriptor | null;
-  feedback: ProviderFeedback["kind"] | null;
+  feedback: OperationKind | null;
   onSave: (field: Pick<HTMLInputElement, "value">) => void;
   onRemove: () => void;
+  onTest: () => void;
+  onEnable: () => void;
+  onDisable: () => void;
 }) {
   const { t, errorMessage } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
-  const providerName = t(PROVIDER_NAME_KEYS[provider.provider]);
-  const cardId = `vera-legal-source-${provider.provider}`;
-  const inputId = `${cardId}-credential`;
-  const currentOperation =
-    operation?.provider === provider.provider ? operation.kind : null;
-  const credentialReady = credentialActionsReady(provider);
-  const saveDisabled = !credentialReady || refreshing || operation !== null;
-  const removeDisabled =
-    refreshing || operation !== null || !provider.hasSecret;
+  const busy = refreshing || operation !== null;
+  const currentOperation = operation?.id === profile.id ? operation.kind : null;
+  const inputId = `vera-legal-provider-${profile.id}-credential`;
+  const testPassed = profile.connection_test?.status === "passed";
+  const enableDisabled = busy || !profile.credential_configured || !testPassed;
 
   useEffect(() => {
-    if (saveDisabled && inputRef.current) inputRef.current.value = "";
-  }, [saveDisabled]);
-
+    if (busy && inputRef.current) inputRef.current.value = "";
+  }, [busy]);
   useEffect(
     () => () => {
       if (inputRef.current) inputRef.current.value = "";
@@ -467,161 +437,209 @@ function ProviderCard({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saveDisabled || !inputRef.current) return;
+    if (busy || !inputRef.current) return;
     onSave(inputRef.current);
   }
 
-  const hasUndeclaredPolicy = Object.values(provider.dataUsePolicy).includes(
-    "not_declared",
-  );
-  const documentKinds = provider.capabilities.documentKinds
-    .map((kind) => t(DOCUMENT_KIND_KEYS[kind]))
-    .join(t("settings.legalSources.capabilities.kindSeparator"));
-
   return (
-    <AccountSection
-      data-testid={`legal-source-provider-${provider.provider}`}
-      aria-labelledby={`${cardId}-title`}
-    >
+    <AccountSection data-testid="legal-source-provider-yuandian">
       <div className="px-4 py-5 sm:px-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 rounded-lg bg-gray-100 p-2 text-gray-600 dark:bg-white/10 dark:text-gray-300">
+          <div className="flex items-start gap-3">
+            <span className="rounded-lg bg-gray-100 p-2 text-gray-600 dark:bg-white/10 dark:text-gray-300">
               <Scale className="h-4 w-4" aria-hidden="true" />
             </span>
-            <div className="min-w-0">
-              <h3
-                id={`${cardId}-title`}
-                className="text-base font-medium text-gray-900 dark:text-gray-100"
-              >
-                {providerName}
+            <div>
+              <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">
+                {t("settings.legalSources.providers.yuandian")}
               </h3>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {t("settings.legalSources.providerContract")}
+                {t("settings.legalSources.providerContract")} ·{" "}
+                {profile.endpoint_set_id}
               </p>
             </div>
           </div>
-          <ConnectionBadge provider={provider} />
+          <StatusBadge status={profile.status} />
         </div>
 
-        <div className="mt-5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-            {t("settings.legalSources.readiness.title")}
-          </h4>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            <ReadinessItem
-              label={t("settings.legalSources.readiness.endpoint")}
-              ready={provider.endpointConfigured}
-            />
-            <ReadinessItem
-              label={t("settings.legalSources.readiness.allowlist")}
-              ready={provider.allowlisted}
-            />
-            <ReadinessItem
-              label={t("settings.legalSources.readiness.credentialReference")}
-              ready={provider.credentialReferenceConfigured}
-            />
-            <ReadinessItem
-              label={t("settings.legalSources.readiness.encryption")}
-              ready={provider.encryptionEnabled}
-            />
-          </ul>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {profile.capabilities.map(({ capability, enabled }) => (
+            <div
+              key={capability}
+              className="rounded-lg border border-black/5 px-3 py-2 dark:border-white/10"
+            >
+              <p className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {t(CAPABILITY_KEYS[capability])}
+              </p>
+              <p
+                className={`mt-1 text-xs ${enabled ? "text-emerald-700 dark:text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}
+              >
+                {t(
+                  enabled
+                    ? "settings.legalSources.capabilities.enabled"
+                    : "settings.legalSources.capabilities.disabled",
+                )}
+              </p>
+            </div>
+          ))}
         </div>
 
-        <div className="mt-5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-            {t("settings.legalSources.capabilities.title")}
-          </h4>
-          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            {t("settings.legalSources.capabilities.description")}
-          </p>
-          <dl className="mt-3 grid gap-x-5 gap-y-3 sm:grid-cols-2">
-            <PolicyItem
-              label={t("settings.legalSources.capabilities.retrieval")}
-              value={t(
-                provider.capabilities.fetchFullText
-                  ? "settings.legalSources.capabilities.fullText"
-                  : "settings.legalSources.capabilities.searchOnly",
-              )}
-            />
-            <PolicyItem
-              label={t("settings.legalSources.capabilities.documentKinds")}
-              value={documentKinds}
-            />
-          </dl>
-        </div>
-      </div>
-
-      <Divider />
-
-      <div className="px-4 py-5 sm:px-5">
-        <div className="flex items-center gap-2">
-          <Database
-            className="h-4 w-4 text-gray-500 dark:text-gray-400"
-            aria-hidden="true"
-          />
+        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
           <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
             {t("settings.legalSources.policy.title")}
           </h4>
-        </div>
-        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-          {t("settings.legalSources.policy.description")}
-        </p>
-        <dl className="mt-3 grid gap-x-5 gap-y-3 sm:grid-cols-2">
-          <PolicyItem
-            label={t("settings.legalSources.policy.basis")}
-            value={t(DATA_USE_VALUE_KEYS[provider.dataUsePolicy.basis])}
-          />
-          <PolicyItem
-            label={t("settings.legalSources.policy.retention")}
-            value={t(DATA_USE_VALUE_KEYS[provider.dataUsePolicy.retention])}
-          />
-          <PolicyItem
-            label={t("settings.legalSources.policy.export")}
-            value={t(DATA_USE_VALUE_KEYS[provider.dataUsePolicy.export])}
-          />
-          <PolicyItem
-            label={t("settings.legalSources.policy.modelUse")}
-            value={t(DATA_USE_VALUE_KEYS[provider.dataUsePolicy.modelUse])}
-          />
-        </dl>
-        {hasUndeclaredPolicy && (
-          <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+          <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">
+            {t("settings.legalSources.policy.description")}
+          </p>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <dt className="text-xs text-gray-500 dark:text-gray-400">
+                {t("settings.legalSources.policy.retention")}
+              </dt>
+              <dd className="mt-1 text-xs font-medium text-gray-900 dark:text-gray-100">
+                {t("settings.legalSources.policy.values.notDeclared")}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500 dark:text-gray-400">
+                {t("settings.legalSources.policy.localProcessing")}
+              </dt>
+              <dd className="mt-1 text-xs font-medium text-gray-900 dark:text-gray-100">
+                {profile.usage_policy.local_processing === "transient_only"
+                  ? t("settings.legalSources.policy.values.transientOnly")
+                  : t("settings.legalSources.policy.values.notDeclared")}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500 dark:text-gray-400">
+                {t("settings.legalSources.policy.modelUse")}
+              </dt>
+              <dd className="mt-1 text-xs font-medium text-gray-900 dark:text-gray-100">
+                {profile.usage_policy.model_use ===
+                "prohibited_pending_authorization"
+                  ? t("settings.legalSources.policy.values.prohibited")
+                  : t("settings.legalSources.policy.values.notDeclared")}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500 dark:text-gray-400">
+                {t("settings.legalSources.policy.export")}
+              </dt>
+              <dd className="mt-1 text-xs font-medium text-gray-900 dark:text-gray-100">
+                {profile.usage_policy.export ===
+                "prohibited_pending_authorization"
+                  ? t("settings.legalSources.policy.values.prohibited")
+                  : t("settings.legalSources.policy.values.notDeclared")}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs leading-5 text-amber-800 dark:text-amber-300">
             {t("settings.legalSources.policy.notDeclaredWarning")}
           </p>
-        )}
-        {provider.dataUsePolicy.retention === "full_text_ttl" && (
-          <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
-            {t("settings.legalSources.policy.ttlDeclarationWarning")}
-          </p>
-        )}
+        </div>
       </div>
 
       <Divider />
 
       <div className="px-4 py-5 sm:px-5">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              {t("settings.legalSources.connection.title")}
+            </h4>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {profile.connection_test === null
+                ? t("settings.legalSources.connection.untested")
+                : profile.connection_test.status === "passed"
+                  ? t("settings.legalSources.connection.passed")
+                  : t("settings.legalSources.connection.failed")}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy || !profile.credential_configured}
+            onClick={onTest}
+            className={`${accountGlassButtonClassName} inline-flex h-9 items-center gap-1.5`}
+          >
+            {currentOperation === "test" ? (
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                aria-hidden="true"
+              />
+            ) : (
+              <Wifi className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {t("settings.legalSources.connection.test")}
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-black/5 p-3 sm:flex-row sm:items-center sm:justify-between dark:border-white/10">
+          <div>
+            <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+              {t(
+                profile.enabled
+                  ? "settings.legalSources.activation.enabled"
+                  : "settings.legalSources.activation.disabled",
+              )}
+            </p>
+            {profile.status === "activation_gate_closed" && (
+              <p className="mt-1 max-w-xl text-xs leading-5 text-amber-700 dark:text-amber-300">
+                {t("settings.legalSources.activation.gateClosed")}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            disabled={profile.enabled ? busy : enableDisabled}
+            onClick={profile.enabled ? onDisable : onEnable}
+            className={`${profile.enabled ? accountGlassDangerButtonClassName : accountGlassPrimaryButtonClassName} inline-flex h-9 items-center gap-1.5`}
+          >
+            {currentOperation === "enable" || currentOperation === "disable" ? (
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                aria-hidden="true"
+              />
+            ) : profile.enabled ? (
+              <Unplug className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Wifi className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {t(
+              profile.enabled
+                ? "settings.legalSources.activation.disable"
+                : "settings.legalSources.activation.enable",
+            )}
+          </button>
+        </div>
+      </div>
+
+      <Divider />
+
+      <div className="px-4 py-5 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
               {t("settings.legalSources.credential.title")}
             </h4>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {provider.hasSecret
-                ? t("settings.legalSources.credential.configured")
-                : t("settings.legalSources.credential.missing")}
+              {t(
+                profile.credential_configured
+                  ? "settings.legalSources.credential.configured"
+                  : "settings.legalSources.credential.missing",
+              )}
             </p>
           </div>
-          <span className="mt-2 inline-flex w-fit items-center gap-1.5 text-xs text-gray-500 sm:mt-0 dark:text-gray-400">
+          <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
             <LockKeyhole className="h-3.5 w-3.5" aria-hidden="true" />
             {t("settings.legalSources.credential.localOnly")}
           </span>
         </div>
 
         <form
-          onSubmit={(event) => void submit(event)}
+          onSubmit={submit}
           className="mt-4 space-y-3"
           aria-label={t("settings.legalSources.credential.formLabel", {
-            provider: providerName,
+            provider: t("settings.legalSources.providers.yuandian"),
           })}
         >
           <label
@@ -630,7 +648,7 @@ function ProviderCard({
           >
             {t("settings.legalSources.credential.inputLabel")}
           </label>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative min-w-0 flex-1">
               <KeyRound
                 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400"
@@ -644,60 +662,39 @@ function ProviderCard({
                 autoCapitalize="none"
                 spellCheck={false}
                 maxLength={VERA_LEGAL_SOURCE_CREDENTIAL_MAX_CHARACTERS}
-                disabled={saveDisabled}
-                aria-describedby={`${inputId}-description ${inputId}-gate`}
+                disabled={busy}
                 className={`${accountGlassInputClassName} h-9 w-full pl-9 text-sm`}
                 placeholder={t("settings.legalSources.credential.placeholder")}
               />
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="submit"
-                disabled={saveDisabled}
-                aria-busy={currentOperation === "save"}
-                className={`${accountGlassPrimaryButtonClassName} inline-flex h-9 items-center gap-1.5 text-sm font-medium`}
-              >
-                {currentOperation === "save" && (
-                  <Loader2
-                    className="h-3.5 w-3.5 animate-spin"
-                    aria-hidden="true"
-                  />
-                )}
-                {currentOperation === "save"
-                  ? t("common.status.saving")
-                  : provider.hasSecret
-                    ? t("settings.legalSources.credential.replace")
-                    : t("settings.legalSources.credential.store")}
-              </button>
-              <button
-                type="button"
-                disabled={removeDisabled || currentOperation === "remove"}
-                onClick={onRemove}
-                className={`${accountGlassDangerButtonClassName} inline-flex h-9 items-center text-sm font-medium`}
-              >
-                {t("settings.legalSources.credential.remove")}
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className={`${accountGlassPrimaryButtonClassName} inline-flex h-9 items-center gap-1.5`}
+            >
+              {currentOperation === "save" && (
+                <Loader2
+                  className="h-3.5 w-3.5 animate-spin"
+                  aria-hidden="true"
+                />
+              )}
+              {t(
+                profile.credential_configured
+                  ? "settings.legalSources.credential.replace"
+                  : "settings.legalSources.credential.store",
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !profile.credential_configured}
+              onClick={onRemove}
+              className={`${accountGlassDangerButtonClassName} h-9`}
+            >
+              {t("settings.legalSources.credential.remove")}
+            </button>
           </div>
-          <p
-            id={`${inputId}-description`}
-            className="text-xs leading-5 text-gray-500 dark:text-gray-400"
-          >
+          <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
             {t("settings.legalSources.credential.description")}
-          </p>
-          <p
-            id={`${inputId}-gate`}
-            className={`text-xs leading-5 ${
-              credentialReady
-                ? "text-gray-500 dark:text-gray-400"
-                : "text-amber-700 dark:text-amber-300"
-            }`}
-          >
-            {credentialReady
-              ? t("settings.legalSources.credential.actionsReady")
-              : !provider.deploymentReady
-                ? t("settings.legalSources.credential.deploymentDisabled")
-                : t("settings.legalSources.credential.encryptionDisabled")}
           </p>
         </form>
 
@@ -711,12 +708,8 @@ function ProviderCard({
         )}
         {feedback && (
           <p
-            role={feedback.endsWith("refresh_failed") ? "alert" : "status"}
-            className={`mt-3 text-xs ${
-              feedback.endsWith("refresh_failed")
-                ? "text-amber-700 dark:text-amber-300"
-                : "text-emerald-700 dark:text-emerald-400"
-            }`}
+            role="status"
+            className="mt-3 text-xs text-emerald-700 dark:text-emerald-400"
           >
             {t(FEEDBACK_KEYS[feedback])}
           </p>
@@ -726,105 +719,49 @@ function ProviderCard({
   );
 }
 
-function ConnectionBadge({ provider }: { provider: VeraLegalSourceProvider }) {
+function StatusBadge({ status }: { status: VeraLegalSourceStatus }) {
   const { t } = useI18n();
-  const connection = provider.connectionStatus;
-  const configured = connection.state === "configured_unverified";
-  const detail =
-    connection.state === "configured_unverified"
-      ? t("settings.legalSources.status.configuredUnverifiedBody")
-      : t(UNAVAILABLE_REASON_KEYS[connection.reason]);
+  const ready = status === "ready";
+  const caution =
+    status === "configured_unverified" || status === "activation_gate_closed";
   return (
-    <div className="max-w-sm sm:text-right">
-      <span
-        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
-          configured
-            ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-            : "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-        }`}
-      >
-        {configured
-          ? t("settings.legalSources.status.configuredUnverified")
-          : t("settings.legalSources.status.unavailable")}
-      </span>
-      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-        {detail}
-      </p>
-    </div>
-  );
-}
-
-function ReadinessItem({ label, ready }: { label: string; ready: boolean }) {
-  const { t } = useI18n();
-  const status = ready
-    ? t("settings.legalSources.readiness.ready")
-    : t("settings.legalSources.readiness.notReady");
-  return (
-    <li
-      aria-label={`${label}: ${status}`}
-      className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/5"
+    <span
+      className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${ready ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : caution ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" : "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"}`}
     >
-      <span className="min-w-0 text-gray-600 dark:text-gray-300">{label}</span>
-      <span
-        className={`inline-flex shrink-0 items-center gap-1 font-medium ${
-          ready
-            ? "text-emerald-700 dark:text-emerald-400"
-            : "text-red-600 dark:text-red-400"
-        }`}
-      >
-        {ready ? (
-          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-        ) : (
-          <CircleX className="h-3.5 w-3.5" aria-hidden="true" />
-        )}
-        {status}
-      </span>
-    </li>
-  );
-}
-
-function PolicyItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-gray-400">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-medium text-gray-700 dark:text-gray-200">
-        {value}
-      </dd>
-    </div>
+      {t(STATUS_KEYS[status])}
+    </span>
   );
 }
 
 function Divider() {
-  return <div className="mx-4 h-px bg-gray-200 dark:bg-white/10" />;
+  return <div className="h-px bg-black/5 dark:bg-white/10" />;
 }
 
 function PageState({
-  role = "status",
   icon,
   title,
   body,
   action,
+  role,
 }: {
-  role?: "status" | "alert";
   icon: React.ReactNode;
   title: string;
   body: string;
   action?: React.ReactNode;
+  role?: "alert";
 }) {
   return (
-    <AccountSection className="p-5" role={role}>
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 text-gray-500">{icon}</span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            {title}
-          </p>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {body}
-          </p>
-          {action && <div className="mt-3">{action}</div>}
-        </div>
-      </div>
+    <AccountSection className="p-8 text-center" role={role}>
+      <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300">
+        {icon}
+      </span>
+      <h2 className="mt-3 text-base font-medium text-gray-900 dark:text-gray-100">
+        {title}
+      </h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">
+        {body}
+      </p>
+      {action && <div className="mt-4">{action}</div>}
     </AccountSection>
   );
 }

@@ -142,10 +142,14 @@ existing `AbortSignal` unchanged.
 
 ### Slice C — active Legal Provider Hub and research tools
 
-Planned active files are under `backend/src/lib/workspace`, an authenticated
-`/api/v1` router, and the existing Settings route. Exact vendor endpoints and
-wire fields will be implemented only from official material and authorized
-acceptance data. A deterministic fake provider is registered only in tests.
+Implemented as Workspace schema v18, a fixed-endpoint YuanDian MCP adapter,
+Keychain-only credentials, an authenticated `/api/v1/legal-providers` surface,
+truthful eight-state projection, Settings controls, and deterministic service,
+route, adapter, and live-acceptance audits. The live technical PoC can search
+and read bounded sources, but remains transient and `activation_gate_closed`.
+It is not injected into the default production Assistant until retention,
+export, model-use, and durable-citation requirements are satisfied. Fakes remain
+test-only.
 
 ### Slice D — Draft and Workflow tools
 
@@ -162,10 +166,12 @@ card, Matter-safe routes, UI states, and packaged restart E2E.
 
 The Tool Registry needs **no migration**.
 
-If later slices require durable legal research sessions/candidates,
-Assistant-to-Draft links, or user-copyable templates, the next migration is
-v18 and is additive, transactional, checksum-recorded, and Project-owned. It
-may add only demonstrated owners such as:
+Schema v18 is now published and adds only active Legal Provider configuration,
+capabilities, connection tests, and credential-cleanup intent. It deliberately
+does not persist technical-PoC source content. If later slices require durable
+legal research sessions/candidates, Assistant-to-Draft links, or user-copyable
+templates, the next migration must be v19 and may add only demonstrated owners
+such as:
 
 ```text
 legal_research_sessions
@@ -175,7 +181,7 @@ assistant_artifact_links
 legal_document_templates
 ```
 
-Before v18 lands, the design must prove that existing source snapshots,
+Before v19 lands, the design must prove that existing source snapshots,
 anchors, documents, versions, suggestions, chats, jobs, workflows, profiles,
 and policies cannot own the required state. Published v1-v17 migrations remain
 immutable. Fresh, v14, v17, SQLCipher, backup/restore, and injected rollback

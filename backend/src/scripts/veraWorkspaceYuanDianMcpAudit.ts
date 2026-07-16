@@ -626,6 +626,23 @@ async function assertManualRedirectAndExactTransport() {
   });
   await assert.rejects(redirecting(endpoint), /redirects are prohibited/i);
 
+  for (const [status, code] of [
+    [401, "authentication_failed"],
+    [403, "license_restricted"],
+  ] as const) {
+    const denied = createGuardedYuanDianMcpFetch({
+      endpoint,
+      authorizationHeader: `Bearer ${TOKEN}`,
+      maxResponseBytes: 100,
+      fetch: (async () => new Response(null, { status })) as typeof fetch,
+    });
+    await assert.rejects(
+      denied(endpoint),
+      (error: unknown) =>
+        error instanceof YuanDianMcpAdapterError && error.code === code,
+    );
+  }
+
   const declaredTooLarge = createGuardedYuanDianMcpFetch({
     endpoint,
     authorizationHeader: `Bearer ${TOKEN}`,

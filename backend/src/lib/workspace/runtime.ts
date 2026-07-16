@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import type { WorkspaceChatsV1Port } from "../../routes/workspaceChatsV1";
+import type { WorkspaceLegalProviderHubV1Port } from "../../routes/workspaceLegalProvidersV1";
 import type {
   WorkspaceDocumentStudioCreateInput,
   WorkspaceDocumentStudioExportResult,
@@ -65,6 +66,7 @@ import { WorkspaceBlobRecordsRepository } from "./repositories/blobRecords";
 import { WorkspaceDocumentStudioRepository } from "./repositories/documentStudio";
 import { WorkspaceSourceFoundationRepository } from "./repositories/sourceFoundation";
 import { WorkspaceSourceRetentionLifecycleRepository } from "./repositories/sourceRetentionLifecycle";
+import { WorkspaceLegalProvidersRepository } from "./repositories/legalProviders";
 import { AssistantRetrievalRepository } from "./repositories/assistantRetrieval";
 import { ChatsRepository } from "./repositories/chats";
 import {
@@ -129,6 +131,12 @@ import { WorkspaceJobEnqueuerAdapter } from "./services/jobEnqueuer";
 import { CanonicalProjectInferenceScopeResolver } from "./services/projectInferenceScope";
 import { ProjectsService } from "./services/projects";
 import type { CredentialStorePort } from "./services/credentialStore";
+import type { LegalProviderCredentialStorePort } from "./services/legalProviderCredentialStore";
+import {
+  MAX_ORPHAN_CLEANUPS_PER_RUN,
+  WorkspaceLegalProviderHubService,
+} from "./services/legalProviderHub";
+import { WorkspaceLegalProviderHubV1Adapter } from "./services/legalProviderHubV1Adapter";
 import { ModelProfilesService } from "./services/modelProfiles";
 import { SettingsService } from "./services/settings";
 import { AuthoritativeExtractedTextReader } from "./services/authoritativeExtractedText";
@@ -256,6 +264,7 @@ export type WorkspaceRuntimeDependencies = {
   workflowCrud?: MikeWorkflowCrudPortAdapter;
   seedWorkflows?: (workflows: WorkflowsService) => readonly unknown[];
   credentialStore?: CredentialStorePort;
+  legalProviderCredentialStore?: LegalProviderCredentialStorePort;
   modelProviderRegistry?: WorkspaceModelProviderRegistry;
   modelSettings?: WorkspaceModelSettingsRuntime;
   matterProfiles?: MatterProfileModule;
@@ -425,6 +434,7 @@ export class WorkspaceRuntime
   readonly workflows: WorkflowsService;
   readonly workflowCrud: MikeWorkflowCrudPortAdapter;
   readonly modelSettings: WorkspaceModelSettingsRuntime;
+  readonly legalProviderHub: WorkspaceLegalProviderHubV1Port;
   readonly chats: WorkspaceChatsV1Port;
   readonly tabular: WorkspaceTabularV1RuntimePort;
   readonly matterProfiles: MatterProfileModule;
@@ -436,9 +446,11 @@ export class WorkspaceRuntime
   private readonly projectSourcesService: WorkspaceProjectSourcesService;
   private readonly sourceRetentionService: WorkspaceSourceRetentionService;
   private readonly chatsService: ChatsService;
+  private readonly legalProviderHubService: WorkspaceLegalProviderHubService;
   private readonly blobRecords: WorkspaceBlobRecordsRepository;
   private readonly startMigrations: () => void;
   private readonly startSourceRetention: () => void;
+  private readonly startLegalProviderCleanup: () => Promise<void>;
   private readonly startupRecovery: Pick<
     WorkspaceBlobStartupRecovery,
     "recover"
@@ -538,9 +550,8 @@ export class WorkspaceRuntime
     };
     const projectsRepository =
       dependencies.projectRepository ?? new ProjectsRepository(this.database);
-    let providerRegistryForMatterCapabilities:
-      | WorkspaceModelProviderRegistry
-      | null = null;
+    let providerRegistryForMatterCapabilities: WorkspaceModelProviderRegistry | null =
+      null;
     this.matterProfiles =
       dependencies.matterProfiles ??
       createMatterProfileModule(this.database, projectsRepository, {
@@ -561,6 +572,52 @@ export class WorkspaceRuntime
         resources: lifecycle,
         cleanupRecorder: projectCleanupRecorder,
       });
+    const unavailableLegalProviderCredentialStore: LegalProviderCredentialStorePort =
+      {
+        isAvailable: () => false,
+        storeLegalProviderCredential: async () => {
+          throw new WorkspaceApiError(
+            503,
+            "PRECONDITION_FAILED",
+            "Legal provider credential store is unavailable.",
+          );
+        },
+        resolveLegalProviderCredential: async () => {
+          throw new WorkspaceApiError(
+            503,
+            "PRECONDITION_FAILED",
+            "Legal provider credential store is unavailable.",
+          );
+        },
+        deleteLegalProviderCredential: async () => {
+          throw new WorkspaceApiError(
+            503,
+            "PRECONDITION_FAILED",
+            "Legal provider credential store is unavailable.",
+          );
+        },
+      };
+    const legalProviderCredentialStore =
+      dependencies.legalProviderCredentialStore ??
+      unavailableLegalProviderCredentialStore;
+    this.legalProviderHubService = new WorkspaceLegalProviderHubService(
+      new WorkspaceLegalProvidersRepository(this.database),
+      legalProviderCredentialStore,
+    );
+    this.legalProviderHub = new WorkspaceLegalProviderHubV1Adapter(
+      this.legalProviderHubService,
+      this.projects,
+    );
+    this.startLegalProviderCleanup = async () => {
+      if (!legalProviderCredentialStore.isAvailable()) return;
+      for (let batch = 0; batch < 10; batch += 1) {
+        const result =
+          await this.legalProviderHubService.cleanupCredentialOrphans({
+            principalId: WORKSPACE_LOCAL_PRINCIPAL_ID,
+          });
+        if (result.attempted < MAX_ORPHAN_CLEANUPS_PER_RUN) return;
+      }
+    };
     const modelProfilesRepository = new ModelProfilesRepository(this.database);
     const providerRegistry =
       dependencies.modelProviderRegistry ??
@@ -899,6 +956,7 @@ export class WorkspaceRuntime
       this.startMigrations();
       this.startSourceRetention();
       await this.modelSettings.reconcileCredentialOrphans();
+      await this.startLegalProviderCleanup();
       this.seedWorkflows();
       this.startupRecovery.recover();
       await this.pump.start();

@@ -122,6 +122,8 @@ export type UpdateLegalProviderProfileV18Input = Readonly<{
  * licensing, activation, Matter egress, and retention are separate services.
  */
 export class WorkspaceLegalProvidersRepository {
+  private transactionDepth = 0;
+
   constructor(
     private readonly database: WorkspaceDatabaseAdapter,
     private readonly now: () => string = () => new Date().toISOString(),
@@ -344,6 +346,43 @@ export class WorkspaceLegalProvidersRepository {
         repositoryError("Legal Provider profile could not be updated.", error);
       }
       return this.requireProfile(id);
+    });
+  }
+
+  updateProfileWithCredentialOrphan(
+    input: UpdateLegalProviderProfileV18Input & {
+      credentialReference: string | null;
+      orphanReason: "credential_rotated" | "credential_reconfiguration";
+      resolveOrphanReference?: string;
+    },
+  ): {
+    profile: LegalProviderProfileV18;
+    orphan: LegalProviderCredentialOrphanCleanupV18 | null;
+  } {
+    return this.transaction(() => {
+      const current = this.requireProfile(input.id);
+      const profile = this.updateProfile(input);
+      let orphan: LegalProviderCredentialOrphanCleanupV18 | null = null;
+      if (
+        current.credentialReference === null ||
+        current.credentialReference === profile.credentialReference
+      ) {
+        if (input.resolveOrphanReference) {
+          this.resolveCredentialOrphan(input.resolveOrphanReference);
+        }
+        return { profile, orphan };
+      }
+      orphan = this.recordCredentialOrphan({
+        reference: current.credentialReference,
+        profileId: current.id,
+        provider: current.provider,
+        endpointSetId: current.endpointSetId,
+        reason: input.orphanReason,
+      });
+      if (input.resolveOrphanReference) {
+        this.resolveCredentialOrphan(input.resolveOrphanReference);
+      }
+      return { profile, orphan };
     });
   }
 
@@ -663,7 +702,9 @@ export class WorkspaceLegalProvidersRepository {
   }
 
   private transaction<T>(operation: () => T): T {
+    if (this.transactionDepth > 0) return operation();
     this.database.exec("BEGIN IMMEDIATE");
+    this.transactionDepth += 1;
     try {
       const result = operation();
       this.database.exec("COMMIT");
@@ -675,6 +716,8 @@ export class WorkspaceLegalProvidersRepository {
         // Preserve the primary failure.
       }
       throw error;
+    } finally {
+      this.transactionDepth -= 1;
     }
   }
 }

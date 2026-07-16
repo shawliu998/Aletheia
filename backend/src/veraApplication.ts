@@ -50,6 +50,10 @@ import {
   type WorkspaceModelSettingsRuntimePort,
 } from "./routes/workspaceSettingsV1";
 import {
+  createWorkspaceLegalProvidersV1Router,
+  type WorkspaceLegalProviderHubV1Port,
+} from "./routes/workspaceLegalProvidersV1";
+import {
   createWorkspaceTabularV1Router,
   type WorkspaceTabularV1RuntimePort,
 } from "./routes/workspaceTabularV1";
@@ -85,6 +89,7 @@ export interface VeraWorkspaceRuntime
     WorkspaceProjectSourcesV1Port {
   readonly workflowCrud: WorkspaceWorkflowsV1Port;
   readonly modelSettings: WorkspaceModelSettingsRuntimePort;
+  readonly legalProviderHub: WorkspaceLegalProviderHubV1Port;
   readonly chats: WorkspaceChatsV1Port;
   readonly tabular: WorkspaceTabularV1RuntimePort;
   readonly matterProfiles?: Pick<
@@ -320,7 +325,11 @@ function makeLimiter(options: {
 }
 
 /** A single local probe budget. It deliberately ignores all forwarded headers. */
-function makeModelProbeLimiter(options: { windowMs: number; max: number }) {
+function makeModelProbeLimiter(options: {
+  windowMs: number;
+  max: number;
+  message?: string;
+}) {
   let windowStartedAt = 0;
   let attempts = 0;
   return (request: Request, response: Response, next: NextFunction) => {
@@ -354,7 +363,8 @@ function makeModelProbeLimiter(options: { windowMs: number; max: number }) {
         .json(
           errorEnvelope(
             "RATE_LIMITED",
-            "Too many model connection tests. Please try again later.",
+            options.message ??
+              "Too many model connection tests. Please try again later.",
           ),
         );
       return;
@@ -439,6 +449,14 @@ export function createVeraApplication(
   const modelProbeLimiter = makeModelProbeLimiter({
     windowMs: minutes(envInt(env, "RATE_LIMIT_MODEL_PROBE_WINDOW_MINUTES", 1)),
     max: envInt(env, "RATE_LIMIT_MODEL_PROBE_MAX", 8),
+  });
+  const legalProviderProbeLimiter = makeModelProbeLimiter({
+    windowMs: minutes(
+      envInt(env, "RATE_LIMIT_LEGAL_PROVIDER_PROBE_WINDOW_MINUTES", 1),
+    ),
+    max: envInt(env, "RATE_LIMIT_LEGAL_PROVIDER_PROBE_MAX", 4),
+    message:
+      "Too many legal provider connection tests. Please try again later.",
   });
 
   app.disable("x-powered-by");
@@ -560,8 +578,14 @@ export function createVeraApplication(
   workspaceApi.use(mutationGuard);
   workspaceApi.use(applyWorkspaceUploadLimit);
   workspaceApi.use("/model-profiles/:id/test", modelProbeLimiter);
+  workspaceApi.use("/legal-providers/:id/test", legalProviderProbeLimiter);
   workspaceApi.use(
     createWorkspaceSettingsV1Router({ runtime: options.runtime.modelSettings }),
+  );
+  workspaceApi.use(
+    createWorkspaceLegalProvidersV1Router({
+      hub: options.runtime.legalProviderHub,
+    }),
   );
   workspaceApi.use(
     createWorkspaceChatsV1Router(options.runtime.chats, {

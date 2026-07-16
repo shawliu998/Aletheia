@@ -263,6 +263,32 @@ function fakeRuntime(
         },
       },
     ),
+    legalProviderHub: {
+      async listProviders() {
+        return [];
+      },
+      async createOrGetYuanDian() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async putCredential() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async deleteCredential() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async testProvider() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async enableProvider() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async disableProvider() {
+        throw new Error("Unexpected fake legal provider mutation");
+      },
+      async getProjectLegalResearchStatus() {
+        throw new Error("Unexpected fake legal provider status read");
+      },
+    },
     workflowCrud: fakeWorkflowCrud(),
     ...(options.matterProfiles
       ? { matterProfiles: options.matterProfiles }
@@ -471,6 +497,16 @@ async function auditApplicationSurface(): Promise<void> {
       projects.headers.get("access-control-allow-origin"),
       "http://127.0.0.1:3000",
     );
+
+    const legalProviders = await fetch(`${baseUrl}/api/v1/legal-providers`, {
+      headers: { origin: "http://127.0.0.1:3000" },
+    });
+    assert.equal(legalProviders.status, 200);
+    assertWorkspaceNoStore(legalProviders);
+    assert.deepEqual(await legalProviders.json(), {
+      schema_version: "vera-workspace-legal-provider-hub-v1",
+      providers: [],
+    });
 
     const health = await fetch(`${baseUrl}/health`);
     assert.equal(health.status, 200);
