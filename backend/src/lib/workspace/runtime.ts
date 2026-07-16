@@ -176,6 +176,9 @@ import {
   WorkspaceAssistantDocumentToolModule,
   WorkspaceAssistantToolRegistry,
 } from "./services/assistantToolRegistry";
+import { WorkspaceAssistantDraftToolModule } from "./services/assistantDraftTools";
+import { WorkspaceAssistantWorkflowToolModule } from "./services/assistantWorkflowTools";
+import { WorkspaceAssistantActionLedger } from "./services/assistantActionLedger";
 import { WorkspaceChatsRuntimePort } from "./services/assistantChatsPort";
 import { ChatsService } from "./services/chats";
 import {
@@ -741,8 +744,23 @@ export class WorkspaceRuntime
             assertModelUse: assertDocumentModelUse,
           },
         );
+        const assistantActions = new WorkspaceAssistantActionLedger(
+          this.database,
+        );
         return new WorkspaceAssistantToolRegistry([
           new WorkspaceAssistantDocumentToolModule(documentTools),
+          new WorkspaceAssistantDraftToolModule(
+            this.database,
+            chatsRepository,
+            this.documentStudioService,
+            (projectId, content, sources) =>
+              this.studioCitationAnchorIds(projectId, content, sources),
+            assistantActions,
+          ),
+          new WorkspaceAssistantWorkflowToolModule(
+            this.workflows,
+            assistantActions,
+          ),
           ...(dependencies.assistantToolModules ?? []),
         ]);
       })();

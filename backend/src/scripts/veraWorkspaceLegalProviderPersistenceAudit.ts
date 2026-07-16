@@ -69,13 +69,13 @@ try {
   );
   assert.deepEqual(
     WORKSPACE_MIGRATIONS.map((migration) => migration.version),
-    Array.from({ length: 18 }, (_, index) => index + 1),
+    Array.from({ length: 19 }, (_, index) => index + 1),
   );
 
   const databasePath = path.join(root, "provider-hub.db");
   const database = new WorkspaceDatabase(databasePath);
   try {
-    assert.equal(database.migration?.currentVersion, 18);
+    assert.equal(database.migration?.currentVersion, 19);
     for (const table of [
       "legal_provider_profiles",
       "legal_provider_capabilities",
@@ -404,7 +404,7 @@ try {
 
   const upgradePath = path.join(root, "v17-upgrade.db");
   const v17 = new WorkspaceDatabase(upgradePath, {
-    migrations: WORKSPACE_MIGRATIONS.slice(0, -1),
+    migrations: WORKSPACE_MIGRATIONS.slice(0, 17),
   });
   try {
     assert.equal(v17.migration?.currentVersion, 17);
@@ -419,7 +419,7 @@ try {
   }
   const upgraded = new WorkspaceDatabase(upgradePath);
   try {
-    assert.equal(upgraded.migration?.currentVersion, 18);
+    assert.equal(upgraded.migration?.currentVersion, 19);
     assert.equal(
       upgraded
         .prepare("SELECT payload FROM v18_upgrade_probe WHERE id = 1")
@@ -438,7 +438,7 @@ try {
 
   const rollbackPath = path.join(root, "v18-rollback.db");
   const rollback = new WorkspaceDatabase(rollbackPath, {
-    migrations: WORKSPACE_MIGRATIONS.slice(0, -1),
+    migrations: WORKSPACE_MIGRATIONS.slice(0, 17),
   });
   try {
     const failingV18: WorkspaceMigration = {
@@ -452,7 +452,7 @@ try {
     assert.throws(
       () =>
         rollback.runMigrations([
-          ...WORKSPACE_MIGRATIONS.slice(0, -1),
+          ...WORKSPACE_MIGRATIONS.slice(0, 17),
           failingV18,
         ]),
       /failed and was rolled back/i,

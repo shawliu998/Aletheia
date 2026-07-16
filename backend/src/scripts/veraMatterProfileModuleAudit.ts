@@ -442,7 +442,7 @@ async function main() {
     v15.close();
 
     database = new WorkspaceDatabase(databasePath);
-    assert.equal(database.migration?.currentVersion, 18);
+    assert.equal(database.migration?.currentVersion, 19);
     const projects = new ProjectsRepository(database);
     const repository = new MatterProfileRepository(database);
     const overview = new MatterOverviewRepository(database);
@@ -1738,7 +1738,10 @@ async function main() {
     assert.equal(approvalCapabilities.workflows, "require_approval");
     assert.equal(approvalCapabilities.tabular, "require_approval");
     assert.equal(approvalCapabilities.review, "unavailable");
-    facade.api.listMatters(localContext, { profileState: "profiled", limit: 20 });
+    facade.api.listMatters(localContext, {
+      profileState: "profiled",
+      limit: 20,
+    });
     assert.equal(
       Number(
         database
@@ -1913,23 +1916,19 @@ async function main() {
       "general",
     );
 
-    const combined = service.updateMatter(
-      localContext,
-      created.project.id,
-      {
-        project: {
-          name: "Alpha Matter Renamed",
-          description: "General and Legal Profile saved atomically.",
-          cmNumber: "MAT-001-A",
-          practice: "Transactions",
-        },
-        profile: {
-          workspaceType: "transaction",
-          clientName: "Alpha Client Updated",
-          objective: "Complete an atomic combined update.",
-        },
+    const combined = service.updateMatter(localContext, created.project.id, {
+      project: {
+        name: "Alpha Matter Renamed",
+        description: "General and Legal Profile saved atomically.",
+        cmNumber: "MAT-001-A",
+        practice: "Transactions",
       },
-    );
+      profile: {
+        workspaceType: "transaction",
+        clientName: "Alpha Client Updated",
+        objective: "Complete an atomic combined update.",
+      },
+    });
     assert.equal(combined.project.name, "Alpha Matter Renamed");
     assert.equal(combined.project.cmNumber, "MAT-001-A");
     assert.equal(combined.profile?.clientName, "Alpha Client Updated");
@@ -2257,7 +2256,8 @@ async function main() {
     );
     assert.ok(
       listWire.items.every(
-        (item) => item.matter_profile === null && item.profile_state === "absent",
+        (item) =>
+          item.matter_profile === null && item.profile_state === "absent",
       ),
     );
     const profiledListResponse = await requestJson(
@@ -2402,7 +2402,9 @@ async function main() {
     assert.equal(policyRoutePatch.status, 200);
     const policyRouteWire = MatterPolicyWireSchema.parse(policyRoutePatch.body);
     assert.equal(policyRouteWire.external_egress_mode, "approval");
-    assert.deepEqual(policyRouteWire.execution_locations, ["confidential_remote"]);
+    assert.deepEqual(policyRouteWire.execution_locations, [
+      "confidential_remote",
+    ]);
     assert.equal(policyRouteWire.allow_word_bridge, true);
     const policyRouteGet = await requestJson(
       origin,
@@ -2450,19 +2452,18 @@ async function main() {
       combinedRouteWire.project.updated_at,
       combinedRouteWire.matter_profile?.updated_at,
     );
-    assert.equal(JSON.stringify(combinedRoutePatch.body).includes("matter_type"), false);
+    assert.equal(
+      JSON.stringify(combinedRoutePatch.body).includes("matter_type"),
+      false,
+    );
     assert.equal(
       (
-        await requestJson(
-          origin,
-          `/api/v1/matters/${routeMatter.project.id}`,
-          {
-            method: "PATCH",
-            body: {
-              matter_profile: { workspace_type: "research" },
-            },
+        await requestJson(origin, `/api/v1/matters/${routeMatter.project.id}`, {
+          method: "PATCH",
+          body: {
+            matter_profile: { workspace_type: "research" },
           },
-        )
+        })
       ).status,
       400,
     );

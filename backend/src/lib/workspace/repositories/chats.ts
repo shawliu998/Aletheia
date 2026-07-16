@@ -1283,12 +1283,83 @@ export class ChatsRepository {
       .map(mapAttachment);
   }
 
+  durableUiEvents(messageId: string) {
+    if (!this.hasV10AssistantEventSchema()) {
+      return [] as Extract<
+        MikeAssistantStreamEvent,
+        { type: "draft_created" }
+      >[];
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT event.event_json,chat.project_id
+           FROM assistant_generation_snapshots snapshot
+           JOIN jobs job
+             ON job.id=snapshot.job_id
+            AND job.type='assistant_generate'
+            AND job.resource_type='chat'
+            AND job.resource_id=snapshot.chat_id
+           JOIN assistant_generation_events event
+             ON event.job_id=snapshot.job_id
+            AND event.attempt=CASE
+              WHEN job.status='queued' THEN job.attempt+1
+              ELSE max(job.attempt,1)
+            END
+            AND event.event_type='draft_created'
+           JOIN chats chat
+             ON chat.id=snapshot.chat_id
+            AND chat.scope='project'
+            AND chat.project_id IS NOT NULL
+           JOIN documents document
+             ON document.id=json_extract(event.event_json,'$.draft_id')
+            AND document.project_id=chat.project_id
+            AND document.deleted_at IS NULL
+           JOIN document_versions version
+             ON version.id=json_extract(event.event_json,'$.version_id')
+            AND version.document_id=document.id
+            AND version.deleted_at IS NULL
+          WHERE snapshot.output_message_id=?
+          ORDER BY event.sequence
+          LIMIT 10`,
+      )
+      .all(messageId);
+    return rows.map((row) => {
+      if (typeof row.event_json !== "string") {
+        corrupt("Invalid persisted Assistant durable UI event JSON.");
+      }
+      let event: MikeAssistantStreamEvent;
+      try {
+        event = MikeAssistantStreamEventSchema.parse(
+          JSON.parse(row.event_json),
+        );
+        assertMikeSafePayload(event);
+      } catch {
+        corrupt("Invalid persisted Assistant durable UI event.");
+      }
+      if (event.type !== "draft_created") {
+        corrupt("Unsupported persisted Assistant durable UI event.");
+      }
+      const projectId = requiredString(
+        row.project_id,
+        "Assistant durable UI event Matter id",
+      );
+      if (
+        event.route !==
+        `/projects/${projectId}/documents/${event.draft_id}/studio`
+      ) {
+        corrupt("Invalid persisted Assistant durable UI event route.");
+      }
+      return event;
+    });
+  }
+
   detail(chatId: string) {
     const chat = this.require(chatId);
     const messages = this.messages(chatId).map((item) => ({
       ...item,
       attachments: this.attachments(item.id),
       sources: this.sources(item.id),
+      events: this.durableUiEvents(item.id),
     }));
     return { chat, messages };
   }

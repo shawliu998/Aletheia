@@ -8,14 +8,13 @@ import {
   WorkspaceLegalResearchTools,
 } from "../lib/workspace/services/legalResearchTools";
 import { WorkspaceLegalResearchProviderRegistry } from "../lib/workspace/services/legalResearchProvider";
-import {
-  createDeterministicFakeLegalResearchProvider,
-} from "../lib/workspace/services/testing/deterministicFakeLegalResearchProvider";
+import { createDeterministicFakeLegalResearchProvider } from "../lib/workspace/services/testing/deterministicFakeLegalResearchProvider";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const context = {
   jobId: "22222222-2222-4222-8222-222222222222",
   attempt: 3,
+  leaseOwner: "legal-research-tools-audit",
   chatId: "33333333-3333-4333-8333-333333333333",
   projectId: PROJECT_ID,
   modelProfileId: "44444444-4444-4444-8444-444444444444",
@@ -66,7 +65,10 @@ async function main() {
   assert.deepEqual(await module.registeredTools(context), []);
 
   currentPolicy = policy("allowed_by_policy");
-  const wrongMatterPolicy = { ...currentPolicy, projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+  const wrongMatterPolicy = {
+    ...currentPolicy,
+    projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
   currentPolicy = wrongMatterPolicy;
   assert.deepEqual(await module.registeredTools(context), []);
   currentPolicy = policy("allowed_by_policy");

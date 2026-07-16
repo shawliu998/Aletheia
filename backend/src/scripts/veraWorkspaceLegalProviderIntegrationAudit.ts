@@ -113,7 +113,7 @@ async function requestJson(
 async function main() {
   const database = new WorkspaceDatabase(":memory:");
   try {
-    assert.equal(database.migration?.currentVersion, 18);
+    assert.equal(database.migration?.currentVersion, 19);
     const credentials = new FakeCredentialStore();
     let repositoryClockOffset = 0;
     const repository = new WorkspaceLegalProvidersRepository(database, () =>

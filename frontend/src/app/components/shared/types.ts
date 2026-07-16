@@ -163,6 +163,13 @@ export type AssistantEvent =
     }
   | { type: "workflow_applied"; workflow_id: string; title: string }
   | {
+      type: "draft_created";
+      draft_id: string;
+      version_id: string;
+      title: string;
+      route: string;
+    }
+  | {
       type: "doc_edited";
       filename: string;
       document_id: string;

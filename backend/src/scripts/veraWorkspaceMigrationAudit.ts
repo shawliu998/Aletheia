@@ -29,6 +29,7 @@ import {
   MATTER_CLASSIFICATION_V16_MIGRATION,
   INFERENCE_POLICY_V17_MIGRATION,
   LEGAL_PROVIDER_HUB_V18_MIGRATION,
+  ASSISTANT_ACTION_LEDGER_V19_MIGRATION,
   type WorkspaceDatabaseAdapter,
   type WorkspaceMigration,
 } from "../lib/workspace/migrations";
@@ -68,7 +69,7 @@ const DEFAULT_V1_TO_V10 = [
   MODEL_CONNECTION_READINESS_V9_MIGRATION,
   ASSISTANT_DURABLE_EVENTS_V10_MIGRATION,
 ] as const;
-const DEFAULT_V1_TO_V18 = [
+const DEFAULT_V1_TO_V19 = [
   ...DEFAULT_V1_TO_V10,
   PROJECT_SOURCE_FOUNDATION_V11_MIGRATION,
   DOCUMENT_STUDIO_V12_MIGRATION,
@@ -78,6 +79,7 @@ const DEFAULT_V1_TO_V18 = [
   MATTER_CLASSIFICATION_V16_MIGRATION,
   INFERENCE_POLICY_V17_MIGRATION,
   LEGAL_PROVIDER_HUB_V18_MIGRATION,
+  ASSISTANT_ACTION_LEDGER_V19_MIGRATION,
 ] as const;
 const V9_PREFIX = DEFAULT_V1_TO_V10.slice(0, -1);
 
@@ -547,10 +549,10 @@ try {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
   assert.deepEqual(
     WORKSPACE_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    "the default registry is a contiguous v1-v18 chain",
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "the default registry is a contiguous v1-v19 chain",
   );
-  assert.deepEqual(WORKSPACE_MIGRATIONS, DEFAULT_V1_TO_V18);
+  assert.deepEqual(WORKSPACE_MIGRATIONS, DEFAULT_V1_TO_V19);
 
   const upgradePath = path.join(root, "upgrade.db");
   const v1Database = createUnmigratedDatabase("upgrade.db");
@@ -1423,11 +1425,11 @@ try {
 
     const upgraded = new WorkspaceDatabase(databasePath);
     try {
-      assert.equal(upgraded.migration?.currentVersion, 18);
+      assert.equal(upgraded.migration?.currentVersion, 19);
       assert.deepEqual(
         upgraded.migration?.applied.map((record) => record.version),
         Array.from(
-          { length: 18 - prefixVersion },
+          { length: 19 - prefixVersion },
           (_, index) => prefixVersion + index + 1,
         ),
       );
@@ -1490,9 +1492,9 @@ try {
         fts5: true,
         sqlcipherEncrypted: false,
       });
-      assertMigrationRecords(upgraded, DEFAULT_V1_TO_V18);
+      assertMigrationRecords(upgraded, DEFAULT_V1_TO_V19);
       const rerun = upgraded.runMigrations();
-      assert.equal(rerun.currentVersion, 18);
+      assert.equal(rerun.currentVersion, 19);
       assert.deepEqual(rerun.applied, []);
       if (prefixVersion === 6) {
         const driftedV8: WorkspaceMigration = {
@@ -1515,16 +1517,16 @@ try {
             ]),
           /checksum drift/i,
         );
-        assertMigrationRecords(upgraded, DEFAULT_V1_TO_V18);
+        assertMigrationRecords(upgraded, DEFAULT_V1_TO_V19);
       }
     } finally {
       upgraded.close();
     }
     const reopened = new WorkspaceDatabase(databasePath);
     try {
-      assert.equal(reopened.migration?.currentVersion, 18);
+      assert.equal(reopened.migration?.currentVersion, 19);
       assert.deepEqual(reopened.migration?.applied, []);
-      assertMigrationRecords(reopened, DEFAULT_V1_TO_V18);
+      assertMigrationRecords(reopened, DEFAULT_V1_TO_V19);
       assert.equal(
         reopened
           .prepare("SELECT payload FROM aletheia_phase1_sentinel WHERE id = 1")
@@ -1539,10 +1541,10 @@ try {
   const newInstall = createUnmigratedDatabase("new-install.db");
   try {
     const migration = runWorkspaceMigrations(newInstall, WORKSPACE_MIGRATIONS);
-    assert.equal(migration.currentVersion, 18);
+    assert.equal(migration.currentVersion, 19);
     assert.deepEqual(
       migration.applied.map((record) => record.version),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     );
     assert.ok(schemaNames(newInstall, "table").has("workspace_blob_records"));
     assert.ok(
@@ -1635,7 +1637,7 @@ try {
       0,
       "v18 never seeds a provider profile or local credential metadata",
     );
-    assertMigrationRecords(newInstall, DEFAULT_V1_TO_V18);
+    assertMigrationRecords(newInstall, DEFAULT_V1_TO_V19);
   } finally {
     newInstall.close();
   }
@@ -1856,7 +1858,7 @@ try {
   );
   const encryptedGateUpgrade = new WorkspaceDatabase(plaintextGatePath);
   try {
-    assert.equal(encryptedGateUpgrade.migration?.currentVersion, 18);
+    assert.equal(encryptedGateUpgrade.migration?.currentVersion, 19);
     assert.equal(
       encryptedGateUpgrade.migration?.capabilities.sqlcipherEncrypted,
       true,
@@ -1888,7 +1890,7 @@ try {
         .get()?.payload,
       "legacy-data-must-survive",
     );
-    assertMigrationRecords(encryptedGateUpgrade, DEFAULT_V1_TO_V18);
+    assertMigrationRecords(encryptedGateUpgrade, DEFAULT_V1_TO_V19);
   } finally {
     encryptedGateUpgrade.close();
   }
@@ -1936,12 +1938,12 @@ try {
       encryptedDatabase.migration?.capabilities.sqlcipherEncrypted,
       true,
     );
-    assert.equal(encryptedDatabase.migration?.currentVersion, 18);
+    assert.equal(encryptedDatabase.migration?.currentVersion, 19);
     assert.equal(
       encryptedDatabase
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      18,
+      19,
     );
   } finally {
     encryptedDatabase.close();
@@ -1968,12 +1970,12 @@ try {
       true,
       "the wrapper-owned migration entrypoint preserves exact SQLCipher attestation",
     );
-    assert.equal(encryptedManualRun.currentVersion, 18);
+    assert.equal(encryptedManualRun.currentVersion, 19);
     assert.equal(
       encryptedManualDatabase
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      18,
+      19,
     );
   } finally {
     encryptedManualDatabase.close();
@@ -1987,13 +1989,13 @@ try {
     JSON.stringify(
       {
         ok: true,
-        suite: "vera-workspace-migration-audit-v18",
-        current_version: 18,
+        suite: "vera-workspace-migration-audit-v19",
+        current_version: 19,
         encrypted_driver: encryptedStatus!.encrypted,
         checks: [
           "legacy opaque and incomplete-matrix fixtures remain explicit v1-v6",
-          "runtime-valid v1, v2, v3, and v6 prefixes upgrade through default v18",
-          "clean default v18 install",
+          "runtime-valid v1, v2, v3, and v6 prefixes upgrade through default v19",
+          "clean default v19 install",
           "v9 connection readiness schema applies on SQLite and SQLCipher",
           "v10 immutable Assistant durable event outbox applies on SQLite and SQLCipher",
           "v11 immutable Project source snapshots and citation anchors",
@@ -2004,6 +2006,7 @@ try {
           "v16 explicit Matter workspace classification and jurisdiction without legacy backfill",
           "v17 explicit model privacy declarations and secret-free inference decision ledger",
           "v18 additive Active Legal Provider Hub persistence without seeds, URLs, or secrets",
+          "v19 lossless Assistant event expansion and durable bounded action ledger",
           "ordered SHA-256 checksums and idempotent rerun",
           "failed migration DDL and record roll back atomically",
           "legacy Aletheia sentinel table and row preserved",
@@ -2021,7 +2024,7 @@ try {
           "cross-project, ownership, cycle, type, and cell triggers",
           "SQLite and SQLCipher integrity checks",
           "plaintext destructive migration fails byte-exact before SQLCipher",
-          "offline SQLCipher migration enables trusted default v7-v18 upgrade",
+          "offline SQLCipher migration enables trusted default v7-v19 upgrade",
           "encrypted v6 missing matrix fails transactionally before v7 markers",
           "encrypted v6 opaque tabular IDs fail the frozen validator transactionally",
         ],

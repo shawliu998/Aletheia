@@ -298,7 +298,7 @@ async function run() {
   try {
     process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
     database = new WorkspaceDatabase(databasePath);
-    assert.equal(database.migration?.currentVersion, 18);
+    assert.equal(database.migration?.currentVersion, 19);
     const projects = new ProjectsRepository(database);
     for (const [id, name] of [
       [PROJECT_ID, "Suggestion Project"],
@@ -431,6 +431,7 @@ async function run() {
     const toolContext = {
       jobId: snapshot.jobId,
       attempt: initialClaimed.attempt,
+      leaseOwner: "suggestion-audit-initial",
       chatId: snapshot.chatId,
       projectId: snapshot.payload.projectId,
       modelProfileId: snapshot.modelProfileId,
@@ -716,6 +717,7 @@ async function run() {
       const context = {
         jobId: runSnapshot.jobId,
         attempt: claimed.attempt,
+        leaseOwner: input.leaseOwner,
         chatId: runSnapshot.chatId,
         projectId: runSnapshot.payload.projectId,
         modelProfileId: runSnapshot.modelProfileId,
@@ -875,6 +877,7 @@ async function run() {
     const retryContext = {
       ...failedRun.context,
       attempt: retryClaimed.attempt,
+      leaseOwner: "suggestion-audit-retry-2",
     };
     await failedRun.tools.registeredTools(retryContext);
     await failedRun.tools.execute({
@@ -1012,6 +1015,7 @@ async function run() {
     const recoveredContext = {
       ...recoveredRun.context,
       attempt: recoveredClaimed.attempt,
+      leaseOwner: "suggestion-audit-recovery-2",
     };
     await recoveredRun.tools.registeredTools(recoveredContext);
     await recoveredRun.tools.execute({

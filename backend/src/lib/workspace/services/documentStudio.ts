@@ -93,6 +93,7 @@ export type DocumentStudioCreatePersistenceInput = {
   contentSha256: string;
   storageKey: string;
   source: DocumentStudioSaveSource;
+  operationId?: string | null;
   citationAnchorIds: string[];
   blobRecord: DocumentStudioStoredBlobInput;
 };
@@ -222,6 +223,13 @@ export type CreateDocumentStudioDraftInput = {
   content?: string;
   source?: DocumentStudioSaveSource;
   citationAnchorIds?: readonly string[];
+  /** Trusted backend-only identity used to make an Agent action replay-safe. */
+  writeIdentity?: Readonly<{
+    documentId: string;
+    versionId: string;
+    jobId: string;
+    operationId: string;
+  }>;
 };
 
 export type SaveDocumentStudioDocumentInput = {
@@ -600,6 +608,32 @@ export class WorkspaceDocumentStudioService {
     const content = input.content ?? "";
     const source = input.source ?? "user_upload";
     const citationAnchorIds = normalizeCitationIds(input.citationAnchorIds);
+    const writeIdentity = input.writeIdentity
+      ? {
+          documentId: assertUuid(
+            input.writeIdentity.documentId,
+            "Generated document",
+          ),
+          versionId: assertUuid(
+            input.writeIdentity.versionId,
+            "Generated document version",
+          ),
+          jobId: assertUuid(input.writeIdentity.jobId, "Generated parse job"),
+          operationId: input.writeIdentity.operationId.trim(),
+        }
+      : null;
+    if (
+      writeIdentity &&
+      (writeIdentity.operationId.length < 1 ||
+        writeIdentity.operationId.length > 120 ||
+        writeIdentity.operationId.includes("\0"))
+    ) {
+      throw new WorkspaceApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Document Studio operation identity is invalid.",
+      );
+    }
     if (source !== "user_upload" && source !== "assistant_edit") {
       throw new WorkspaceApiError(
         422,
@@ -615,6 +649,7 @@ export class WorkspaceDocumentStudioService {
       content,
       source,
       citationAnchorIds,
+      writeIdentity,
       buffer: contentBuffer(content),
     };
   }
@@ -639,9 +674,10 @@ export class WorkspaceDocumentStudioService {
         content,
         source,
         citationAnchorIds,
+        writeIdentity,
         buffer,
       } = this.normalizeCreateDraftInput(input);
-      const ids = this.newWriteIds();
+      const ids = writeIdentity ?? this.newWriteIds();
       const stored = this.store(ids.documentId, ids.versionId, buffer);
       let result: DocumentStudioPersistenceResult;
       try {
@@ -656,6 +692,7 @@ export class WorkspaceDocumentStudioService {
           contentSha256: sha256(buffer),
           storageKey: documentStorageKey(ids.documentId, ids.versionId),
           source,
+          operationId: writeIdentity?.operationId ?? null,
           citationAnchorIds,
           blobRecord: stored,
         });
@@ -688,7 +725,7 @@ export class WorkspaceDocumentStudioService {
           "Assistant generation attempt is invalid.",
         );
       }
-      const toolCallId = normalizeToolCallId(input.toolCallId);
+      normalizeToolCallId(input.toolCallId);
       if (
         !Number.isSafeInteger(input.startOffset) ||
         !Number.isSafeInteger(input.endOffset) ||
@@ -761,7 +798,10 @@ export class WorkspaceDocumentStudioService {
       const contextBefore = base.content.slice(contextStart, input.startOffset);
       const contextAfter = base.content.slice(input.endOffset, contextEnd);
       const changeId = `assistant-tool:${createHash("sha256")
-        .update(`${jobId}\0${input.attempt}\0${toolCallId}`, "utf8")
+        .update(
+          `${jobId}\0${documentId}\0${baseVersionId}\0${input.startOffset}\0${input.endOffset}\0${deletedText}\0${insertedText}\0${summary}`,
+          "utf8",
+        )
         .digest("hex")}`;
       return this.repository.createSuggestion({
         suggestionId: assertUuid(this.nextId(), "Generated suggestion"),

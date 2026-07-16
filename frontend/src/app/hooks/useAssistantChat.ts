@@ -2,13 +2,7 @@
 
 // Durable Vera adaptation of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
 // frontend/src/app/hooks/useAssistantChat.ts
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import {
   cancelVeraAssistantJob,
@@ -23,7 +17,9 @@ import {
   type VeraAssistantChat,
   type VeraAssistantGenerationAccepted,
   type VeraAssistantGenerationStatus,
+  type VeraAssistantDurableEvent,
   type VeraAssistantMessage,
+  type VeraAssistantReplay,
   type VeraAssistantStreamEvent,
 } from "@/app/lib/veraAssistantApi";
 import type {
@@ -39,6 +35,100 @@ interface UseAssistantChatOptions {
   projectId?: string;
 }
 
+const ASSISTANT_REPLAY_PAGE_EVENT_LIMIT = 100;
+const MAX_ASSISTANT_REPLAY_PAGES = 128;
+const MAX_ASSISTANT_REPLAY_EVENTS =
+  ASSISTANT_REPLAY_PAGE_EVENT_LIMIT * MAX_ASSISTANT_REPLAY_PAGES;
+
+type AssistantReplayLoader = (
+  jobId: string,
+  cursor: number,
+  signal?: AbortSignal,
+) => Promise<VeraAssistantReplay>;
+
+export interface CollectedAssistantReplay {
+  events: VeraAssistantDurableEvent[];
+  nextCursor: number;
+  terminal: boolean;
+  terminalEventSeen: boolean;
+}
+
+/**
+ * Drain bounded JSON replay pages before switching a live job to SSE. A job
+ * can have more than the route's 100-event page, and a short page is not an
+ * end marker because the backend also applies a response character budget.
+ */
+export async function collectVeraAssistantReplay(
+  jobId: string,
+  signal?: AbortSignal,
+  loadPage: AssistantReplayLoader = replayVeraAssistantJob,
+): Promise<CollectedAssistantReplay> {
+  let cursor = 0;
+  let terminal = false;
+  const events: VeraAssistantDurableEvent[] = [];
+
+  for (
+    let pageIndex = 0;
+    pageIndex < MAX_ASSISTANT_REPLAY_PAGES;
+    pageIndex += 1
+  ) {
+    const page = await loadPage(jobId, cursor, signal);
+    if (page.job_id !== jobId) {
+      throw new Error("Assistant replay job ownership is invalid.");
+    }
+    terminal = page.terminal;
+    if (page.events.length === 0) {
+      if (terminal) {
+        throw new Error(
+          "Terminal Assistant replay is missing its durable terminal event.",
+        );
+      }
+      return {
+        events,
+        nextCursor: cursor,
+        terminal,
+        terminalEventSeen: false,
+      };
+    }
+    if (
+      page.events[0].cursor <= cursor ||
+      page.events.some(
+        (event, index) =>
+          index > 0 && event.cursor <= page.events[index - 1].cursor,
+      ) ||
+      page.next_cursor !== page.events.at(-1)?.cursor
+    ) {
+      throw new Error("Assistant replay cursor did not advance canonically.");
+    }
+    const terminalEvents = page.events.filter((event) => event.terminal);
+    if (
+      terminalEvents.length > 1 ||
+      (terminalEvents.length === 1 &&
+        (!page.terminal ||
+          page.events.at(-1) !== terminalEvents[0] ||
+          (terminalEvents[0].event.type !== "complete" &&
+            terminalEvents[0].event.type !== "error")))
+    ) {
+      throw new Error("Assistant replay terminal event is inconsistent.");
+    }
+    events.push(...page.events);
+    if (events.length > MAX_ASSISTANT_REPLAY_EVENTS) {
+      throw new Error("Assistant replay exceeded its event budget.");
+    }
+    cursor = page.next_cursor;
+    if (terminalEvents.length === 1) {
+      return {
+        events,
+        nextCursor: cursor,
+        terminal,
+        terminalEventSeen: true,
+      };
+    }
+  }
+
+  throw new Error("Assistant replay exceeded its page budget.");
+}
+
 function isAbort(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -48,7 +138,7 @@ function assistantText(message: VeraAssistantMessage): string {
   return message.content.map((block) => block.text).join("");
 }
 
-function toUiMessage(message: VeraAssistantMessage): Message {
+export function toUiMessage(message: VeraAssistantMessage): Message {
   const content = assistantText(message);
   const citations = (message.citations ?? []) as CitationAnnotation[];
   return {
@@ -65,7 +155,16 @@ function toUiMessage(message: VeraAssistantMessage): Message {
       : {}),
     ...(message.role === "assistant"
       ? {
-          events: content ? [{ type: "content" as const, text: content }] : [],
+          events: [
+            ...(content ? [{ type: "content" as const, text: content }] : []),
+            ...(message.events ?? []).map((event): AssistantEvent => ({
+              type: "draft_created",
+              draft_id: event.draft_id,
+              version_id: event.version_id,
+              title: event.title,
+              route: event.route,
+            })),
+          ],
           annotations: citations,
           citationStatus: citations.length ? ("final" as const) : undefined,
         }
@@ -132,10 +231,7 @@ function appendContentDelta(
 ): AssistantEvent[] {
   const last = events.at(-1);
   if (last?.type === "content" && last.isStreaming) {
-    return [
-      ...events.slice(0, -1),
-      { ...last, text: last.text + text },
-    ];
+    return [...events.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [
     ...finaliseStreamingEvents(events),
@@ -149,10 +245,7 @@ function appendReasoningDelta(
 ): AssistantEvent[] {
   const last = events.at(-1);
   if (last?.type === "reasoning" && last.isStreaming) {
-    return [
-      ...events.slice(0, -1),
-      { ...last, text: last.text + text },
-    ];
+    return [...events.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [
     ...finaliseStreamingEvents(events),
@@ -230,7 +323,11 @@ function applyStreamEvent(
         ...message,
         events: [
           ...finaliseStreamingEvents(events),
-          { type: "doc_read_start", filename: wire.filename, isStreaming: true },
+          {
+            type: "doc_read_start",
+            filename: wire.filename,
+            isStreaming: true,
+          },
         ],
       };
     case "doc_read":
@@ -280,6 +377,20 @@ function applyStreamEvent(
             type: "workflow_applied",
             workflow_id: wire.workflow_id,
             title: wire.title,
+          },
+        ],
+      };
+    case "draft_created":
+      return {
+        ...message,
+        events: [
+          ...finaliseStreamingEvents(events),
+          {
+            type: "draft_created",
+            draft_id: wire.draft_id,
+            version_id: wire.version_id,
+            title: wire.title,
+            route: wire.route,
           },
         ],
       };
@@ -339,10 +450,7 @@ export function useAssistantChat({
   projectId,
 }: UseAssistantChatOptions = {}) {
   const { t, errorMessage } = useI18n();
-  const {
-    loadChats,
-    setCurrentChatId,
-  } = useChatHistoryContext();
+  const { loadChats, setCurrentChatId } = useChatHistoryContext();
   const [chat, setChat] = useState<VeraAssistantChat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
@@ -431,11 +539,9 @@ export function useAssistantChat({
   );
 
   const resumableJobId =
-    latestJob && latestJob.status !== "complete" ? latestJob.job_id : null;
+    latestJob && !latestJob.terminal ? latestJob.job_id : null;
   const resumableOutputMessageId =
-    latestJob && latestJob.status !== "complete"
-      ? latestJob.output_message_id
-      : null;
+    latestJob && !latestJob.terminal ? latestJob.output_message_id : null;
 
   useEffect(() => {
     if (!resumableJobId || !resumableOutputMessageId) return;
@@ -447,7 +553,10 @@ export function useAssistantChat({
     const consume = async () => {
       try {
         setStreamError(null);
-        const replay = await replayVeraAssistantJob(jobId, 0, controller.signal);
+        const replay = await collectVeraAssistantReplay(
+          jobId,
+          controller.signal,
+        );
         if (closed || controller.signal.aborted) return;
         lastCursorRef.current = 0;
         setMessages((current) =>
@@ -469,12 +578,15 @@ export function useAssistantChat({
             ),
           );
         }
-        if (replay.terminal) {
-          updateJobProjection(await getVeraAssistantJob(jobId, controller.signal));
+        if (replay.terminalEventSeen) {
+          updateJobProjection(
+            await getVeraAssistantJob(jobId, controller.signal),
+          );
+          await loadChats();
           return;
         }
         for await (const durable of streamVeraAssistantJob(jobId, {
-          cursor: replay.next_cursor,
+          cursor: replay.nextCursor,
           signal: controller.signal,
         })) {
           if (durable.cursor <= lastCursorRef.current) continue;
@@ -489,11 +601,43 @@ export function useAssistantChat({
         const status = await getVeraAssistantJob(jobId, controller.signal);
         updateJobProjection(status);
         if (status.status === "complete") {
-          const detail = await getVeraAssistantChat(status.chat_id, controller.signal);
-          const jobs = await listVeraAssistantJobs(status.chat_id, 20, controller.signal);
+          const detail = await getVeraAssistantChat(
+            status.chat_id,
+            controller.signal,
+          );
+          const jobs = await listVeraAssistantJobs(
+            status.chat_id,
+            20,
+            controller.signal,
+          );
           if (closed || controller.signal.aborted) return;
           setChat(detail.chat);
-          setMessages(attachJobs(detail.messages.map(toUiMessage), jobs));
+          setMessages((current) => {
+            const detailMessages = attachJobs(
+              detail.messages.map(toUiMessage),
+              jobs,
+            );
+            return detailMessages.map((message) => {
+              const existing = current.find((item) => item.id === message.id);
+              if (!existing || (existing.events?.length ?? 0) === 0) {
+                return message;
+              }
+              return {
+                ...message,
+                content: existing.content || message.content,
+                events: finaliseStreamingEvents(existing.events ?? []),
+                annotations:
+                  (message.annotations?.length ?? 0) > 0
+                    ? message.annotations
+                    : existing.annotations,
+                citationStatus:
+                  (message.annotations?.length ?? 0) > 0
+                    ? "final"
+                    : existing.citationStatus,
+                error: existing.error,
+              };
+            });
+          });
           setLatestJob(jobs[0] ?? status);
           await loadChats();
         }
@@ -539,7 +683,12 @@ export function useAssistantChat({
             ? {
                 attached_documents: message.files.flatMap((file) =>
                   file.document_id
-                    ? [{ filename: file.filename, document_id: file.document_id }]
+                    ? [
+                        {
+                          filename: file.filename,
+                          document_id: file.document_id,
+                        },
+                      ]
                     : [],
                 ),
               }
@@ -607,15 +756,19 @@ export function useAssistantChat({
       const status = acceptedStatus(accepted);
       lastCursorRef.current = 0;
       setMessages((current) =>
-        replaceOutputMessage(current, accepted.output_message_id, (message) => ({
-          ...message,
-          content: "",
-          events: [],
-          annotations: [],
-          citationStatus: undefined,
-          error: undefined,
-          generation: jobProjection(status),
-        })),
+        replaceOutputMessage(
+          current,
+          accepted.output_message_id,
+          (message) => ({
+            ...message,
+            content: "",
+            events: [],
+            annotations: [],
+            citationStatus: undefined,
+            error: undefined,
+            generation: jobProjection(status),
+          }),
+        ),
       );
       setLatestJob(status);
       setStreamRevision((current) => current + 1);

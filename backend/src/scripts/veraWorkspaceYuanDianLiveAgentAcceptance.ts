@@ -24,7 +24,10 @@ type KeychainModule = {
       endpointSetId: "yuandian-official-mcp-v1";
     };
   }): { service: string; account: string };
-  readGenericPassword(input: { service: string; account: string }): string | null;
+  readGenericPassword(input: {
+    service: string;
+    account: string;
+  }): string | null;
 };
 
 const keychain = require(
@@ -44,6 +47,7 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const context = {
   jobId: "22222222-2222-4222-8222-222222222222",
   attempt: 1,
+  leaseOwner: "yuandian-live-agent-acceptance",
   chatId: "33333333-3333-4333-8333-333333333333",
   projectId: PROJECT_ID,
   modelProfileId: "44444444-4444-4444-8444-444444444444",

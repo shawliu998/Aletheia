@@ -221,7 +221,7 @@ export class WorkspaceDocumentStudioRepositoryAdapter implements WorkspaceDocume
         filename: input.filename,
         source: input.source,
         summary: null,
-        operationId: null,
+        operationId: input.operationId ?? null,
         citationAnchorIds: input.citationAnchorIds,
         createdAt: this.now(),
         blobRecordId: input.blobRecord.id,

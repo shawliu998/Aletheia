@@ -10,6 +10,10 @@ import {
   parseVeraAssistantStreamEvent,
   streamVeraAssistantJob,
 } from "../src/app/lib/veraAssistantApi.ts";
+import {
+  collectVeraAssistantReplay,
+  toUiMessage,
+} from "../src/app/hooks/useAssistantChat.ts";
 import { VeraApiError } from "../src/app/lib/veraApi.ts";
 
 const chatId = "11111111-1111-4111-8111-111111111111";
@@ -23,7 +27,8 @@ const now = "2026-07-15T01:02:03.004Z";
 const token = "vdt_1234567890abcdefghijklmnopqrstuvwxyz";
 
 function status(
-  state: "queued" | "running" | "complete" | "failed" | "cancelled" | "interrupted",
+  state:
+    "queued" | "running" | "complete" | "failed" | "cancelled" | "interrupted",
 ) {
   const terminal = ["complete", "failed", "cancelled", "interrupted"].includes(
     state,
@@ -108,7 +113,10 @@ test("Assistant chat/status contracts require exact canonical local wire data", 
     "cancelled",
     "interrupted",
   ] as const) {
-    assert.equal(parseVeraAssistantGenerationStatus(status(state)).status, state);
+    assert.equal(
+      parseVeraAssistantGenerationStatus(status(state)).status,
+      state,
+    );
   }
 
   for (const malformedTimestamp of [
@@ -133,12 +141,183 @@ test("Assistant chat/status contracts require exact canonical local wire data", 
   }
 
   assert.throws(
-    () => parseVeraAssistantGenerationStatus({ ...status("running"), active_attempt: null }),
+    () =>
+      parseVeraAssistantGenerationStatus({
+        ...status("running"),
+        active_attempt: null,
+      }),
     VeraApiError,
   );
   assert.throws(
-    () => parseVeraAssistantGenerationStatus({ ...status("failed"), terminal: false }),
+    () =>
+      parseVeraAssistantGenerationStatus({
+        ...status("failed"),
+        terminal: false,
+      }),
     VeraApiError,
+  );
+});
+
+test("completed chat detail restores its bounded durable Draft projection on refresh", () => {
+  const draftEvent = {
+    type: "draft_created" as const,
+    draft_id: documentId,
+    version_id: versionId,
+    title: "Legal opinion",
+    route: `/projects/${chatId}/documents/${documentId}/studio`,
+  };
+  const detail = parseVeraAssistantChatDetail({
+    chat: {
+      id: chatId,
+      project_id: chatId,
+      user_id: localUserId,
+      title: "Matter chat",
+      created_at: now,
+    },
+    messages: [
+      {
+        id: outputId,
+        chat_id: chatId,
+        role: "assistant",
+        content: [{ type: "content", text: "Draft complete." }],
+        events: [draftEvent],
+        created_at: now,
+      },
+    ],
+  });
+  const restored = toUiMessage(detail.messages[0]);
+  assert.deepEqual(restored.events, [
+    { type: "content", text: "Draft complete." },
+    draftEvent,
+  ]);
+
+  assert.throws(
+    () =>
+      parseVeraAssistantChatDetail({
+        chat: detail.chat,
+        messages: [
+          {
+            id: promptId,
+            chat_id: chatId,
+            role: "user",
+            content: "Prompt",
+            events: [draftEvent],
+            created_at: now,
+          },
+        ],
+      }),
+    VeraApiError,
+  );
+  assert.throws(
+    () =>
+      parseVeraAssistantChatDetail({
+        chat: detail.chat,
+        messages: [
+          {
+            id: outputId,
+            chat_id: chatId,
+            role: "assistant",
+            content: "Done",
+            events: [{ type: "content_done" }],
+            created_at: now,
+          },
+        ],
+      }),
+    VeraApiError,
+  );
+  for (const projectId of [null, jobId]) {
+    assert.throws(
+      () =>
+        parseVeraAssistantChatDetail({
+          chat: { ...detail.chat, project_id: projectId },
+          messages: [
+            {
+              id: outputId,
+              chat_id: chatId,
+              role: "assistant",
+              content: "Done",
+              events: [draftEvent],
+              created_at: now,
+            },
+          ],
+        }),
+      VeraApiError,
+    );
+  }
+});
+
+test("JSON recovery drains more than 100 durable events through the terminal event", async () => {
+  const firstPageEvents = Array.from({ length: 100 }, (_, index) => ({
+    cursor: index + 1,
+    attempt: 1,
+    event: { type: "reasoning_delta" as const, text: `r${index}` },
+    terminal: false,
+    created_at: now,
+  }));
+  const draftEvent = {
+    type: "draft_created" as const,
+    draft_id: documentId,
+    version_id: versionId,
+    title: "Legal opinion",
+    route: `/projects/${chatId}/documents/${documentId}/studio`,
+  };
+  const cursors: number[] = [];
+  const replay = await collectVeraAssistantReplay(
+    jobId,
+    undefined,
+    async (_requestedJobId, cursor) => {
+      cursors.push(cursor);
+      if (cursor === 0) {
+        return {
+          job_id: jobId,
+          status: "running",
+          attempt: 1,
+          terminal: false,
+          events: firstPageEvents,
+          next_cursor: 100,
+        };
+      }
+      return {
+        job_id: jobId,
+        status: "complete",
+        attempt: 1,
+        terminal: true,
+        events: [
+          {
+            cursor: 101,
+            attempt: 1,
+            event: draftEvent,
+            terminal: false,
+            created_at: now,
+          },
+          {
+            cursor: 102,
+            attempt: 1,
+            event: { type: "complete", message_id: outputId, job_id: jobId },
+            terminal: true,
+            created_at: now,
+          },
+        ],
+        next_cursor: 102,
+      };
+    },
+  );
+  assert.deepEqual(cursors, [0, 100]);
+  assert.equal(replay.events.length, 102);
+  assert.equal(replay.nextCursor, 102);
+  assert.equal(replay.terminalEventSeen, true);
+  assert.deepEqual(replay.events[100].event, draftEvent);
+
+  await assert.rejects(
+    collectVeraAssistantReplay(jobId, undefined, async () => ({
+      job_id: jobId,
+      status: "running",
+      attempt: 1,
+      terminal: false,
+      events: firstPageEvents,
+      next_cursor: 0,
+    })),
+    /cursor did not advance canonically/,
   );
 });
 
@@ -163,20 +342,49 @@ test("Assistant parser rejects secrets and raw provider payloads recursively", (
     }),
   );
   assert.throws(
-    () => parseVeraAssistantStreamEvent({ type: "content_delta", text: "ok", extra: true }),
+    () =>
+      parseVeraAssistantStreamEvent({
+        type: "content_delta",
+        text: "ok",
+        extra: true,
+      }),
     VeraApiError,
   );
   for (const name of [
     "read_studio_document",
     "suggest_studio_edit",
+    "create_draft",
+    "read_draft",
+    "suggest_draft_edit",
+    "run_workflow",
+    "get_workflow_run",
     "search_legal_sources",
     "read_legal_source",
   ] as const) {
-    assert.deepEqual(parseVeraAssistantStreamEvent({ type: "tool_call_start", name }), {
-      type: "tool_call_start",
-      name,
-    });
+    assert.deepEqual(
+      parseVeraAssistantStreamEvent({ type: "tool_call_start", name }),
+      {
+        type: "tool_call_start",
+        name,
+      },
+    );
   }
+  const draftEvent = {
+    type: "draft_created" as const,
+    draft_id: documentId,
+    version_id: versionId,
+    title: "Legal opinion",
+    route: `/projects/${chatId}/documents/${documentId}/studio`,
+  };
+  assert.deepEqual(parseVeraAssistantStreamEvent(draftEvent), draftEvent);
+  assert.throws(
+    () =>
+      parseVeraAssistantStreamEvent({
+        ...draftEvent,
+        route: `/projects/${chatId}/documents/${versionId}/studio`,
+      }),
+    VeraApiError,
+  );
 });
 
 test("durable replay validates terminal attempts, ordered cursors, and exact events", () => {
@@ -196,7 +404,11 @@ test("durable replay validates terminal attempts, ordered cursors, and exact eve
       {
         cursor: 2,
         attempt: 1,
-        event: { type: "error", code: "assistant_model_failed", message: "failed" },
+        event: {
+          type: "error",
+          code: "assistant_model_failed",
+          message: "failed",
+        },
         terminal: true,
         created_at: now,
       },
@@ -232,7 +444,11 @@ test("Assistant SSE accepts durable ids and heartbeat frames but fails closed", 
   );
   assert.deepEqual(items, [
     { kind: "event", cursor: 1, event: { type: "chat_id", chatId } },
-    { kind: "event", cursor: 2, event: { type: "content_delta", text: "你好" } },
+    {
+      kind: "event",
+      cursor: 2,
+      event: { type: "content_delta", text: "你好" },
+    },
     { kind: "done" },
   ]);
 
@@ -292,8 +508,14 @@ test("idle SSE EOF checks authoritative status, backs off, and resumes from curs
     const eventRequests = calls.filter((call) => call.url.endsWith("/events"));
     assert.equal(eventRequests[0].headers.get("Last-Event-ID"), "7");
     assert.equal(eventRequests[1].headers.get("Last-Event-ID"), "7");
-    assert.ok(calls.some((call) => call.url.endsWith(`/assistant/jobs/${jobId}`)));
-    assert.ok(calls.every((call) => call.headers.get("Authorization") === `Bearer ${token}`));
+    assert.ok(
+      calls.some((call) => call.url.endsWith(`/assistant/jobs/${jobId}`)),
+    );
+    assert.ok(
+      calls.every(
+        (call) => call.headers.get("Authorization") === `Bearer ${token}`,
+      ),
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalWindow) {

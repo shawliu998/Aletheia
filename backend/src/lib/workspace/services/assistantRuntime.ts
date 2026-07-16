@@ -36,8 +36,13 @@ const AssistantToolNameSchema = z.enum([
   "find_in_document",
   "read_studio_document",
   "suggest_studio_edit",
+  "create_draft",
+  "read_draft",
+  "suggest_draft_edit",
   "list_workflows",
   "read_workflow",
+  "run_workflow",
+  "get_workflow_run",
   "search_legal_sources",
   "read_legal_source",
 ]);
@@ -47,9 +52,19 @@ const TOOL_EVENT_TYPES = new Set([
   "doc_find_start",
   "doc_find",
   "workflow_applied",
+  "draft_created",
 ]);
 
 export type AssistantToolName = z.infer<typeof AssistantToolNameSchema>;
+
+const TOOL_CALL_BUDGETS: Partial<Record<AssistantToolName, number>> = {
+  search_legal_sources: 4,
+  read_legal_source: 12,
+  create_draft: 1,
+  suggest_draft_edit: 5,
+  run_workflow: 2,
+  get_workflow_run: 8,
+};
 
 export const AssistantModelSourceSchema = z
   .object({
@@ -209,10 +224,14 @@ export type AssistantToolContext = Readonly<{
   jobId: string;
   /** Durable fenced jobs.attempt for this exact model execution. */
   attempt: number;
+  /** Durable fenced jobs.lease_owner for this exact model execution. */
+  leaseOwner: string;
   chatId: string;
   projectId: string | null;
   modelProfileId: string;
   documents: AssistantGenerationSnapshot["documents"];
+  /** Evidence actually returned by registered read/search tools in this attempt. */
+  evidence?: readonly AssistantRetrievalChunk[];
 }>;
 
 export interface AssistantToolPort {
@@ -369,8 +388,14 @@ function buildMikeSystemPrompt(input: {
 CORE RULES:
 - Be precise, professional, and evidence-aware.
 - Do not fabricate document content.
+- Distinguish Matter facts from legal propositions. Use Matter document evidence for factual claims and read legal-authority evidence for legal propositions.
+- Never invent a statute, regulation, judicial interpretation, case, court, case number, quotation, citation, or source locator. Model memory is not an authoritative legal source.
+- A legal search result or summary is only a candidate. Read the source before relying on it, consider effective dates and status, identify adverse as well as supporting authority, and state when the available basis is insufficient.
+- When the user requests deliverable legal work product and create_draft is registered, create a new Draft instead of placing an unnecessarily long document in chat. Never overwrite an existing Draft or accept an edit suggestion for the user.
+- For Draft citations, submit only evidenceSources returned by document read/search tools in this attempt, with an exact quote that appears once in that evidence chunk. Never submit or invent durable snapshot/anchor identifiers; the backend rebuilds them.
 - Use at most 10 tool-use rounds per response. Batch independent tool calls and leave room for the final answer.
-- Use only the registered tools listed below. Never attempt shell, Python, network, MCP, CourtListener, cloud storage, dynamic tools, or multi-agent delegation.
+- Per response, use at most 4 legal searches, 12 legal-source reads, 1 Draft creation, 5 Draft suggestions, 2 Workflow runs, and 8 Workflow status reads. When a budget is exhausted, stop that activity, answer from evidence already read, and disclose the limitation.
+- Use only the registered tools listed below. Never directly attempt shell, Python, arbitrary network access, MCP, CourtListener, cloud storage, dynamic tools, or multi-agent delegation. A registered legal-research tool may use its fixed backend provider boundary; do not invent or call provider tools directly.
 - Read each relevant document/version at most once per response. After a read/fetch tool returns document text, use that result or find_in_document for targeted checks.
 - Chat-local labels such as "doc-0" are internal. Use them only in tool arguments and citation data; refer to documents by filename in prose.
 - Do not use emojis.
@@ -699,6 +724,7 @@ export class AssistantRuntimeService {
       const toolContext: AssistantToolContext = {
         jobId: input.jobId,
         attempt: input.attempt,
+        leaseOwner: input.leaseOwner,
         chatId: snapshot.chatId,
         projectId: snapshot.payload.projectId,
         modelProfileId: snapshot.modelProfileId,
@@ -736,6 +762,7 @@ export class AssistantRuntimeService {
       let totalToolResultChars = 0;
       let usedEvidenceTool = false;
       const usedToolCallIds = new Set<string>();
+      const toolCallsByName = new Map<AssistantToolName, number>();
       let finalTurn: AssistantModelTurn | null = null;
       let fullText = "";
 
@@ -936,11 +963,30 @@ export class AssistantRuntimeService {
               name: call.name,
             }),
           );
-          const executed = await this.options.tools.execute({
-            context: toolContext,
-            call,
-            signal: input.signal,
-          });
+          const usedForName = toolCallsByName.get(call.name) ?? 0;
+          const nameBudget = TOOL_CALL_BUDGETS[call.name];
+          const executed =
+            nameBudget !== undefined && usedForName >= nameBudget
+              ? {
+                  content: JSON.stringify({
+                    error: "tool_budget_exhausted",
+                    tool: call.name,
+                    limit: nameBudget,
+                    instruction:
+                      "Stop this activity, answer from evidence already read, and disclose the limitation.",
+                  }),
+                }
+              : await this.options.tools.execute({
+                  context: {
+                    ...toolContext,
+                    evidence: [...evidenceByChunk.values()],
+                  },
+                  call,
+                  signal: input.signal,
+                });
+          if (nameBudget !== undefined && usedForName < nameBudget) {
+            toolCallsByName.set(call.name, usedForName + 1);
+          }
           throwIfAborted(input.signal);
           this.assertClaim(snapshot, input);
           if (
@@ -970,6 +1016,18 @@ export class AssistantRuntimeService {
                 502,
                 "JOB_FAILED",
                 "Assistant tool emitted a non-tool event.",
+              );
+            }
+            if (
+              parsed.type === "draft_created" &&
+              (snapshot.payload.projectId === null ||
+                parsed.route !==
+                  `/projects/${snapshot.payload.projectId}/documents/${parsed.draft_id}/studio`)
+            ) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant Draft event is outside the current Matter.",
               );
             }
             assertMikeSafePayload(parsed);

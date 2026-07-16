@@ -6,7 +6,8 @@ tests take precedence over historical programme text below.
 ## Current product — local general legal workspace
 
 Status on 2026-07-16: Matter convergence is merged to `main` at
-`5611699e46552a20bf42ce84396a8e65aa139d16`; Workspace schema is v17. The active
+`5611699e46552a20bf42ce84396a8e65aa139d16`; the active feature branch now uses
+Workspace schema v19. The active
 implementation branch for the next vertical is `feat/local-legal-work-agent`.
 
 ```text
@@ -49,13 +50,16 @@ Implemented and wired in source:
 - encrypted backup/restore, restore fail-closed, sandboxed renderer, loopback
   authentication, and package/security checks.
 
-Current production Assistant tools are `list_documents`, `read_document`,
-`fetch_documents`, and `find_in_document`, plus `read_studio_document` and
-`suggest_studio_edit` for compatible Studio targets. The trusted optional tool
-registry now also has bounded `search_legal_sources` and `read_legal_source`
-modules for the YuanDian technical acceptance path, but the default production
-Assistant does not register them while the activation gate is closed.
-Agent-created Drafts and production Workflow tools are not yet wired.
+Current production Assistant tools compose the existing document/Studio tools
+with Matter-scoped `create_draft`, `read_draft`, `suggest_draft_edit`,
+`list_workflows`, `read_workflow`, `run_workflow`, and `get_workflow_run`.
+Agent-created Drafts use current-attempt evidence, server-rebuilt durable
+anchors, stable replay identities, an action ledger, and a chat result card
+that opens the exact Matter Draft. Workflow runs remain durable and
+asynchronous; hidden and cross-Matter workflows fail closed. The trusted
+optional registry also has bounded legal research tools for the YuanDian
+technical acceptance path, but the default production Assistant does not
+register them while the activation gate is closed.
 
 No production legal provider is claimed ready. The active Workspace now owns a
 v18 YuanDian Provider Hub, Keychain-only credential operations, authenticated

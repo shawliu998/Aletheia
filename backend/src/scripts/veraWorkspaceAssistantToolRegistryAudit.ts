@@ -31,6 +31,7 @@ function context(jobId: string, attempt = 1): AssistantToolContext {
   return {
     jobId,
     attempt,
+    leaseOwner: `tool-registry-${attempt}`,
     chatId: `chat-${jobId}`,
     projectId: null,
     modelProfileId: "model-profile",

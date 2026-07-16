@@ -434,6 +434,16 @@ async function run() {
     /document_parse: \(context\) => parser\.handleJob\(context\)[\s\S]*?assistant_generate: \(context\)/,
     "the production pump registers both fenced document and Assistant handlers",
   );
+  assert.match(
+    runtimeSource,
+    /new WorkspaceAssistantActionLedger\([\s\S]*?new WorkspaceAssistantDocumentToolModule\(documentTools\)[\s\S]*?new WorkspaceAssistantDraftToolModule\([\s\S]*?assistantActions[\s\S]*?new WorkspaceAssistantWorkflowToolModule\([\s\S]*?this\.workflows,[\s\S]*?assistantActions/,
+    "the default Assistant registry composes document, Draft, and Workflow modules in the single runtime",
+  );
+  assert.doesNotMatch(
+    runtimeSource,
+    /new WorkspaceAssistantLegalResearchToolModule/,
+    "production must not register Legal Research tools while the activation gate is closed",
+  );
   await auditProductionWorkflowCrud();
   let cascaded = false;
   let restored = false;

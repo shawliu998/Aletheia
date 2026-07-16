@@ -366,6 +366,24 @@ const MikeServerMessageSchema = z
     ]),
     files: z.array(MikeFileSchema).optional(),
     citations: z.array(MikeDocumentCitationSchema).optional(),
+    events: z
+      .array(
+        z
+          .object({
+            type: z.literal("draft_created"),
+            draft_id: Id,
+            version_id: Id,
+            title: z.string().min(1).max(240),
+            route: z
+              .string()
+              .regex(
+                /^\/projects\/[0-9a-f-]{36}\/documents\/[0-9a-f-]{36}\/studio$/,
+              ),
+          })
+          .strict(),
+      )
+      .max(10)
+      .optional(),
     created_at: z.string().datetime(),
   })
   .strict();
@@ -477,8 +495,15 @@ export const MikeAssistantStreamEventSchema = z.discriminatedUnion("type", [
         "find_in_document",
         "read_studio_document",
         "suggest_studio_edit",
+        "create_draft",
+        "read_draft",
+        "suggest_draft_edit",
         "list_workflows",
         "read_workflow",
+        "run_workflow",
+        "get_workflow_run",
+        "search_legal_sources",
+        "read_legal_source",
       ]),
     })
     .strict(),
@@ -515,6 +540,17 @@ export const MikeAssistantStreamEventSchema = z.discriminatedUnion("type", [
       type: z.literal("workflow_applied"),
       workflow_id: Id,
       title: z.string().min(1).max(240),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("draft_created"),
+      draft_id: Id,
+      version_id: Id,
+      title: z.string().min(1).max(240),
+      route: z
+        .string()
+        .regex(/^\/projects\/[0-9a-f-]{36}\/documents\/[0-9a-f-]{36}\/studio$/),
     })
     .strict(),
   MikeDocumentCitationSchema,
@@ -577,6 +613,10 @@ export function toMikeChatDetail(input: {
       capability: AssistantHydratedCapability;
     })[];
     sources: readonly AssistantMessageSource[];
+    events?: readonly Extract<
+      MikeAssistantStreamEvent,
+      { type: "draft_created" }
+    >[];
   })[];
 }) {
   return MikeChatDetailSchema.parse({
@@ -610,6 +650,7 @@ export function toMikeChatDetail(input: {
               }
             : {}),
           ...(citations.length ? { citations } : {}),
+          ...(message.events?.length ? { events: message.events } : {}),
           created_at: message.createdAt,
         };
       }),

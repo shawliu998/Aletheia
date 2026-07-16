@@ -47,8 +47,15 @@ const TOOL_LABEL_KEYS: Readonly<Record<string, MessageKey>> = {
   find_in_document: "assistant.events.findInDocument",
   read_studio_document: "assistant.events.readStudioDocument",
   suggest_studio_edit: "assistant.events.suggestStudioEdit",
+  create_draft: "assistant.events.createDraft",
+  read_draft: "assistant.events.readDraft",
+  suggest_draft_edit: "assistant.events.suggestDraftEdit",
   list_workflows: "assistant.events.listWorkflows",
   read_workflow: "assistant.events.readWorkflow",
+  run_workflow: "assistant.events.runWorkflow",
+  get_workflow_run: "assistant.events.getWorkflowRun",
+  search_legal_sources: "assistant.events.searchLegalSources",
+  read_legal_source: "assistant.events.readLegalSource",
 };
 
 function preEventLabel(
@@ -122,6 +129,11 @@ function preEventLabel(
       return {
         icon: <Wrench className="h-3.5 w-3.5" />,
         title: t("assistant.events.workflowApplied", { title: event.title }),
+      };
+    case "draft_created":
+      return {
+        icon: <FilePenLine className="h-3.5 w-3.5" />,
+        title: t("assistant.events.draftCreated", { title: event.title }),
       };
     case "thinking":
       return {
@@ -199,6 +211,14 @@ export function AssistantMessage({
   const [citationSourceFailure, setCitationSourceFailure] = useState(false);
   const citations = message.annotations ?? [];
   const events = useMemo(() => message.events ?? [], [message.events]);
+  const createdDrafts = useMemo(
+    () =>
+      events.filter(
+        (event): event is Extract<AssistantEvent, { type: "draft_created" }> =>
+          event.type === "draft_created",
+      ),
+    [events],
+  );
   const contentEvents = events.filter(
     (event): event is Extract<AssistantEvent, { type: "content" }> =>
       event.type === "content",
@@ -325,6 +345,31 @@ export function AssistantMessage({
           onCitationClick={openCitation}
         />
       )}
+
+      {createdDrafts.map((draft) => (
+        <div
+          key={`${draft.draft_id}-${draft.version_id}`}
+          className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-3"
+          data-testid={`assistant-draft-result-${draft.draft_id}`}
+        >
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-gray-900">
+              {draft.title}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {t("assistant.events.draftCreated", { title: draft.title })}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push(draft.route)}
+            className="flex shrink-0 items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 transition-colors hover:bg-blue-50"
+          >
+            <FilePenLine className="h-3.5 w-3.5" />
+            {t("assistant.openDraft")}
+          </button>
+        </div>
+      ))}
 
       {citationSourceFailure && (
         <p role="alert" className="mb-3 text-xs text-red-600">

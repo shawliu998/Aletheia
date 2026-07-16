@@ -523,6 +523,7 @@ async function auditDocumentTools(database: WorkspaceDatabase) {
   const context = {
     jobId: snapshot.jobId,
     attempt: 1,
+    leaseOwner: "assistant-document-tools-audit",
     chatId: snapshot.chatId,
     projectId: snapshot.payload.projectId,
     modelProfileId: snapshot.modelProfileId,
@@ -944,7 +945,9 @@ async function auditRuntimePumpAndRoutes(root: string) {
       body: JSON.stringify({
         chat_id: genericChatId,
         model_profile_id: PROFILE_ID,
-        messages: [{ role: "user", content: "Generic Project remains compatible." }],
+        messages: [
+          { role: "user", content: "Generic Project remains compatible." },
+        ],
       }),
     });
     assert.equal(genericSubmit.status, 202);

@@ -93,6 +93,19 @@ const READ_DOCUMENT_TOOL = {
     additionalProperties: false,
   },
 };
+const BUDGETED_ASSISTANT_TOOLS = [
+  "search_legal_sources",
+  "create_draft",
+  "run_workflow",
+].map((name) => ({
+  name: name as "search_legal_sources" | "create_draft" | "run_workflow",
+  description: `Audit ${name} budget enforcement.`,
+  inputSchema: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+}));
 
 type DocumentFixture = {
   documentId: string;
@@ -1045,7 +1058,7 @@ async function run() {
     );
 
     const currentMigration = database.runMigrations(WORKSPACE_MIGRATIONS);
-    assert.equal(currentMigration.currentVersion, 18);
+    assert.equal(currentMigration.currentVersion, 19);
     markProfileReady(database, profileId);
 
     const projects = new ProjectsRepository(database);
@@ -1669,10 +1682,24 @@ async function run() {
     assert.match(capturedSystemPrompt, /^You are Vera,/);
     assert.doesNotMatch(capturedSystemPrompt, /^You are Mike,/);
     assert.match(capturedSystemPrompt, /Use at most 10 tool-use rounds/);
+    assert.match(
+      capturedSystemPrompt,
+      /Distinguish Matter facts from legal propositions/,
+    );
+    assert.match(capturedSystemPrompt, /Never invent a statute/);
+    assert.match(
+      capturedSystemPrompt,
+      /identify adverse as well as supporting authority/,
+    );
+    assert.match(
+      capturedSystemPrompt,
+      /at most 4 legal searches, 12 legal-source reads/,
+    );
+    assert.match(capturedSystemPrompt, /create a new Draft/);
     assert.match(capturedSystemPrompt, /read_document/);
     assert.match(
       capturedSystemPrompt,
-      /Never attempt shell, Python, network, MCP, CourtListener, cloud storage/,
+      /Never directly attempt shell, Python, arbitrary network access, MCP, CourtListener, cloud storage/,
     );
     assert.deepEqual(publishedEventTypes, [
       "content_delta",
@@ -1718,6 +1745,199 @@ async function run() {
       citationFilename,
       "citation transport reads the immutable source filename snapshot after a document rename",
     );
+
+    const budgetAuditProject = insertProject(database, "Tool budget audit");
+    const budgetAuditCalls = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `budget-search-${index + 1}`,
+        name: "search_legal_sources" as const,
+        input: {},
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        id: `budget-draft-${index + 1}`,
+        name: "create_draft" as const,
+        input: {},
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `budget-workflow-${index + 1}`,
+        name: "run_workflow" as const,
+        input: {},
+      })),
+    ];
+    const expectedBudgetLimits = new Map([
+      ["search_legal_sources", 4],
+      ["create_draft", 1],
+      ["run_workflow", 2],
+    ] as const);
+    const executeBudgetAudit = async (input: {
+      expectedAttempt: number;
+      claimAt: string;
+      leaseExpiresAt: string;
+      prepareClaim?: (generation: { jobId: string }) => void;
+    }) => {
+      const chat = service.create({
+        projectId: budgetAuditProject,
+        modelProfileId: profileId,
+        title: `Budget audit attempt ${input.expectedAttempt}`,
+      });
+      const generation = service.requestGeneration({
+        chatId: chat.id,
+        prompt: "Exercise the registered tools, then answer.",
+      });
+      input.prepareClaim?.(generation);
+      const claim = jobs.claimNextQueued(
+        input.claimAt,
+        `budget-worker-${input.expectedAttempt}`,
+        input.leaseExpiresAt,
+      );
+      assert.equal(claim?.id, generation.jobId);
+      assert.equal(claim?.attempt, input.expectedAttempt);
+
+      const underlyingExecutions = new Map<string, number>();
+      let modelTurns = 0;
+      const budgetRuntime = new AssistantRuntimeService(
+        chats,
+        jobs,
+        {
+          async registeredCapabilities() {
+            return {
+              adapterId: "budget-audit-model",
+              streaming: true,
+              toolCalling: true,
+            };
+          },
+          async runTurn({ messages, tools, onTextDelta }) {
+            modelTurns += 1;
+            assert.deepEqual(
+              tools.map((tool) => tool.name),
+              BUDGETED_ASSISTANT_TOOLS.map((tool) => tool.name),
+            );
+            if (modelTurns === 1) {
+              return {
+                content: "",
+                toolCalls: budgetAuditCalls,
+                sources: [],
+              };
+            }
+
+            const toolMessages = messages.filter(
+              (message) => message.role === "tool",
+            );
+            assert.equal(toolMessages.length, budgetAuditCalls.length);
+            const resultsByCallId = new Map(
+              toolMessages.map((message) => [
+                message.role === "tool" ? message.toolCallId : "",
+                JSON.parse(message.content) as Record<string, unknown>,
+              ]),
+            );
+            for (const [toolName, limit] of expectedBudgetLimits) {
+              const calls = budgetAuditCalls.filter(
+                (call) => call.name === toolName,
+              );
+              for (const [index, call] of calls.entries()) {
+                const result = resultsByCallId.get(call.id);
+                assert.ok(result);
+                if (index < limit) {
+                  assert.deepEqual(result, {
+                    ok: true,
+                    tool: toolName,
+                    attempt: input.expectedAttempt,
+                  });
+                } else {
+                  assert.deepEqual(result, {
+                    error: "tool_budget_exhausted",
+                    tool: toolName,
+                    limit,
+                    instruction:
+                      "Stop this activity, answer from evidence already read, and disclose the limitation.",
+                  });
+                }
+              }
+            }
+            await onTextDelta("Budget limit observed; final answer completed.");
+            return {
+              content: "Budget limit observed; final answer completed.",
+              toolCalls: [],
+              sources: [],
+            };
+          },
+        },
+        {
+          clock: () => new Date(input.claimAt),
+          tools: {
+            async registeredTools(context) {
+              assert.equal(context.jobId, generation.jobId);
+              assert.equal(context.attempt, input.expectedAttempt);
+              assert.equal(context.projectId, budgetAuditProject);
+              assert.deepEqual(context.documents, []);
+              return {
+                adapterId: "budget-audit-tools",
+                tools: BUDGETED_ASSISTANT_TOOLS,
+              };
+            },
+            async execute({ context, call }) {
+              assert.equal(context.jobId, generation.jobId);
+              assert.equal(context.attempt, input.expectedAttempt);
+              underlyingExecutions.set(
+                call.name,
+                (underlyingExecutions.get(call.name) ?? 0) + 1,
+              );
+              return {
+                content: JSON.stringify({
+                  ok: true,
+                  tool: call.name,
+                  attempt: context.attempt,
+                }),
+              };
+            },
+          },
+        },
+      );
+      await budgetRuntime.execute({
+        jobId: generation.jobId,
+        leaseOwner: `budget-worker-${input.expectedAttempt}`,
+        attempt: claim!.attempt,
+        signal: new AbortController().signal,
+      });
+      assert.equal(modelTurns, 2);
+      assert.deepEqual(
+        Object.fromEntries(underlyingExecutions),
+        Object.fromEntries(expectedBudgetLimits),
+        "the underlying tool port executes only up to each per-tool limit",
+      );
+      assert.equal(jobs.getJob(generation.jobId)?.status, "complete");
+    };
+
+    await executeBudgetAudit({
+      expectedAttempt: 1,
+      claimAt: "2026-07-14T08:02:30.000Z",
+      leaseExpiresAt: "2026-07-14T08:10:00.000Z",
+    });
+    await executeBudgetAudit({
+      expectedAttempt: 2,
+      claimAt: "2026-07-14T08:02:33.000Z",
+      leaseExpiresAt: "2026-07-14T08:10:00.000Z",
+      prepareClaim(generation) {
+        const abandonedClaim = jobs.claimNextQueued(
+          "2026-07-14T08:02:31.000Z",
+          "budget-abandoned-worker",
+          "2026-07-14T08:02:32.000Z",
+        );
+        assert.equal(abandonedClaim?.id, generation.jobId);
+        assert.equal(abandonedClaim?.attempt, 1);
+        assert.deepEqual(
+          jobs
+            .recoverRunningJobs("2026-07-14T08:02:32.001Z")
+            .map((job) => ({ id: job.id, status: job.status })),
+          [{ id: generation.jobId, status: "interrupted" }],
+        );
+        assert.equal(jobs.getJob(generation.jobId)?.status, "interrupted");
+        assert.equal(
+          jobs.retryJob(generation.jobId, "2026-07-14T08:02:32.002Z").status,
+          "queued",
+        );
+      },
+    });
 
     const unsupportedCitations = [
       {
@@ -2872,7 +3092,7 @@ async function run() {
     migrations: WORKSPACE_MIGRATIONS,
   });
   try {
-    assert.equal(reopened.migration?.currentVersion, 18);
+    assert.equal(reopened.migration?.currentVersion, 19);
     assert.equal(
       reopened
         .prepare("SELECT value FROM assistant_legacy_sentinel WHERE id=1")

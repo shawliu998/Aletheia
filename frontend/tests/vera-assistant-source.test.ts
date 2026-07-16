@@ -125,18 +125,44 @@ test("job acceptance, replay and restart routes stay canonical and separate", ()
 });
 
 test("refresh recovery and terminal controls are explicit in the hook", () => {
+  const api = source("src/app/lib/veraAssistantApi.ts");
   const hook = source("src/app/hooks/useAssistantChat.ts");
   const assistantMessage = source(
     "src/app/components/assistant/AssistantMessage.tsx",
   );
   assert.match(hook, /Promise\.all\(\[\s*getVeraAssistantChat/);
   assert.match(hook, /listVeraAssistantJobs\(initialChatId, 20/);
-  assert.match(hook, /replay\.terminal/);
+  assert.match(hook, /collectVeraAssistantReplay/);
+  assert.match(hook, /MAX_ASSISTANT_REPLAY_PAGES = 128/);
+  assert.match(hook, /replay\.terminalEventSeen/);
+  assert.match(hook, /cursor: replay\.nextCursor/);
+  assert.match(
+    hook,
+    /events: finaliseStreamingEvents\(existing\.events \?\? \[\]\)/,
+  );
+  assert.match(hook, /detail\.messages\.map\(toUiMessage\)/);
+  assert.match(api, /MAX_MESSAGE_DURABLE_EVENTS = 10/);
+  assert.match(api, /event\.type !== "draft_created"/);
+  assert.match(api, /Assistant message durable event ownership/);
   assert.match(hook, /status === "failed"/);
   assert.match(hook, /status === "interrupted"/);
   assert.match(assistantMessage, /generation\?\.status === "cancelled"/);
   assert.match(hook, /setLoadRevision/);
   assert.match(hook, /setMessages\(\[\]\)/);
+});
+
+test("Agent-created Draft events render a Matter-safe open action", () => {
+  const api = source("src/app/lib/veraAssistantApi.ts");
+  const hook = source("src/app/hooks/useAssistantChat.ts");
+  const assistantMessage = source(
+    "src/app/components/assistant/AssistantMessage.tsx",
+  );
+  assert.match(api, /case "draft_created"/);
+  assert.match(api, /Assistant Draft route ownership/);
+  assert.match(hook, /type: "draft_created"/);
+  assert.match(assistantMessage, /assistant-draft-result-/);
+  assert.match(assistantMessage, /router\.push\(draft\.route\)/);
+  assert.doesNotMatch(assistantMessage, /window\.open\(draft\.route/);
 });
 
 test("Project Assistant document citations reuse the scoped source viewer and exact version", () => {
@@ -198,7 +224,9 @@ test("shell and Project navigation expose real Assistant routes", () => {
   const shell = source("src/app/components/vera-shell/VeraShell.tsx");
   const sidebar = source("src/app/components/vera-shell/VeraSidebar.tsx");
   const workspace = source("src/app/components/projects/ProjectWorkspace.tsx");
-  const routes = source("src/app/components/projects/WorkspaceRouteAdapter.tsx");
+  const routes = source(
+    "src/app/components/projects/WorkspaceRouteAdapter.tsx",
+  );
   assert.match(shell, /ChatHistoryProvider/);
   assert.match(rootPage, /redirect\("\/assistant"\)/);
   assert.match(assistantChatPage, /t\("assistant\.restoring"\)/);
@@ -210,5 +238,8 @@ test("shell and Project navigation expose real Assistant routes", () => {
   assert.equal(MESSAGES["en-US"].assistant.history.title, "Assistant history");
   assert.match(workspace, /id: "assistant"[^\n]+disabled: false/);
   assert.match(workspace, /routes\.assistantHref\(projectId\)/);
-  assert.match(routes, /assistantHref: \(projectId\) => `\/projects\/\$\{projectId\}\/assistant`/);
+  assert.match(
+    routes,
+    /assistantHref: \(projectId\) => `\/projects\/\$\{projectId\}\/assistant`/,
+  );
 });

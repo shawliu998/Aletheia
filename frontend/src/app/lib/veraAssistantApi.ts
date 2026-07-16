@@ -19,6 +19,7 @@ const MAX_SSE_FRAME_CHARS = 1_000_000;
 const MAX_CHAT_MESSAGES = 1_000;
 const MAX_CHAT_FILES = 50;
 const MAX_CITATIONS = 1_000;
+const MAX_MESSAGE_DURABLE_EVENTS = 10;
 const MAX_ASSISTANT_ATTEMPTS = 100;
 const MAX_ASSISTANT_EVENT_CURSOR = 2_147_483_647;
 
@@ -74,6 +75,7 @@ export interface VeraAssistantMessage {
   content: string | Array<{ type: "content"; text: string }>;
   files?: VeraAssistantFile[];
   citations?: VeraAssistantCitation[];
+  events?: VeraAssistantMessageEvent[];
   created_at: string;
 }
 
@@ -124,8 +126,13 @@ export type VeraAssistantStreamEvent =
         | "find_in_document"
         | "read_studio_document"
         | "suggest_studio_edit"
+        | "create_draft"
+        | "read_draft"
+        | "suggest_draft_edit"
         | "list_workflows"
         | "read_workflow"
+        | "run_workflow"
+        | "get_workflow_run"
         | "search_legal_sources"
         | "read_legal_source";
     }
@@ -139,9 +146,21 @@ export type VeraAssistantStreamEvent =
       total_matches: number;
     }
   | { type: "workflow_applied"; workflow_id: string; title: string }
+  | {
+      type: "draft_created";
+      draft_id: string;
+      version_id: string;
+      title: string;
+      route: string;
+    }
   | VeraAssistantCitation
   | { type: "complete"; message_id: string; job_id: string }
   | { type: "error"; code?: string; message: string };
+
+export type VeraAssistantMessageEvent = Extract<
+  VeraAssistantStreamEvent,
+  { type: "draft_created" }
+>;
 
 export interface VeraAssistantDurableEvent {
   cursor: number;
@@ -273,7 +292,11 @@ function stringValue(
   return value;
 }
 
-function nullableString(value: unknown, label: string, max = 240): string | null {
+function nullableString(
+  value: unknown,
+  label: string,
+  max = 240,
+): string | null {
   return value === null ? null : stringValue(value, label, max);
 }
 
@@ -355,12 +378,7 @@ export function parseVeraAssistantChat(value: unknown): VeraAssistantChat {
 
 function parseCapability(value: unknown) {
   const raw = record(value, "Assistant file capability");
-  exactKeys(
-    raw,
-    ["can_read", "can_download"],
-    [],
-    "Assistant file capability",
-  );
+  exactKeys(raw, ["can_read", "can_download"], [], "Assistant file capability");
   return {
     can_read: booleanValue(raw.can_read, "Assistant file read capability"),
     can_download: booleanValue(
@@ -415,12 +433,7 @@ export function parseVeraAssistantCitation(
   }
   const quotes = raw.quotes.map((item) => {
     const quote = record(item, "Assistant citation quote");
-    exactKeys(
-      quote,
-      ["page", "quote"],
-      [],
-      "Assistant citation quote",
-    );
+    exactKeys(quote, ["page", "quote"], [], "Assistant citation quote");
     return {
       page: pageValue(quote.page, "Assistant citation quote page"),
       quote: stringValue(quote.quote, "Assistant citation quote", 8_000),
@@ -445,13 +458,18 @@ function parseMessage(value: unknown): VeraAssistantMessage {
   exactKeys(
     raw,
     ["id", "chat_id", "role", "content", "created_at"],
-    ["files", "citations"],
+    ["files", "citations", "events"],
     "Assistant message",
   );
   const role = enumValue(raw.role, ["user", "assistant"] as const, "role");
   let content: VeraAssistantMessage["content"];
   if (typeof raw.content === "string") {
-    content = stringValue(raw.content, "Assistant message content", 200_000, true);
+    content = stringValue(
+      raw.content,
+      "Assistant message content",
+      200_000,
+      true,
+    );
   } else {
     if (!Array.isArray(raw.content) || raw.content.length > 1) {
       return invalid("Assistant message content");
@@ -459,7 +477,8 @@ function parseMessage(value: unknown): VeraAssistantMessage {
     content = raw.content.map((item) => {
       const block = record(item, "Assistant content block");
       exactKeys(block, ["type", "text"], [], "Assistant content block");
-      if (block.type !== "content") return invalid("Assistant content block type");
+      if (block.type !== "content")
+        return invalid("Assistant content block type");
       return {
         type: "content" as const,
         text: stringValue(block.text, "Assistant content text", 200_000, true),
@@ -468,7 +487,11 @@ function parseMessage(value: unknown): VeraAssistantMessage {
   }
   const files = raw.files;
   const citations = raw.citations;
-  if (files !== undefined && (!Array.isArray(files) || files.length > MAX_CHAT_FILES)) {
+  const events = raw.events;
+  if (
+    files !== undefined &&
+    (!Array.isArray(files) || files.length > MAX_CHAT_FILES)
+  ) {
     return invalid("Assistant message files");
   }
   if (
@@ -477,6 +500,22 @@ function parseMessage(value: unknown): VeraAssistantMessage {
   ) {
     return invalid("Assistant message citations");
   }
+  if (
+    events !== undefined &&
+    (!Array.isArray(events) || events.length > MAX_MESSAGE_DURABLE_EVENTS)
+  ) {
+    return invalid("Assistant message durable events");
+  }
+  if (events !== undefined && role !== "assistant") {
+    return invalid("Assistant message durable event ownership");
+  }
+  const durableEvents = events?.map((item) => {
+    const event = parseVeraAssistantStreamEvent(item);
+    if (event.type !== "draft_created") {
+      return invalid("Assistant message durable event type");
+    }
+    return event;
+  });
   return {
     id: uuid(raw.id, "Assistant message id"),
     chat_id: uuid(raw.chat_id, "Assistant message chat id"),
@@ -486,6 +525,7 @@ function parseMessage(value: unknown): VeraAssistantMessage {
     ...(citations === undefined
       ? {}
       : { citations: citations.map(parseVeraAssistantCitation) }),
+    ...(durableEvents === undefined ? {} : { events: durableEvents }),
     created_at: timestamp(raw.created_at, "Assistant message timestamp"),
   };
 }
@@ -502,6 +542,17 @@ export function parseVeraAssistantChatDetail(
   const messages = raw.messages.map(parseMessage);
   if (messages.some((message) => message.chat_id !== chat.id)) {
     return invalid("Assistant message ownership");
+  }
+  for (const message of messages) {
+    for (const event of message.events ?? []) {
+      if (
+        chat.project_id === null ||
+        event.route !==
+          `/projects/${chat.project_id}/documents/${event.draft_id}/studio`
+      ) {
+        return invalid("Assistant message Draft Matter ownership");
+      }
+    }
   }
   return { chat, messages };
 }
@@ -520,8 +571,14 @@ export function parseVeraAssistantAccepted(
   return {
     chat_id: uuid(raw.chat_id, "Assistant accepted chat id"),
     job_id: uuid(raw.job_id, "Assistant accepted job id"),
-    prompt_message_id: uuid(raw.prompt_message_id, "Assistant prompt message id"),
-    output_message_id: uuid(raw.output_message_id, "Assistant output message id"),
+    prompt_message_id: uuid(
+      raw.prompt_message_id,
+      "Assistant prompt message id",
+    ),
+    output_message_id: uuid(
+      raw.output_message_id,
+      "Assistant output message id",
+    ),
     status: "queued",
   };
 }
@@ -554,7 +611,10 @@ export function parseVeraAssistantGenerationStatus(
     "Assistant generation state",
   );
   const terminal = booleanValue(raw.terminal, "Assistant terminal state");
-  if (terminal !== ["complete", "failed", "cancelled", "interrupted"].includes(status)) {
+  if (
+    terminal !==
+    ["complete", "failed", "cancelled", "interrupted"].includes(status)
+  ) {
     return invalid("Assistant terminal relationship");
   }
   return {
@@ -597,8 +657,13 @@ const TOOL_NAMES = [
   "find_in_document",
   "read_studio_document",
   "suggest_studio_edit",
+  "create_draft",
+  "read_draft",
+  "suggest_draft_edit",
   "list_workflows",
   "read_workflow",
+  "run_workflow",
+  "get_workflow_run",
   "search_legal_sources",
   "read_legal_source",
 ] as const;
@@ -613,7 +678,12 @@ export function parseVeraAssistantStreamEvent(
       exactKeys(raw, ["type", "chatId"], [], "Assistant chat event");
       return { type, chatId: uuid(raw.chatId, "Assistant chat event id") };
     case "status":
-      exactKeys(raw, ["type", "job_id", "status"], [], "Assistant status event");
+      exactKeys(
+        raw,
+        ["type", "job_id", "status"],
+        [],
+        "Assistant status event",
+      );
       return {
         type,
         job_id: uuid(raw.job_id, "Assistant status job id"),
@@ -697,6 +767,30 @@ export function parseVeraAssistantStreamEvent(
         workflow_id: uuid(raw.workflow_id, "Assistant workflow id"),
         title: stringValue(raw.title, "Assistant workflow title", 240),
       };
+    case "draft_created": {
+      exactKeys(
+        raw,
+        ["type", "draft_id", "version_id", "title", "route"],
+        [],
+        "Assistant Draft event",
+      );
+      const draftId = uuid(raw.draft_id, "Assistant Draft id");
+      const route = stringValue(raw.route, "Assistant Draft route", 240);
+      if (
+        !new RegExp(
+          `^/projects/[0-9a-f-]{36}/documents/${draftId}/studio$`,
+        ).test(route)
+      ) {
+        return invalid("Assistant Draft route ownership");
+      }
+      return {
+        type,
+        draft_id: draftId,
+        version_id: uuid(raw.version_id, "Assistant Draft version id"),
+        title: stringValue(raw.title, "Assistant Draft title", 240),
+        route,
+      };
+    }
     case "citation_data":
       return parseVeraAssistantCitation(raw);
     case "complete":
@@ -712,12 +806,7 @@ export function parseVeraAssistantStreamEvent(
         job_id: uuid(raw.job_id, "Assistant completed job id"),
       };
     case "error":
-      exactKeys(
-        raw,
-        ["type", "message"],
-        ["code"],
-        "Assistant error event",
-      );
+      exactKeys(raw, ["type", "message"], ["code"], "Assistant error event");
       return {
         type,
         ...(raw.code === undefined
@@ -821,7 +910,8 @@ function validateGenerationInput(input: VeraAssistantGenerationInput): void {
   }
   if (input.chat_id) safeId(input.chat_id, "chat id");
   if (input.project_id) safeId(input.project_id, "project id");
-  if (input.model_profile_id) safeId(input.model_profile_id, "model profile id");
+  if (input.model_profile_id)
+    safeId(input.model_profile_id, "model profile id");
   for (const message of input.messages) {
     if (message.content.length > 100_000) {
       throw new VeraRuntimeConfigurationError(
@@ -848,7 +938,8 @@ export async function listVeraAssistantChats(
     query: { limit: input.limit, project_id: input.projectId },
     signal,
   });
-  if (!Array.isArray(raw) || raw.length > 100) return invalid("Assistant chat list");
+  if (!Array.isArray(raw) || raw.length > 100)
+    return invalid("Assistant chat list");
   return raw.map(parseVeraAssistantChat);
 }
 
@@ -866,11 +957,13 @@ export async function listVeraProjectAssistantChats(
   return raw.map(parseVeraAssistantChat);
 }
 
-export async function createVeraAssistantChat(input: {
-  projectId?: string | null;
-  title?: string;
-  modelProfileId?: string | null;
-} = {}): Promise<{ id: string }> {
+export async function createVeraAssistantChat(
+  input: {
+    projectId?: string | null;
+    title?: string;
+    modelProfileId?: string | null;
+  } = {},
+): Promise<{ id: string }> {
   if (input.projectId) safeId(input.projectId, "project id");
   if (input.modelProfileId) safeId(input.modelProfileId, "model profile id");
   const raw = await veraApiRequest<unknown>("/chat/create", {
@@ -993,7 +1086,8 @@ export async function replayVeraAssistantJob(
   signal?: AbortSignal,
 ): Promise<VeraAssistantReplay> {
   const headers = new Headers({ Accept: "application/json" });
-  if (cursor > 0) headers.set("Last-Event-ID", String(integer(cursor, "cursor")));
+  if (cursor > 0)
+    headers.set("Last-Event-ID", String(integer(cursor, "cursor")));
   const replay = parseVeraAssistantReplay(
     await veraApiRequest<unknown>(
       `/assistant/jobs/${safeId(jobId, "Assistant job id")}/events`,
@@ -1056,7 +1150,8 @@ export async function* parseVeraAssistantSseResponse(
           return invalid("Assistant event stream frame");
         }
         const cursor = Number(lines[0].slice(4));
-        if (!Number.isSafeInteger(cursor)) return invalid("Assistant event cursor");
+        if (!Number.isSafeInteger(cursor))
+          return invalid("Assistant event cursor");
         let value: unknown;
         try {
           value = JSON.parse(lines[1].slice(6));
@@ -1132,10 +1227,10 @@ export async function* streamVeraAssistantJob(
   while (!options.signal?.aborted) {
     const headers = new Headers({ Accept: "text/event-stream" });
     if (cursor > 0) headers.set("Last-Event-ID", String(cursor));
-    const response = await veraApiFetch(
-      `/assistant/jobs/${safeJobId}/events`,
-      { headers, signal: options.signal },
-    );
+    const response = await veraApiFetch(`/assistant/jobs/${safeJobId}/events`, {
+      headers,
+      signal: options.signal,
+    });
     let terminal = false;
     let receivedEvent = false;
     for await (const item of parseVeraAssistantSseResponse(
@@ -1202,7 +1297,10 @@ export async function cancelVeraAssistantJob(
       raw.cancel_requested,
       "Assistant cancellation request state",
     ),
-    terminal: booleanValue(raw.terminal, "Assistant cancellation terminal state"),
+    terminal: booleanValue(
+      raw.terminal,
+      "Assistant cancellation terminal state",
+    ),
   };
 }
 
