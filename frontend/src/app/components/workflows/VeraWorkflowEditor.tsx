@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { Check, EyeOff, Loader2, Plus, RefreshCw, Save, X } from "lucide-react";
 
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { PageHeader } from "@/app/components/vera-shell/PageHeader";
 import { useI18n } from "@/app/i18n";
 import { VeraApiError } from "@/app/lib/veraApi";
@@ -71,12 +72,19 @@ function normalizedColumns(
 export function VeraWorkflowEditor({
   workflowId,
   initialProjectId = null,
+  executionConstraint = "available",
 }: {
   workflowId: string;
   initialProjectId?: string | null;
+  executionConstraint?: "available" | "non_inference_only";
 }) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, errorMessage } = useI18n();
+  const workflowsHref =
+    routes.kind === "matter" && initialProjectId
+      ? routes.workflowsHref(initialProjectId)
+      : "/workflows";
   const [workflow, setWorkflow] = useState<VeraWorkflow | null>(null);
   const [definition, setDefinition] = useState<VeraWorkflowDefinition | null>(
     null,
@@ -285,7 +293,7 @@ export function VeraWorkflowEditor({
     setOperationError(null);
     try {
       await hideVeraWorkflow(workflow.id);
-      router.push("/workflows");
+      router.push(workflowsHref);
     } catch (error) {
       setOperationError(
         error instanceof VeraApiError
@@ -303,7 +311,7 @@ export function VeraWorkflowEditor({
     setOperationError(null);
     try {
       await deleteVeraWorkflow(workflow.id);
-      router.replace("/workflows");
+      router.replace(workflowsHref);
     } catch (error) {
       setOperationError(
         error instanceof VeraApiError
@@ -340,7 +348,7 @@ export function VeraWorkflowEditor({
         </p>
         <button
           type="button"
-          onClick={() => router.push("/workflows")}
+          onClick={() => router.push(workflowsHref)}
           className="rounded-full bg-gray-900 px-4 py-2 text-sm text-white"
         >
           {t("workflows.editor.back")}
@@ -356,7 +364,7 @@ export function VeraWorkflowEditor({
         breadcrumbs={[
           {
             label: t("workflows.title"),
-            onClick: () => router.push("/workflows"),
+            onClick: () => router.push(workflowsHref),
             title: t("workflows.editor.back"),
           },
           { label: workflow.metadata.title },
@@ -504,6 +512,8 @@ export function VeraWorkflowEditor({
               initialProjectId={definition.project_id ?? initialProjectId}
               boundProjectId={definition.project_id}
               configuredModelProfileId={configuredDefinitionModelId}
+              executionConstraint={executionConstraint}
+              hasPromptStep={definition.steps.some((step) => step.type === "prompt")}
             />
           </section>
         )

@@ -50,12 +50,24 @@ export interface VeraMatterProfileWire {
 
 export interface VeraMatterCapabilitiesWire {
   matter_profile: "create" | "classify" | "edit" | "unavailable";
-  inference:
-    | "workspace_compatibility"
+  assistant:
+    | "available"
+    | "require_approval"
     | "policy_gate_closed"
     | "unavailable";
-  review: "unavailable";
-  drafts: "document_scoped";
+  workflows:
+    | "available"
+    | "non_inference_only"
+    | "require_approval"
+    | "policy_gate_closed"
+    | "unavailable";
+  tabular:
+    | "available"
+    | "require_approval"
+    | "policy_gate_closed"
+    | "unavailable";
+  review: "available" | "unavailable";
+  drafts: "document_scoped" | "available" | "unavailable";
 }
 
 export interface VeraMatterWire {
@@ -72,6 +84,7 @@ export interface VeraMatterPageWire {
 
 export interface VeraMatterListQuery {
   status?: "active" | "archived";
+  profile_state?: "profiled" | "ready" | "classification_required" | "absent" | "all";
   cursor?: string;
   limit?: number;
 }
@@ -97,6 +110,48 @@ export interface VeraMatterProfileUpdateWire {
   jurisdiction?: string | null;
   represented_role?: string | null;
   objective?: string | null;
+}
+
+export interface VeraMatterProjectUpdateWire {
+  name?: string;
+  description?: string | null;
+  cm_number?: string | null;
+  practice?: string | null;
+}
+
+export interface VeraMatterUpdateWire {
+  project?: VeraMatterProjectUpdateWire;
+  profile?: VeraMatterProfileUpdateWire;
+}
+
+export const VERA_EXECUTION_LOCATIONS = [
+  "local",
+  "firm_private",
+  "confidential_remote",
+  "standard_remote",
+] as const;
+
+export type VeraExecutionLocation = (typeof VERA_EXECUTION_LOCATIONS)[number];
+export type VeraMatterExternalEgressMode =
+  | "disabled"
+  | "approval"
+  | "allowed_by_policy";
+
+export interface VeraMatterPolicyWire {
+  project_id: string;
+  external_egress_mode: VeraMatterExternalEgressMode;
+  execution_locations: VeraExecutionLocation[];
+  allow_external_legal_sources: boolean;
+  allow_word_bridge: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VeraMatterPolicyUpdateWire {
+  external_egress_mode: VeraMatterExternalEgressMode;
+  execution_locations: VeraExecutionLocation[];
+  allow_external_legal_sources: boolean;
+  allow_word_bridge: boolean;
 }
 
 const UUID =
@@ -134,7 +189,9 @@ const PROFILE_KEYS = [
 
 const CAPABILITY_KEYS = [
   "matter_profile",
-  "inference",
+  "assistant",
+  "workflows",
+  "tabular",
   "review",
   "drafts",
 ] as const;
@@ -157,6 +214,28 @@ const MATTER_CREATE_KEYS = [
   "cm_number",
   "practice",
   ...PROFILE_CREATE_KEYS,
+] as const;
+const MATTER_PROJECT_UPDATE_KEYS = [
+  "name",
+  "description",
+  "cm_number",
+  "practice",
+] as const;
+const MATTER_UPDATE_KEYS = ["project", "profile"] as const;
+const POLICY_KEYS = [
+  "project_id",
+  "external_egress_mode",
+  "execution_locations",
+  "allow_external_legal_sources",
+  "allow_word_bridge",
+  "created_at",
+  "updated_at",
+] as const;
+const POLICY_UPDATE_KEYS = [
+  "external_egress_mode",
+  "execution_locations",
+  "allow_external_legal_sources",
+  "allow_word_bridge",
 ] as const;
 
 function invalidWire(label: string): never {
@@ -348,16 +427,30 @@ function parseCapabilities(value: unknown): VeraMatterCapabilitiesWire {
   ) {
     invalidWire("Matter Profile capability");
   }
+  const inferenceCapabilities = [
+    "available",
+    "require_approval",
+    "policy_gate_closed",
+    "unavailable",
+  ];
+  if (!inferenceCapabilities.includes(String(wire.assistant)))
+    invalidWire("Matter Assistant capability");
   if (
-    !["workspace_compatibility", "policy_gate_closed", "unavailable"].includes(
-      String(wire.inference),
+    ![...inferenceCapabilities, "non_inference_only"].includes(
+      String(wire.workflows),
     )
-  ) {
-    invalidWire("Matter inference capability");
-  }
-  if (wire.review !== "unavailable" || wire.drafts !== "document_scoped") {
-    invalidWire("Matter feature capabilities");
-  }
+  )
+    invalidWire("Matter Workflow capability");
+  if (!inferenceCapabilities.includes(String(wire.tabular)))
+    invalidWire("Matter Tabular capability");
+  if (!["available", "unavailable"].includes(String(wire.review)))
+    invalidWire("Matter Review capability");
+  if (
+    !["document_scoped", "available", "unavailable"].includes(
+      String(wire.drafts),
+    )
+  )
+    invalidWire("Matter Draft capability");
   return wire as unknown as VeraMatterCapabilitiesWire;
 }
 
@@ -376,9 +469,11 @@ function expectedPresentation(
       profile_state: profileState,
       capabilities: {
         matter_profile: "unavailable",
-        inference: "unavailable",
+        assistant: "unavailable",
+        workflows: "unavailable",
+        tabular: "unavailable",
         review: "unavailable",
-        drafts: "document_scoped",
+        drafts: "unavailable",
       },
     };
   }
@@ -387,7 +482,9 @@ function expectedPresentation(
       profile_state: "absent",
       capabilities: {
         matter_profile: "create",
-        inference: "workspace_compatibility",
+        assistant: "unavailable",
+        workflows: "non_inference_only",
+        tabular: "unavailable",
         review: "unavailable",
         drafts: "document_scoped",
       },
@@ -398,7 +495,9 @@ function expectedPresentation(
       profile.workspace_type === null ? "classification_required" : "ready",
     capabilities: {
       matter_profile: profile.workspace_type === null ? "classify" : "edit",
-      inference: "policy_gate_closed",
+      assistant: "unavailable",
+      workflows: "non_inference_only",
+      tabular: "unavailable",
       review: "unavailable",
       drafts: "document_scoped",
     },
@@ -428,9 +527,12 @@ export function parseVeraMatterWire(value: unknown): VeraMatterWire {
   if (
     wire.profile_state !== expected.profile_state ||
     capabilities.matter_profile !== expected.capabilities.matter_profile ||
-    capabilities.inference !== expected.capabilities.inference ||
-    capabilities.review !== expected.capabilities.review ||
-    capabilities.drafts !== expected.capabilities.drafts
+    (project.status !== "active" &&
+      (capabilities.assistant !== "unavailable" ||
+        capabilities.workflows !== "unavailable" ||
+        capabilities.tabular !== "unavailable" ||
+        capabilities.review !== "unavailable" ||
+        capabilities.drafts !== "unavailable"))
   ) {
     invalidWire("Matter capability state");
   }
@@ -440,6 +542,40 @@ export function parseVeraMatterWire(value: unknown): VeraMatterWire {
     profile_state: wire.profile_state as VeraMatterProfileState,
     capabilities,
   };
+}
+
+export function parseVeraMatterPolicyWire(value: unknown): VeraMatterPolicyWire {
+  const wire = record(value, "Matter Policy response");
+  exactKeys(wire, POLICY_KEYS, "Matter Policy response");
+  uuid(wire.project_id, "Matter Policy project id");
+  if (
+    !["disabled", "approval", "allowed_by_policy"].includes(
+      String(wire.external_egress_mode),
+    )
+  ) {
+    invalidWire("Matter Policy external egress mode");
+  }
+  if (
+    !Array.isArray(wire.execution_locations) ||
+    wire.execution_locations.length > VERA_EXECUTION_LOCATIONS.length ||
+    wire.execution_locations.some(
+      (location) =>
+        !VERA_EXECUTION_LOCATIONS.includes(location as VeraExecutionLocation),
+    ) ||
+    new Set(wire.execution_locations).size !== wire.execution_locations.length
+  ) {
+    invalidWire("Matter Policy execution locations");
+  }
+  if (
+    typeof wire.allow_external_legal_sources !== "boolean" ||
+    typeof wire.allow_word_bridge !== "boolean"
+  ) {
+    invalidWire("Matter Policy boolean declarations");
+  }
+  const createdAt = canonicalUtc(wire.created_at, "Matter Policy created timestamp");
+  const updatedAt = canonicalUtc(wire.updated_at, "Matter Policy updated timestamp");
+  if (updatedAt < createdAt) invalidWire("Matter Policy timestamp ordering");
+  return wire as unknown as VeraMatterPolicyWire;
 }
 
 export function parseVeraMatterPageWire(value: unknown): VeraMatterPageWire {
@@ -521,12 +657,83 @@ function validateMatterCreateInput(input: unknown) {
   inputText(wire.practice, "Matter practice area", 160, true);
 }
 
+function validateMatterUpdateInput(input: unknown) {
+  const wire = exactInputKeys(input, MATTER_UPDATE_KEYS, "Matter update request");
+  if (wire.project === undefined && wire.profile === undefined) {
+    invalidInput("Matter update request");
+  }
+  if (wire.project !== undefined) {
+    const project = exactInputKeys(
+      wire.project,
+      MATTER_PROJECT_UPDATE_KEYS,
+      "Matter Project update request",
+    );
+    if (
+      Object.keys(project).length === 0 ||
+      Object.values(project).some((value) => value === undefined)
+    ) {
+      invalidInput("Matter Project update request");
+    }
+    inputText(project.name, "Matter Project name", 240, false);
+    inputText(project.description, "Matter Project description", 2_000, true);
+    inputText(project.cm_number, "Matter Project Matter number", 160, true);
+    inputText(project.practice, "Matter Project practice area", 160, true);
+  }
+  if (wire.profile !== undefined) validateProfileInput(wire.profile, "update");
+}
+
+function validateMatterPolicyUpdateInput(input: unknown) {
+  const wire = exactInputKeys(
+    input,
+    POLICY_UPDATE_KEYS,
+    "Matter Policy update request",
+  );
+  if (
+    Object.keys(wire).length !== POLICY_UPDATE_KEYS.length ||
+    POLICY_UPDATE_KEYS.some((key) => !Object.hasOwn(wire, key))
+  ) {
+    invalidInput("Matter Policy update request");
+  }
+  if (
+    !["disabled", "approval", "allowed_by_policy"].includes(
+      String(wire.external_egress_mode),
+    )
+  ) {
+    invalidInput("Matter Policy external egress mode");
+  }
+  if (
+    !Array.isArray(wire.execution_locations) ||
+    wire.execution_locations.length > VERA_EXECUTION_LOCATIONS.length ||
+    wire.execution_locations.some(
+      (location) =>
+        !VERA_EXECUTION_LOCATIONS.includes(location as VeraExecutionLocation),
+    ) ||
+    new Set(wire.execution_locations).size !== wire.execution_locations.length
+  ) {
+    invalidInput("Matter Policy execution locations");
+  }
+  if (
+    typeof wire.allow_external_legal_sources !== "boolean" ||
+    typeof wire.allow_word_bridge !== "boolean"
+  ) {
+    invalidInput("Matter Policy boolean declarations");
+  }
+}
+
 function matterQuery(query: unknown): VeraQuery {
   const wire = exactInputKeys(
     query,
-    ["status", "cursor", "limit"],
+    ["status", "profile_state", "cursor", "limit"],
     "Matter list query",
   );
+  if (
+    wire.profile_state !== undefined &&
+    !["profiled", "ready", "classification_required", "absent", "all"].includes(
+      String(wire.profile_state),
+    )
+  ) {
+    invalidInput("Matter list profile state");
+  }
   if (
     wire.status !== undefined &&
     wire.status !== "active" &&
@@ -575,6 +782,48 @@ export async function getVeraMatter(
       `/matters/${safeId(projectId, "Matter project id")}`,
       { signal },
     ),
+  );
+}
+
+export async function updateVeraMatter(
+  projectId: string,
+  input: VeraMatterUpdateWire,
+  signal?: AbortSignal,
+): Promise<VeraMatterWire> {
+  validateMatterUpdateInput(input);
+  return parseVeraMatterWire(
+    await veraApiRequest<unknown>(
+      `/matters/${safeId(projectId, "Matter project id")}`,
+      { method: "PATCH", json: input, signal },
+    ),
+  );
+}
+
+function matterPolicyPath(projectId: string): string {
+  return `/matters/${safeId(projectId, "Matter project id")}/policy`;
+}
+
+export async function getVeraMatterPolicy(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<VeraMatterPolicyWire> {
+  return parseVeraMatterPolicyWire(
+    await veraApiRequest<unknown>(matterPolicyPath(projectId), { signal }),
+  );
+}
+
+export async function updateVeraMatterPolicy(
+  projectId: string,
+  input: VeraMatterPolicyUpdateWire,
+  signal?: AbortSignal,
+): Promise<VeraMatterPolicyWire> {
+  validateMatterPolicyUpdateInput(input);
+  return parseVeraMatterPolicyWire(
+    await veraApiRequest<unknown>(matterPolicyPath(projectId), {
+      method: "PATCH",
+      json: input,
+      signal,
+    }),
   );
 }
 

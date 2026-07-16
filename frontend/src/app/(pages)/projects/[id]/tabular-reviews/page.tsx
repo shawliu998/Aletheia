@@ -10,6 +10,7 @@ import {
   ProjectSectionToolbar,
   useProjectWorkspace,
 } from "@/app/components/projects/ProjectWorkspace";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { useI18n } from "@/app/i18n";
 import {
@@ -24,6 +25,7 @@ const PAGE_SIZE = 50;
 
 export default function ProjectTabularReviewsPage() {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t, errorMessage } = useI18n();
   const { projectId, project, documents, search } = useProjectWorkspace();
   const [reviews, setReviews] = useState<VeraTabularReview[]>([]);
@@ -74,7 +76,7 @@ export default function ProjectTabularReviewsPage() {
     try {
       const created = await createVeraTabularReview(input);
       setNewModalOpen(false);
-      router.push(`/projects/${projectId}/tabular-reviews/${created.id}`);
+      router.push(routes.tabularReviewHref(projectId, created.id));
     } catch (reason) {
       setError(errorMessage(reason as Error));
       throw reason;
@@ -151,7 +153,7 @@ export default function ProjectTabularReviewsPage() {
         onSelectionChange={setSelectedIds}
         onCreate={() => setNewModalOpen(true)}
         onOpen={(review) =>
-          router.push(`/projects/${projectId}/tabular-reviews/${review.id}`)
+          router.push(routes.tabularReviewHref(projectId, review.id))
         }
         onDelete={(review) => {
           setDeleteReview(review);

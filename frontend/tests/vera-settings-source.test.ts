@@ -66,6 +66,7 @@ test("Settings implementation contains no cloud-auth or browser-storage fallback
     "src/app/components/models/SettingsDropdown.tsx",
     "src/app/components/models/ModelProfileForm.tsx",
     "src/app/components/models/ModelProfileCard.tsx",
+    "src/app/components/models/ModelPrivacyForm.tsx",
     "src/app/components/models/ModelCredentialForm.tsx",
     "src/app/components/models/modelCredentialSubmission.ts",
     "src/app/contexts/VeraSettingsContext.tsx",
@@ -199,4 +200,29 @@ test("late model-list responses cannot overwrite newer status or mutations", () 
     (context.match(/modelsRequestSequence\.current \+= 1/g) ?? []).length >= 3,
     "status reloads and local mutations invalidate stale model lists",
   );
+});
+
+test("model privacy declarations are explicit, complete, and never URL-inferred", () => {
+  const form = source("src/app/components/models/ModelPrivacyForm.tsx");
+  const api = source("src/app/lib/veraModelSettingsApi.ts");
+  const card = source("src/app/components/models/ModelProfileCard.tsx");
+  const loadEffect = form.slice(
+    form.indexOf("useEffect(() =>"),
+    form.indexOf("const input = useMemo"),
+  );
+
+  assert.match(card, /<ModelPrivacyForm profile=\{profile\} \/>/);
+  assert.match(form, /aria-label=\{`\$\{profile\.name\} · \$\{t\("settings\.models\.privacy\.title"\)\}`\}/);
+  assert.match(form, /cause instanceof VeraApiError && cause\.status === 404/);
+  assert.match(form, /const EMPTY_DRAFT:[\s\S]*executionLocation: ""/);
+  assert.match(form, /sensitiveDataAllowed: null/);
+  assert.match(form, /updateVeraModelPrivacyDeclaration\(profile\.id, input\)/);
+  assert.doesNotMatch(loadEffect, /updateVeraModelPrivacyDeclaration/);
+  assert.match(form, /localhostWarning/);
+  assert.match(form, /unknownWarning/);
+  assert.match(api, /declaration_basis: "user_or_admin_declared"/);
+  assert.match(api, /configured: true/);
+  assert.match(api, /model_profile_enabled: boolean/);
+  assert.match(api, /Object\.keys\(raw\)\.length !== keys\.length/);
+  assert.doesNotMatch(form, /credential|api[_-]?key|secret/i);
 });

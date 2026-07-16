@@ -157,6 +157,49 @@ export interface VeraModelProfileMutation {
   capabilities?: VeraModelCapabilities;
 }
 
+export const VERA_MODEL_EXECUTION_LOCATIONS = [
+  "local",
+  "firm_private",
+  "confidential_remote",
+  "standard_remote",
+] as const;
+export const VERA_MODEL_RETENTION_VALUES = [
+  "zero",
+  "provider_declared",
+  "unknown",
+] as const;
+export const VERA_MODEL_TRAINING_USE_VALUES = [
+  "prohibited",
+  "provider_declared",
+  "unknown",
+] as const;
+
+export type VeraModelExecutionLocation =
+  (typeof VERA_MODEL_EXECUTION_LOCATIONS)[number];
+export type VeraModelRetention = (typeof VERA_MODEL_RETENTION_VALUES)[number];
+export type VeraModelTrainingUse =
+  (typeof VERA_MODEL_TRAINING_USE_VALUES)[number];
+
+export interface VeraModelPrivacyDeclaration {
+  model_profile_id: string;
+  configured: true;
+  declaration_basis: "user_or_admin_declared";
+  model_profile_enabled: boolean;
+  execution_location: VeraModelExecutionLocation;
+  retention: VeraModelRetention;
+  training_use: VeraModelTrainingUse;
+  sensitive_data_allowed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VeraModelPrivacyDeclarationInput {
+  execution_location: VeraModelExecutionLocation;
+  retention: VeraModelRetention;
+  training_use: VeraModelTrainingUse;
+  sensitive_data_allowed: boolean;
+}
+
 const PROVIDERS = new Set<string>(VERA_MODEL_PROVIDERS);
 const CONNECTION_TEST_ERROR_CODES = new Set<string>(
   VERA_MODEL_CONNECTION_TEST_ERROR_CODES,
@@ -838,6 +881,65 @@ export function parseVeraModelSettingsStatus(
   };
 }
 
+export function parseVeraModelPrivacyDeclaration(
+  value: unknown,
+): VeraModelPrivacyDeclaration {
+  assertNoVeraModelSecretFields(value, "model privacy declaration");
+  const raw = record(value, "model privacy declaration");
+  exactKeys(
+    raw,
+    [
+      "model_profile_id",
+      "configured",
+      "declaration_basis",
+      "model_profile_enabled",
+      "execution_location",
+      "retention",
+      "training_use",
+      "sensitive_data_allowed",
+      "created_at",
+      "updated_at",
+    ],
+    "model privacy declaration",
+  );
+  const createdAt = timestamp(raw.created_at, "model privacy created timestamp");
+  const updatedAt = timestamp(raw.updated_at, "model privacy updated timestamp");
+  if (updatedAt < createdAt) invalidWire("model privacy timestamp ordering");
+  return {
+    model_profile_id: uuid(raw.model_profile_id, "model privacy profile id"),
+    configured: literalBoolean(raw.configured, true, "model privacy configured state"),
+    declaration_basis:
+      raw.declaration_basis === "user_or_admin_declared"
+        ? "user_or_admin_declared"
+        : invalidWire("model privacy declaration basis"),
+    model_profile_enabled: booleanValue(
+      raw.model_profile_enabled,
+      "model privacy profile enabled state",
+    ),
+    execution_location: enumValue(
+      raw.execution_location,
+      VERA_MODEL_EXECUTION_LOCATIONS,
+      "model privacy execution location",
+    ),
+    retention: enumValue(
+      raw.retention,
+      VERA_MODEL_RETENTION_VALUES,
+      "model privacy retention",
+    ),
+    training_use: enumValue(
+      raw.training_use,
+      VERA_MODEL_TRAINING_USE_VALUES,
+      "model privacy training use",
+    ),
+    sensitive_data_allowed: booleanValue(
+      raw.sensitive_data_allowed,
+      "model privacy sensitive-data declaration",
+    ),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
 function invalidRequest(message: string): never {
   throw new VeraRuntimeConfigurationError(message);
 }
@@ -1040,6 +1142,33 @@ function validatedModelMutation(
   return mutation;
 }
 
+function validatedModelPrivacyDeclaration(
+  value: VeraModelPrivacyDeclarationInput,
+): VeraModelPrivacyDeclarationInput {
+  const raw = inputRecord(value, "model privacy declaration");
+  const keys = [
+    "execution_location",
+    "retention",
+    "training_use",
+    "sensitive_data_allowed",
+  ] as const;
+  if (
+    Object.keys(raw).length !== keys.length ||
+    keys.some((key) => !Object.hasOwn(raw, key)) ||
+    !VERA_MODEL_EXECUTION_LOCATIONS.includes(
+      raw.execution_location as VeraModelExecutionLocation,
+    ) ||
+    !VERA_MODEL_RETENTION_VALUES.includes(raw.retention as VeraModelRetention) ||
+    !VERA_MODEL_TRAINING_USE_VALUES.includes(
+      raw.training_use as VeraModelTrainingUse,
+    ) ||
+    typeof raw.sensitive_data_allowed !== "boolean"
+  ) {
+    return invalidRequest("The Vera model privacy declaration is invalid.");
+  }
+  return raw as unknown as VeraModelPrivacyDeclarationInput;
+}
+
 function modelPath(id: string, suffix = ""): string {
   if (!UUID_PATTERN.test(id)) {
     throw new VeraRuntimeConfigurationError(
@@ -1114,6 +1243,32 @@ export async function updateVeraModelProfile(
     json: validated,
   });
   return parseVeraModelProfile(raw);
+}
+
+export async function getVeraModelPrivacyDeclaration(
+  id: string,
+  options?: Pick<VeraApiRequestOptions, "signal">,
+): Promise<VeraModelPrivacyDeclaration> {
+  const raw = await veraApiRequest<unknown>(modelPath(id, "/privacy"), {
+    ...requestOptions(options),
+  });
+  const declaration = parseVeraModelPrivacyDeclaration(raw);
+  if (declaration.model_profile_id !== id) invalidWire("model privacy ownership");
+  return declaration;
+}
+
+export async function updateVeraModelPrivacyDeclaration(
+  id: string,
+  input: VeraModelPrivacyDeclarationInput,
+): Promise<VeraModelPrivacyDeclaration> {
+  const validated = validatedModelPrivacyDeclaration(input);
+  const raw = await veraApiRequest<unknown>(modelPath(id, "/privacy"), {
+    method: "PATCH",
+    json: validated,
+  });
+  const declaration = parseVeraModelPrivacyDeclaration(raw);
+  if (declaration.model_profile_id !== id) invalidWire("model privacy ownership");
+  return declaration;
 }
 
 export async function deleteVeraModelProfile(id: string): Promise<void> {

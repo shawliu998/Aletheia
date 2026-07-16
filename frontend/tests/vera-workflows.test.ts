@@ -810,7 +810,7 @@ test("Workflow UI retains pinned Mike provenance and connects only durable local
   assert.match(runPanel, /step\.input/);
   assert.match(runPanel, /step\.output/);
   assert.match(runPanel, /workflow\.metadata\.type === "tabular"/);
-  assert.match(runPanel, /router\.push\("\/projects"\)/);
+  assert.match(runPanel, /router\.push\(routes\.collectionHref\)/);
   assert.match(adapter, /assertNoVeraWorkflowSensitiveFields/);
   assert.match(adapter, /STRICT_UTC_ISO_MILLISECONDS_PATTERN/);
   assert.match(adapter, /parseVeraWorkflowDefinition/);

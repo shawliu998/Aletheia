@@ -198,6 +198,7 @@ test("shell and Project navigation expose real Assistant routes", () => {
   const shell = source("src/app/components/vera-shell/VeraShell.tsx");
   const sidebar = source("src/app/components/vera-shell/VeraSidebar.tsx");
   const workspace = source("src/app/components/projects/ProjectWorkspace.tsx");
+  const routes = source("src/app/components/projects/WorkspaceRouteAdapter.tsx");
   assert.match(shell, /ChatHistoryProvider/);
   assert.match(rootPage, /redirect\("\/assistant"\)/);
   assert.match(assistantChatPage, /t\("assistant\.restoring"\)/);
@@ -208,5 +209,6 @@ test("shell and Project navigation expose real Assistant routes", () => {
   assert.equal(MESSAGES["zh-CN"].assistant.history.title, "助手历史");
   assert.equal(MESSAGES["en-US"].assistant.history.title, "Assistant history");
   assert.match(workspace, /id: "assistant"[^\n]+disabled: false/);
-  assert.match(workspace, /`\/projects\/\$\{projectId\}\/assistant`/);
+  assert.match(workspace, /routes\.assistantHref\(projectId\)/);
+  assert.match(routes, /assistantHref: \(projectId\) => `\/projects\/\$\{projectId\}\/assistant`/);
 });

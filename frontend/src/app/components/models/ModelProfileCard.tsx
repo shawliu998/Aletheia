@@ -30,6 +30,7 @@ import {
 } from "@/app/(pages)/settings/accountStyles";
 import { ModelCredentialForm } from "./ModelCredentialForm";
 import { veraModelProviderLabel } from "./ModelProfileForm";
+import { ModelPrivacyForm } from "./ModelPrivacyForm";
 
 type Operation =
     | "test"
@@ -191,6 +192,8 @@ export function ModelProfileCard({
                         })}
                     />
                 )}
+
+                <ModelPrivacyForm profile={profile} />
 
                 <div className="flex flex-wrap items-center gap-2 border-y border-gray-200 py-3 dark:border-white/10">
                     <button
