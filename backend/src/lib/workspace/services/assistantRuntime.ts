@@ -38,6 +38,8 @@ const AssistantToolNameSchema = z.enum([
   "suggest_studio_edit",
   "list_workflows",
   "read_workflow",
+  "search_legal_sources",
+  "read_legal_source",
 ]);
 const TOOL_EVENT_TYPES = new Set([
   "doc_read_start",

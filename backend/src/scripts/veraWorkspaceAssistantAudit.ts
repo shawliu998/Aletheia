@@ -1045,7 +1045,7 @@ async function run() {
     );
 
     const currentMigration = database.runMigrations(WORKSPACE_MIGRATIONS);
-    assert.equal(currentMigration.currentVersion, 17);
+    assert.equal(currentMigration.currentVersion, 18);
     markProfileReady(database, profileId);
 
     const projects = new ProjectsRepository(database);
@@ -2872,7 +2872,7 @@ async function run() {
     migrations: WORKSPACE_MIGRATIONS,
   });
   try {
-    assert.equal(reopened.migration?.currentVersion, 17);
+    assert.equal(reopened.migration?.currentVersion, 18);
     assert.equal(
       reopened
         .prepare("SELECT value FROM assistant_legacy_sentinel WHERE id=1")

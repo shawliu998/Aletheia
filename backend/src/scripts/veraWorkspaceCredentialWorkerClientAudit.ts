@@ -30,6 +30,14 @@ const binding = {
   canonicalOrigin: "https://api.openai.com",
 };
 const secret = "client-secret-must-not-appear-in-errors";
+const legalProfileId = "47f4590c-ce6a-40f4-8867-1eb61365e90a";
+const legalReference =
+  `keychain://vera/legal-provider/${legalProfileId}/fedcba9876543210`;
+const legalBinding = {
+  profileId: legalProfileId,
+  provider: "yuandian" as const,
+  endpointSetId: "yuandian-official-mcp-v1" as const,
+};
 
 type RequestEnvelope = {
   schema: string;
@@ -153,6 +161,64 @@ async function auditLifecycleAndStrictResponses() {
     client.capabilities(),
     CredentialWorkerUnavailableError,
   );
+}
+
+async function auditLegalProviderCredentialIsolation() {
+  const port = new FakePort((request) => {
+    if (request.operation === "ping") {
+      return success(request, {
+        available: true,
+        secretReadbackToRenderer: false,
+      });
+    }
+    if (request.operation === "legal_store") {
+      assert.deepEqual(request.payload, {
+        reference: legalReference,
+        binding: legalBinding,
+        secret,
+      });
+      return success(request, { stored: true });
+    }
+    if (request.operation === "legal_resolve") {
+      assert.deepEqual(request.payload, {
+        reference: legalReference,
+        binding: legalBinding,
+      });
+      return success(request, { secret });
+    }
+    if (request.operation === "legal_delete") {
+      assert.deepEqual(request.payload, {
+        reference: legalReference,
+        binding: legalBinding,
+      });
+      return success(request, { deleted: true });
+    }
+    throw new Error("unexpected operation");
+  });
+  const client = new CredentialWorkerRpcClient(port, 500);
+  await client.capabilities();
+  await client.storeLegalProviderCredential({
+    reference: legalReference,
+    binding: legalBinding,
+    secret,
+  });
+  assert.equal(
+    await client.resolveLegalProviderCredential({
+      reference: legalReference,
+      binding: legalBinding,
+    }),
+    secret,
+  );
+  await client.deleteLegalProviderCredential({
+    reference: legalReference,
+    binding: legalBinding,
+  });
+  assert.deepEqual(
+    port.requests.map((request) => request.operation),
+    ["ping", "legal_store", "legal_resolve", "legal_delete"],
+  );
+  assert.equal(JSON.stringify(port.requests).includes("model-profile"), false);
+  client.close();
 }
 
 async function auditFailureClassificationAndMalformedReplies() {
@@ -495,6 +561,7 @@ function auditStaticBoundary() {
 
 async function main() {
   await auditLifecycleAndStrictResponses();
+  await auditLegalProviderCredentialIsolation();
   await auditFailureClassificationAndMalformedReplies();
   await auditTimeoutDisconnectAndConcurrencyBound();
   await auditSecretByteBoundary();
@@ -516,6 +583,7 @@ async function main() {
           "8,192-byte bounded legacy resolve compatibility",
           "retrying readiness handshake and one-shot transferred-port bootstrap",
           "secret-free errors and no renderer bridge",
+          "dedicated legal-provider operations remain model-profile isolated",
         ],
       },
       null,

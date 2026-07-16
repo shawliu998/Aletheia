@@ -166,6 +166,17 @@ test("Assistant parser rejects secrets and raw provider payloads recursively", (
     () => parseVeraAssistantStreamEvent({ type: "content_delta", text: "ok", extra: true }),
     VeraApiError,
   );
+  for (const name of [
+    "read_studio_document",
+    "suggest_studio_edit",
+    "search_legal_sources",
+    "read_legal_source",
+  ] as const) {
+    assert.deepEqual(parseVeraAssistantStreamEvent({ type: "tool_call_start", name }), {
+      type: "tool_call_start",
+      name,
+    });
+  }
 });
 
 test("durable replay validates terminal attempts, ordered cursors, and exact events", () => {

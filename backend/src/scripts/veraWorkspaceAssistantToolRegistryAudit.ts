@@ -100,7 +100,7 @@ async function assertRegistrationFailsClosed() {
     new WorkspaceAssistantToolRegistry([emptyModule]).registeredTools(
       context("empty"),
     ),
-    /registered no tools/i,
+    /registered no active tools/i,
   );
 
   const duplicateRegistry = new WorkspaceAssistantToolRegistry([
@@ -128,7 +128,7 @@ async function assertRegistrationFailsClosed() {
   definitions = [];
   await assert.rejects(
     refreshRegistry.registeredTools(refreshContext),
-    /registered no tools/i,
+    /registered no active tools/i,
   );
   await assert.rejects(
     refreshRegistry.execute({
@@ -137,6 +137,65 @@ async function assertRegistrationFailsClosed() {
       signal: new AbortController().signal,
     }),
     /not registered for this job attempt/i,
+  );
+}
+
+async function assertOptionalEmptyModulesAreInactive() {
+  let inactivePolicyCalls = 0;
+  let inactiveExecuteCalls = 0;
+  let activePolicyCalls = 0;
+  const inactive = module({
+    id: "optional-legal",
+    adapterId: "optional-legal-adapter",
+    tools: [],
+    assertModelUse() {
+      inactivePolicyCalls += 1;
+    },
+    async execute() {
+      inactiveExecuteCalls += 1;
+      return { content: "must-not-run" };
+    },
+  });
+  const documents = module({
+    id: "documents-active",
+    adapterId: WORKSPACE_ASSISTANT_DOCUMENT_TOOL_ADAPTER_ID,
+    assertModelUse() {
+      activePolicyCalls += 1;
+    },
+  });
+  const registry = new WorkspaceAssistantToolRegistry([documents, inactive]);
+  const toolContext = context("optional-empty");
+  const registration = await registry.registeredTools(toolContext);
+  assert.deepEqual(registration.tools, [LIST_TOOL]);
+  assert.equal(
+    registration.adapterId,
+    WORKSPACE_ASSISTANT_DOCUMENT_TOOL_ADAPTER_ID,
+  );
+  await registry.assertModelUse(toolContext);
+  assert.equal(activePolicyCalls, 1);
+  assert.equal(inactivePolicyCalls, 0);
+  assert.equal(
+    (
+      await registry.execute({
+        context: toolContext,
+        call: call(),
+        signal: new AbortController().signal,
+      })
+    ).content,
+    "ok",
+  );
+  assert.equal(inactiveExecuteCalls, 0);
+
+  const invalidModule = {
+    ...inactive,
+    registeredTools: async () => null,
+  } as unknown as AssistantToolModule;
+  await assert.rejects(
+    new WorkspaceAssistantToolRegistry([
+      documents,
+      invalidModule,
+    ]).registeredTools(context("invalid-optional")),
+    /module registration is invalid/i,
   );
 }
 
@@ -412,6 +471,7 @@ async function assertModelPolicyAndBoundedEviction() {
 async function main() {
   await assertConstructionFailsClosed();
   await assertRegistrationFailsClosed();
+  await assertOptionalEmptyModulesAreInactive();
   await assertExactAttemptRouting();
   await assertDocumentWrapperPreservesDelegateBehaviour();
   await assertConcurrentOlderAttemptCannotReopenRoute();

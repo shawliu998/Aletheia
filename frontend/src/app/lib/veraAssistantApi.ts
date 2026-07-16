@@ -122,8 +122,12 @@ export type VeraAssistantStreamEvent =
         | "read_document"
         | "fetch_documents"
         | "find_in_document"
+        | "read_studio_document"
+        | "suggest_studio_edit"
         | "list_workflows"
-        | "read_workflow";
+        | "read_workflow"
+        | "search_legal_sources"
+        | "read_legal_source";
     }
   | { type: "doc_read_start"; filename: string }
   | { type: "doc_read"; filename: string; document_id?: string }
@@ -591,8 +595,12 @@ const TOOL_NAMES = [
   "read_document",
   "fetch_documents",
   "find_in_document",
+  "read_studio_document",
+  "suggest_studio_edit",
   "list_workflows",
   "read_workflow",
+  "search_legal_sources",
+  "read_legal_source",
 ] as const;
 
 export function parseVeraAssistantStreamEvent(

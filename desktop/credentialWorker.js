@@ -6,8 +6,10 @@ const {
   WORKSPACE_MODEL_CREDENTIAL_SERVICE,
   readGenericPassword,
   workspaceModelCredentialLocator,
+  workspaceLegalProviderCredentialLocator,
   writeGenericPassword,
   deleteWorkspaceModelCredential,
+  deleteWorkspaceLegalProviderCredential,
 } = require("./macOsKeychain");
 
 const CREDENTIAL_RPC_SCHEMA = "vera-credential-rpc-v1";
@@ -23,7 +25,15 @@ const PROVIDERS = new Set([
   "gemini",
   "openai_compatible",
 ]);
-const OPERATIONS = new Set(["ping", "store", "resolve", "delete"]);
+const OPERATIONS = new Set([
+  "ping",
+  "store",
+  "resolve",
+  "delete",
+  "legal_store",
+  "legal_resolve",
+  "legal_delete",
+]);
 
 class CredentialWorkerProtocolError extends Error {
   constructor() {
@@ -78,6 +88,26 @@ function parseBinding(value) {
   };
 }
 
+function parseLegalProviderBinding(value) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["profileId", "provider", "endpointSetId"]) ||
+    typeof value.profileId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value.profileId,
+    ) ||
+    value.provider !== "yuandian" ||
+    value.endpointSetId !== "yuandian-official-mcp-v1"
+  ) {
+    throw new CredentialWorkerProtocolError();
+  }
+  return {
+    profileId: value.profileId.toLowerCase(),
+    provider: "yuandian",
+    endpointSetId: "yuandian-official-mcp-v1",
+  };
+}
+
 function parseLocatorPayload(value, includeSecret) {
   const keys = includeSecret
     ? ["reference", "binding", "secret"]
@@ -94,6 +124,38 @@ function parseLocatorPayload(value, includeSecret) {
   // This validates the modern locator, profile UUID, provider, origin and the
   // exact deterministic account without returning it across the process port.
   workspaceModelCredentialLocator({
+    reference: value.reference,
+    binding,
+  });
+  if (includeSecret) {
+    if (
+      typeof value.secret !== "string" ||
+      value.secret.length === 0 ||
+      /[\r\n]/.test(value.secret) ||
+      Buffer.byteLength(value.secret, "utf8") >
+        MAX_MODEL_CREDENTIAL_STORE_SECRET_BYTES
+    ) {
+      throw new CredentialWorkerProtocolError();
+    }
+    return { reference: value.reference, binding, secret: value.secret };
+  }
+  return { reference: value.reference, binding };
+}
+
+function parseLegalProviderLocatorPayload(value, includeSecret) {
+  const keys = includeSecret
+    ? ["reference", "binding", "secret"]
+    : ["reference", "binding"];
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, keys) ||
+    typeof value.reference !== "string" ||
+    value.reference.length > 256
+  ) {
+    throw new CredentialWorkerProtocolError();
+  }
+  const binding = parseLegalProviderBinding(value.binding);
+  workspaceLegalProviderCredentialLocator({
     reference: value.reference,
     binding,
   });
@@ -131,10 +193,16 @@ function parseRequest(value) {
     }
     return { id: value.id, operation: value.operation, payload: {} };
   }
+  const legalOperation = value.operation.startsWith("legal_");
   return {
     id: value.id,
     operation: value.operation,
-    payload: parseLocatorPayload(value.payload, value.operation === "store"),
+    payload: legalOperation
+      ? parseLegalProviderLocatorPayload(
+          value.payload,
+          value.operation === "legal_store",
+        )
+      : parseLocatorPayload(value.payload, value.operation === "store"),
   };
 }
 
@@ -157,6 +225,9 @@ function createCredentialWorkerHandler(dependencies = {}) {
   const remove =
     dependencies.deleteWorkspaceModelCredential ??
     deleteWorkspaceModelCredential;
+  const removeLegal =
+    dependencies.deleteWorkspaceLegalProviderCredential ??
+    deleteWorkspaceLegalProviderCredential;
   const platform = dependencies.platform ?? process.platform;
   const probeKeychain =
     dependencies.probeKeychain ??
@@ -202,6 +273,7 @@ function createCredentialWorkerHandler(dependencies = {}) {
       return failure(request.id, "KEYCHAIN_UNAVAILABLE");
     }
     try {
+      const legalOperation = request.operation.startsWith("legal_");
       if (request.operation === "store") {
         const locator = workspaceModelCredentialLocator(request.payload);
         write({ ...locator, secret: request.payload.secret });
@@ -223,6 +295,24 @@ function createCredentialWorkerHandler(dependencies = {}) {
         }
         return success(request.id, { stored: true });
       }
+      if (request.operation === "legal_store") {
+        const locator = workspaceLegalProviderCredentialLocator(
+          request.payload,
+        );
+        write({ ...locator, secret: request.payload.secret });
+        try {
+          const verified = read(locator);
+          if (verified !== request.payload.secret) {
+            throw new Error("Credential write verification failed.");
+          }
+        } catch {
+          try {
+            removeLegal(request.payload);
+          } catch {}
+          return failure(request.id, "KEYCHAIN_UNAVAILABLE");
+        }
+        return success(request.id, { stored: true });
+      }
       if (request.operation === "resolve") {
         const locator = workspaceModelCredentialLocator(request.payload);
         const secret = read(locator);
@@ -230,6 +320,23 @@ function createCredentialWorkerHandler(dependencies = {}) {
           return failure(request.id, "CREDENTIAL_NOT_FOUND");
         }
         return success(request.id, { secret });
+      }
+      if (request.operation === "legal_resolve") {
+        const locator = workspaceLegalProviderCredentialLocator(
+          request.payload,
+        );
+        const secret = read(locator);
+        if (secret === null) {
+          return failure(request.id, "CREDENTIAL_NOT_FOUND");
+        }
+        return success(request.id, { secret });
+      }
+      if (request.operation === "legal_delete") {
+        const deleted = removeLegal(request.payload);
+        return success(request.id, { deleted });
+      }
+      if (legalOperation) {
+        throw new CredentialWorkerProtocolError();
       }
       const deleted = remove(request.payload);
       return success(request.id, { deleted });

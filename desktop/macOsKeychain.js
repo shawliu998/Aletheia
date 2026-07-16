@@ -14,12 +14,18 @@ const DUPLICATE_ITEM_STATUS = 45;
 const WORKSPACE_MODEL_CREDENTIAL_SERVICE =
   "ai.aletheia.workspace-model-profile-credentials";
 const WORKSPACE_MODEL_CREDENTIAL_ACCOUNT_PREFIX = "vera-model-profile-account";
+const WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_SERVICE =
+  "ai.aletheia.workspace-legal-provider-credentials";
+const WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_ACCOUNT_PREFIX =
+  "vera-legal-provider-account";
 const KEYCHAIN_SECRET_ENVELOPE_PREFIX = "vera-keychain-secret-v1:";
 const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCATOR_ID_PATTERN = /^[a-z0-9]{16,128}$/;
 const WORKSPACE_MODEL_CREDENTIAL_REFERENCE_PATTERN =
   /^keychain:\/\/vera\/model-profile\/([0-9a-f-]{36})\/([a-z0-9]{16,128})$/i;
+const WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_REFERENCE_PATTERN =
+  /^keychain:\/\/vera\/legal-provider\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([a-z0-9]{16,128})$/;
 const SECURITY_INTERACTIVE_TOKEN_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,511}$/;
 
@@ -192,7 +198,8 @@ function findGenericPassword({ service, account, execFileSyncImpl }) {
     return {
       state: "found",
       value:
-        service === WORKSPACE_MODEL_CREDENTIAL_SERVICE
+        service === WORKSPACE_MODEL_CREDENTIAL_SERVICE ||
+        service === WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_SERVICE
           ? decodeKeychainSecretEnvelope(storedValue)
           : storedValue,
     };
@@ -243,7 +250,8 @@ function writeGenericPassword({
     // bytes travel as hex on bounded stdin; validated tokens prevent command
     // injection and no secret enters argv.
     const storedSecret =
-      service === WORKSPACE_MODEL_CREDENTIAL_SERVICE
+      service === WORKSPACE_MODEL_CREDENTIAL_SERVICE ||
+      service === WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_SERVICE
         ? encodeKeychainSecretEnvelope(secret)
         : secret;
     const secretHex = Buffer.from(storedSecret, "utf8").toString("hex");
@@ -336,6 +344,71 @@ function workspaceModelCredentialLocator({ reference, binding }) {
   };
 }
 
+function workspaceLegalProviderCredentialAccount({
+  profileId,
+  provider,
+  endpointSetId,
+  locatorId,
+}) {
+  const normalizedProfileId = String(profileId ?? "").toLowerCase();
+  if (!UUID_PATTERN.test(normalizedProfileId)) {
+    throw new Error("Legal provider credential profileId must be a UUID.");
+  }
+  if (provider !== "yuandian") {
+    throw new Error("Legal provider credential provider is invalid.");
+  }
+  if (endpointSetId !== "yuandian-official-mcp-v1") {
+    throw new Error("Legal provider credential endpoint set is invalid.");
+  }
+  if (!LOCATOR_ID_PATTERN.test(String(locatorId ?? ""))) {
+    throw new Error(
+      "Legal provider credential locatorId must be 16-128 lowercase base36 characters.",
+    );
+  }
+  const endpointSetHash = crypto
+    .createHash("sha256")
+    .update(endpointSetId)
+    .digest("hex")
+    .slice(0, 24);
+  return `${WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_ACCOUNT_PREFIX}:${normalizedProfileId}:${provider}:${endpointSetHash}:${locatorId}`;
+}
+
+function workspaceLegalProviderCredentialLocator({ reference, binding }) {
+  const match =
+    typeof reference === "string"
+      ? reference.match(WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_REFERENCE_PATTERN)
+      : null;
+  if (!match || !binding || typeof binding !== "object") {
+    throw new Error("Legal provider credential locator is invalid.");
+  }
+  const profileId = String(binding.profileId ?? "");
+  if (match[1].toLowerCase() !== profileId.toLowerCase()) {
+    throw new Error("Legal provider credential locator binding does not match.");
+  }
+  const locatorId = match[2].toLowerCase();
+  return {
+    service: WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_SERVICE,
+    account: workspaceLegalProviderCredentialAccount({
+      profileId,
+      provider: binding.provider,
+      endpointSetId: binding.endpointSetId,
+      locatorId,
+    }),
+  };
+}
+
+function deleteWorkspaceLegalProviderCredential({
+  reference,
+  binding,
+  execFileSyncImpl = execFileSync,
+}) {
+  const locator = workspaceLegalProviderCredentialLocator({
+    reference,
+    binding,
+  });
+  return deleteGenericPassword({ ...locator, execFileSyncImpl });
+}
+
 function deleteWorkspaceModelCredential({
   reference,
   binding,
@@ -408,10 +481,13 @@ module.exports = {
   SECURITY_INTERACTIVE_MAX_COMMAND_BYTES,
   WORKSPACE_MODEL_CREDENTIAL_SERVICE,
   WORKSPACE_MODEL_CREDENTIAL_ACCOUNT_PREFIX,
+  WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_SERVICE,
+  WORKSPACE_LEGAL_PROVIDER_CREDENTIAL_ACCOUNT_PREFIX,
   MacOsKeychainItemCollisionError,
   decodeKeychainSecretEnvelope,
   deleteGenericPassword,
   deleteWorkspaceModelCredential,
+  deleteWorkspaceLegalProviderCredential,
   encodeKeychainSecretEnvelope,
   ensureMacOsKeychainKey,
   isMacOsKeychainItemNotFound,
@@ -422,5 +498,7 @@ module.exports = {
   stripSingleTrailingNewline,
   workspaceModelCredentialAccount,
   workspaceModelCredentialLocator,
+  workspaceLegalProviderCredentialAccount,
+  workspaceLegalProviderCredentialLocator,
   writeGenericPassword,
 };

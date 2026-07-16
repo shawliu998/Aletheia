@@ -164,6 +164,7 @@ import {
   WorkspaceAssistantDocumentTools,
 } from "./services/assistantDocumentTools";
 import {
+  type AssistantToolModule,
   WorkspaceAssistantDocumentToolModule,
   WorkspaceAssistantToolRegistry,
 } from "./services/assistantToolRegistry";
@@ -262,6 +263,8 @@ export type WorkspaceRuntimeDependencies = {
   allowLocalDevelopmentModelBaseUrl?: boolean;
   assistantModel?: AssistantModelPort;
   assistantTools?: AssistantToolPort;
+  /** Trusted composition seam for optional fail-closed Assistant modules. */
+  assistantToolModules?: readonly AssistantToolModule[];
   workflowExecutor?: WorkflowStepExecutor;
   inferencePolicy?: InferencePolicyEnforcementPort;
   /** Read-only authority for derived blob metadata.  This is injectable solely
@@ -683,6 +686,7 @@ export class WorkspaceRuntime
         );
         return new WorkspaceAssistantToolRegistry([
           new WorkspaceAssistantDocumentToolModule(documentTools),
+          ...(dependencies.assistantToolModules ?? []),
         ]);
       })();
     const assistantRuntime = assistantModel

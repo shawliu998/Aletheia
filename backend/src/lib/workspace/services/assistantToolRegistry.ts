@@ -184,15 +184,21 @@ export class WorkspaceAssistantToolRegistry implements AssistantToolPort {
     }
     const tools: AssistantToolDefinition[] = [];
     const toolsByName = new Map<string, AssistantToolModule>();
+    const activeModules: AssistantToolModule[] = [];
 
     try {
       for (const module of this.modules) {
         const moduleTools = await module.registeredTools(context);
-        if (!Array.isArray(moduleTools) || moduleTools.length === 0) {
+        if (!Array.isArray(moduleTools)) {
           throw new AssistantToolRegistryError(
-            "Assistant tool module registered no tools.",
+            "Assistant tool module registration is invalid.",
           );
         }
+        // Optional capability modules advertise [] when their truthful status
+        // is unavailable. They are absent from this exact job-attempt route,
+        // including policy fan-out and adapter identity.
+        if (moduleTools.length === 0) continue;
+        activeModules.push(module);
         for (const tool of moduleTools) {
           const name = tool?.name;
           if (typeof name !== "string" || name.length === 0) {
@@ -209,6 +215,11 @@ export class WorkspaceAssistantToolRegistry implements AssistantToolPort {
           tools.push(tool);
         }
       }
+      if (tools.length === 0) {
+        throw new AssistantToolRegistryError(
+          "Assistant tool registry registered no active tools.",
+        );
+      }
 
       if (this.pendingRegistrations.get(context.jobId)?.claim !== claim) {
         throw new AssistantToolRegistryError(
@@ -218,7 +229,7 @@ export class WorkspaceAssistantToolRegistry implements AssistantToolPort {
       this.registrations.set(key, {
         jobId: context.jobId,
         attempt: context.attempt,
-        modules: this.modules,
+        modules: Object.freeze([...activeModules]),
         tools: toolsByName,
       });
       while (this.registrations.size > this.maxTrackedRegistrations) {
@@ -234,7 +245,7 @@ export class WorkspaceAssistantToolRegistry implements AssistantToolPort {
       }
 
       const soleAdapterId =
-        this.modules.length === 1 ? this.modules[0]?.adapterId : undefined;
+        activeModules.length === 1 ? activeModules[0]?.adapterId : undefined;
       return {
         adapterId: validIdentifier(soleAdapterId)
           ? soleAdapterId

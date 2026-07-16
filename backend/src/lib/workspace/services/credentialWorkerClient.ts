@@ -10,6 +10,10 @@ import {
   type CredentialDeletionInput,
   type CredentialStorageInput,
 } from "./credentialStore";
+import type {
+  LegalProviderCredentialInput,
+  LegalProviderCredentialStorePort,
+} from "./legalProviderCredentialStore";
 
 const CREDENTIAL_RPC_SCHEMA = "vera-credential-rpc-v1";
 const CREDENTIAL_PORT_BOOTSTRAP = "vera-credential-port-v1";
@@ -67,7 +71,14 @@ export class CredentialWorkerProtocolError extends Error {
 }
 
 type PendingRequest = {
-  operation: "ping" | "store" | "resolve" | "delete";
+  operation:
+    | "ping"
+    | "store"
+    | "resolve"
+    | "delete"
+    | "legal_store"
+    | "legal_resolve"
+    | "legal_delete";
   resolve(value: unknown): void;
   reject(error: Error): void;
   timeout: NodeJS.Timeout;
@@ -107,7 +118,9 @@ function requestId() {
   return randomBytes(24).toString("base64url");
 }
 
-export class CredentialWorkerRpcClient implements AsynchronousCredentialStorePort {
+export class CredentialWorkerRpcClient
+  implements AsynchronousCredentialStorePort, LegalProviderCredentialStorePort
+{
   readonly [CREDENTIAL_STORE_OPERATION_MODE] = "asynchronous" as const;
   private readonly pending = new Map<string, PendingRequest>();
   private closed = false;
@@ -329,6 +342,59 @@ export class CredentialWorkerRpcClient implements AsynchronousCredentialStorePor
       reference: input.reference,
       binding: input.binding,
     });
+    if (
+      !isRecord(result) ||
+      !hasExactKeys(result, ["deleted"]) ||
+      typeof result.deleted !== "boolean"
+    ) {
+      throw this.protocolViolation();
+    }
+  }
+
+  async storeLegalProviderCredential(
+    input: LegalProviderCredentialInput & { secret: string },
+  ): Promise<void> {
+    if (
+      typeof input.secret !== "string" ||
+      input.secret.length === 0 ||
+      /[\r\n]/.test(input.secret) ||
+      Buffer.byteLength(input.secret, "utf8") >
+        MAX_MODEL_CREDENTIAL_STORE_SECRET_BYTES
+    ) {
+      throw new CredentialWorkerProtocolError();
+    }
+    const result = await this.request("legal_store", input);
+    if (
+      !isRecord(result) ||
+      !hasExactKeys(result, ["stored"]) ||
+      result.stored !== true
+    ) {
+      throw this.protocolViolation();
+    }
+  }
+
+  async resolveLegalProviderCredential(
+    input: LegalProviderCredentialInput,
+  ): Promise<string> {
+    const result = await this.request("legal_resolve", input);
+    if (
+      !isRecord(result) ||
+      !hasExactKeys(result, ["secret"]) ||
+      typeof result.secret !== "string" ||
+      result.secret.length === 0 ||
+      /[\r\n]/.test(result.secret) ||
+      Buffer.byteLength(result.secret, "utf8") >
+        MAX_MODEL_CREDENTIAL_STORE_SECRET_BYTES
+    ) {
+      throw this.protocolViolation();
+    }
+    return result.secret;
+  }
+
+  async deleteLegalProviderCredential(
+    input: LegalProviderCredentialInput,
+  ): Promise<void> {
+    const result = await this.request("legal_delete", input);
     if (
       !isRecord(result) ||
       !hasExactKeys(result, ["deleted"]) ||
