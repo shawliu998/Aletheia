@@ -2,7 +2,13 @@
 
 // Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
 // frontend/src/app/components/tabular/TRTable.tsx
-import { ChevronLeft, ChevronRight, FilePlus2, Plus, Table2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FilePlus2,
+  Plus,
+  Table2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/app/i18n";
 import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
@@ -21,7 +27,10 @@ export function tabularPageCount(rowCount: number): number {
 }
 
 export function clampTabularPage(page: number, rowCount: number): number {
-  return Math.min(Math.max(0, Math.trunc(page)), tabularPageCount(rowCount) - 1);
+  return Math.min(
+    Math.max(0, Math.trunc(page)),
+    tabularPageCount(rowCount) - 1,
+  );
 }
 
 export function TRTable({
@@ -32,6 +41,7 @@ export function TRTable({
   selectedDocumentIds,
   disabled = false,
   canAddColumn = true,
+  canEditColumns = true,
   onSelectionChange,
   onOpenCell,
   onEditColumn,
@@ -46,6 +56,7 @@ export function TRTable({
   selectedDocumentIds: string[];
   disabled?: boolean;
   canAddColumn?: boolean;
+  canEditColumns?: boolean;
   onSelectionChange: (ids: string[]) => void;
   onOpenCell: (cell: VeraTabularCell) => void;
   onEditColumn: (column: VeraTabularColumn) => void;
@@ -62,10 +73,7 @@ export function TRTable({
   const cellMap = useMemo(
     () =>
       new Map(
-        cells.map((cell) => [
-          `${cell.document_id}:${cell.column_index}`,
-          cell,
-        ]),
+        cells.map((cell) => [`${cell.document_id}:${cell.column_index}`, cell]),
       ),
     [cells],
   );
@@ -77,7 +85,9 @@ export function TRTable({
   );
   const allPageSelected =
     pageDocuments.length > 0 &&
-    pageDocuments.every((document) => selectedDocumentIds.includes(document.id));
+    pageDocuments.every((document) =>
+      selectedDocumentIds.includes(document.id),
+    );
   const somePageSelected =
     !allPageSelected &&
     pageDocuments.some((document) => selectedDocumentIds.includes(document.id));
@@ -136,7 +146,9 @@ export function TRTable({
                   if (element) element.indeterminate = somePageSelected;
                 }}
                 onChange={() => {
-                  const pageIds = new Set(pageDocuments.map((document) => document.id));
+                  const pageIds = new Set(
+                    pageDocuments.map((document) => document.id),
+                  );
                   onSelectionChange(
                     allPageSelected
                       ? selectedDocumentIds.filter((id) => !pageIds.has(id))
@@ -153,10 +165,12 @@ export function TRTable({
                 data-tr-col-header
                 className="flex w-72 shrink-0 items-center justify-between gap-2 border-r border-gray-200 px-3"
               >
-                <span className="truncate" title={column.name}>{column.name}</span>
+                <span className="truncate" title={column.name}>
+                  {column.name}
+                </span>
                 <TREditColumnMenu
                   column={column}
-                  disabled={disabled}
+                  disabled={disabled || !canEditColumns}
                   onEdit={onEditColumn}
                   onDelete={onDeleteColumn}
                 />
@@ -168,7 +182,9 @@ export function TRTable({
                 onClick={onAddColumn}
                 disabled={disabled || !canAddColumn}
                 aria-label={t("tabular.addColumn")}
-                title={!canAddColumn ? t("tabular.documents.matrixLimit") : undefined}
+                title={
+                  !canAddColumn ? t("tabular.documents.matrixLimit") : undefined
+                }
                 className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
               >
                 <Plus className="h-4 w-4" />
@@ -185,7 +201,10 @@ export function TRTable({
                     <span className="h-3 w-36 animate-pulse rounded bg-gray-100" />
                   </div>
                   {sortedColumns.map((column) => (
-                    <div key={column.index} className="flex w-72 shrink-0 items-center border-r border-gray-100 px-3">
+                    <div
+                      key={column.index}
+                      className="flex w-72 shrink-0 items-center border-r border-gray-100 px-3"
+                    >
                       <span className="h-3 w-32 animate-pulse rounded bg-gray-100" />
                     </div>
                   ))}
@@ -195,30 +214,44 @@ export function TRTable({
           ) : (
             pageDocuments.map((document, rowIndex) => {
               const selected = selectedDocumentIds.includes(document.id);
-              const rowBackground = rowIndex % 2 === 0 ? "bg-[#fafbfc]" : "bg-gray-50";
+              const rowBackground =
+                rowIndex % 2 === 0 ? "bg-[#fafbfc]" : "bg-gray-50";
               return (
-                <div key={document.id} className={`flex h-11 border-b border-gray-100 ${rowBackground}`}>
-                  <div className={`sticky left-0 z-[60] flex w-[272px] shrink-0 items-center gap-4 border-r border-gray-100 px-4 ${selected ? "bg-gray-100" : rowBackground}`}>
+                <div
+                  key={document.id}
+                  className={`flex h-11 border-b border-gray-100 ${rowBackground}`}
+                >
+                  <div
+                    className={`sticky left-0 z-[60] flex w-[272px] shrink-0 items-center gap-4 border-r border-gray-100 px-4 ${selected ? "bg-gray-100" : rowBackground}`}
+                  >
                     <input
                       type="checkbox"
                       checked={selected}
                       onChange={() =>
                         onSelectionChange(
                           selected
-                            ? selectedDocumentIds.filter((id) => id !== document.id)
+                            ? selectedDocumentIds.filter(
+                                (id) => id !== document.id,
+                              )
                             : [...selectedDocumentIds, document.id],
                         )
                       }
                       className={TABLE_CHECKBOX_CLASS}
                     />
-                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800" title={document.filename}>
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs text-gray-800"
+                      title={document.filename}
+                    >
                       {document.filename}
                     </span>
                   </div>
                   {sortedColumns.map((column) => {
                     const cell = cellMap.get(`${document.id}:${column.index}`);
                     return (
-                      <div key={column.index} className="w-72 shrink-0 border-r border-gray-100">
+                      <div
+                        key={column.index}
+                        className="w-72 shrink-0 border-r border-gray-100"
+                      >
                         {cell ? (
                           <TabularCell
                             cell={cell}
@@ -244,7 +277,10 @@ export function TRTable({
           <span>
             {t("tabular.table.pageRange", {
               start: safePage * TABULAR_ROWS_PER_PAGE + 1,
-              end: Math.min((safePage + 1) * TABULAR_ROWS_PER_PAGE, documents.length),
+              end: Math.min(
+                (safePage + 1) * TABULAR_ROWS_PER_PAGE,
+                documents.length,
+              ),
               total: documents.length,
             })}
           </span>

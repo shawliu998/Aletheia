@@ -798,6 +798,51 @@ const zhCN = {
       notFound: "无法打开工作流",
       back: "返回工作流",
     },
+    contractReview: {
+      create: "合同审阅",
+      loadingPreset: "正在恢复合同审阅列预设…",
+      views: {
+        issues: "提取状态",
+        matrix: "审阅矩阵",
+      },
+      new: {
+        title: "新建合同审阅",
+        create: "创建审阅",
+        name: "审阅名称",
+        namePlaceholder: "例如：供应协议风险审阅",
+        playbook: "服务端列预设",
+        choosePlaybook: "选择服务端管理的列预设",
+        noPlaybooks: "当前没有可用的表格式列预设。界面不会使用本地预设替代。",
+        checks: "审阅检查项",
+        documents: "待审合同",
+        noDocuments: "此事项没有已就绪的文档。请先在文档区上传并完成处理。",
+        selectedDocuments: "已选择 {count} 份文档",
+        disclaimer:
+          "这是 AI 批量提取草稿，不是律师批准的法律结论。请逐项核验合同原文、精确来源和适用法律。",
+      },
+      issues: {
+        title: "持久化提取结果",
+        persistedOnly:
+          "仅按已保存单元格的状态和风险标记聚合，不从摘要文字推断结论。",
+        clearFilter: "清除筛选",
+        noDocuments: "还没有待审文档",
+        noDocumentsBody: "添加已就绪的合同文档后才能运行此审阅方案。",
+        notRun: "尚无审阅结果",
+        notRunBody: "运行审阅后，已持久化的风险标记、摘要和来源将在这里显示。",
+        noMatching: "当前筛选下没有结果",
+        humanReview: "这不代表不存在法律风险；仍需律师核验合同原文和适用规则。",
+        noSummary: "此检查项尚无持久化摘要。",
+        sources: "{count} 个来源",
+        buckets: {
+          red: "红色标记",
+          yellow: "黄色标记",
+          grey: "无颜色标记",
+          green: "绿色标记",
+          pending: "处理中",
+          error: "失败",
+        },
+      },
+    },
     tabular: {
       title: "在表格审阅中使用",
       body: "Tabular 工作流保存可复用列配置，不会伪装成 Assistant 运行；请从项目表格审阅中选择文档与已验证模型执行。",
@@ -2258,6 +2303,56 @@ const enUS = {
       loading: "Loading workflow…",
       notFound: "The workflow could not be opened",
       back: "Back to workflows",
+    },
+    contractReview: {
+      create: "Contract review",
+      loadingPreset: "Restoring the contract review column preset…",
+      views: {
+        issues: "Extraction status",
+        matrix: "Review matrix",
+      },
+      new: {
+        title: "New contract review",
+        create: "Create review",
+        name: "Review name",
+        namePlaceholder: "For example, Supply agreement risk review",
+        playbook: "Server-managed column preset",
+        choosePlaybook: "Choose a server-managed column preset",
+        noPlaybooks:
+          "No tabular review column presets are available. The interface will not substitute a local preset.",
+        checks: "Review checks",
+        documents: "Contracts to review",
+        noDocuments:
+          "This Matter has no ready documents. Upload and process a document first.",
+        selectedDocuments: "{count} documents selected",
+        disclaimer:
+          "This is an AI-generated bulk extraction draft, not a lawyer-approved legal conclusion. Verify each result against the contract, exact sources, and applicable law.",
+      },
+      issues: {
+        title: "Persisted extraction results",
+        persistedOnly:
+          "Results are grouped only by persisted cell status and risk flag; summary text is not interpreted as a finding.",
+        clearFilter: "Clear filter",
+        noDocuments: "No documents to review",
+        noDocumentsBody:
+          "Add ready contract documents before running this review playbook.",
+        notRun: "No review results yet",
+        notRunBody:
+          "Run the review to show persisted risk flags, summaries, and sources here.",
+        noMatching: "No results match this filter",
+        humanReview:
+          "This does not establish that no legal risk exists. A lawyer must still verify the contract and applicable rules.",
+        noSummary: "This check has no persisted summary yet.",
+        sources: "{count} sources",
+        buckets: {
+          red: "Red flag",
+          yellow: "Yellow flag",
+          grey: "No colour flag",
+          green: "Green flag",
+          pending: "In progress",
+          error: "Failed",
+        },
+      },
     },
     tabular: {
       title: "Use in Tabular review",

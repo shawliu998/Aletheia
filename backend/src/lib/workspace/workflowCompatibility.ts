@@ -324,7 +324,7 @@ function asMetadataRecord(
     : null;
 }
 
-function mikeColumnFormat(
+export function mikeColumnFormat(
   workflow: Workflow,
   column: WorkflowColumn,
 ): MikeColumnFormat {
@@ -337,7 +337,10 @@ function mikeColumnFormat(
     : outputTypeToFormat(column);
 }
 
-function mikeColumnTags(workflow: Workflow, column: WorkflowColumn): string[] {
+export function mikeColumnTags(
+  workflow: Workflow,
+  column: WorkflowColumn,
+): string[] {
   const tags = asMetadataRecord(
     workflow.metadata[MIKE_TABULAR_TAGS_METADATA_KEY],
   )?.[column.key];

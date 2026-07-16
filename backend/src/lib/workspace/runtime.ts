@@ -891,11 +891,13 @@ export class WorkspaceRuntime
             inferencePolicy,
           }
         : undefined,
+      this.workflows,
     );
     this.tabular = new WorkspaceTabularV1RuntimeAdapter(
       this.database,
       tabularRepository,
       this.tabularService,
+      { workflowReferences: this.workflows },
     );
     const tabularCellHandler = tabularModel
       ? createTabularCellJobHandler({

@@ -18,6 +18,11 @@ import {
 } from "../repositories/tabular";
 import { ModelProfilesRepository } from "../repositories/modelProfiles";
 import type { StructuredError } from "../types";
+import type { Workflow } from "../types";
+import {
+  mikeColumnFormat,
+  mikeColumnTags,
+} from "../workflowCompatibility";
 import {
   tabularCellIdempotencyKey,
   tabularCellJobPayload,
@@ -124,7 +129,13 @@ const DraftColumnInputSchema = z
 const CreateTabularDraftSchema = z
   .object({
     projectId: WorkspaceIdSchema.nullable().optional(),
-    workflowId: WorkspaceIdSchema.nullable().optional(),
+    workflowId: z
+      .union([
+        WorkspaceIdSchema,
+        z.string().regex(/^builtin-[a-z0-9-]{1,232}$/),
+      ])
+      .nullable()
+      .optional(),
     title: TabularReviewTitleSchemaV7.transform((value) => value.trim()),
     documentIds: WorkspaceIdSchema.array().max(1_000).default([]),
     modelProfileId: WorkspaceIdSchema.nullable().optional(),
@@ -329,6 +340,10 @@ export class TabularService {
       profiles: ModelProfilesRepository;
       inferencePolicy: InferencePolicyEnforcementPort;
     },
+    private readonly workflowPresets?: Readonly<{
+      get(id: string): Workflow;
+      resolveMikeWorkflowId(id: string): string;
+    }>,
   ) {}
 
   private now() {
@@ -351,7 +366,53 @@ export class TabularService {
   create(value: unknown) {
     const input = CreateTabularDraftSchema.parse(value);
     const reviewId = this.idFactory();
-    const columns = input.columns.map((column, ordinal) =>
+    let requestedColumns = input.columns;
+    let resolvedWorkflowId: string | null = null;
+    if (input.workflowId) {
+      if (!this.workflowPresets) {
+        throw new WorkspaceApiError(
+          409,
+          "PRECONDITION_FAILED",
+          "Tabular workflow presets are unavailable.",
+        );
+      }
+      if (input.columns.length > 0) {
+        throw new WorkspaceApiError(
+          400,
+          "VALIDATION_ERROR",
+          "Preset review columns are server-owned; omit columns when selecting a workflow.",
+        );
+      }
+      resolvedWorkflowId = this.workflowPresets.resolveMikeWorkflowId(
+        input.workflowId,
+      );
+      const workflow = this.workflowPresets.get(resolvedWorkflowId);
+      if (
+        workflow.type !== "tabular" ||
+        workflow.status !== "active" ||
+        !workflow.isBuiltin ||
+        workflow.projectId !== null ||
+        workflow.columns.length === 0
+      ) {
+        throw new WorkspaceApiError(
+          409,
+          "PRECONDITION_FAILED",
+          "Only an active built-in Tabular workflow can create a preset review.",
+        );
+      }
+      requestedColumns = workflow.columns.map((column) => ({
+        key: column.key,
+        title: column.title,
+        outputType: column.outputType,
+        format: mikeColumnFormat(workflow, column),
+        prompt: column.prompt,
+        tags: mikeColumnTags(workflow, column),
+        ...(column.enumValues === null
+          ? {}
+          : { enumValues: column.enumValues }),
+      }));
+    }
+    const columns = requestedColumns.map((column, ordinal) =>
       columnRecordFromInput(column, {
         reviewId,
         columnId: this.idFactory(),
@@ -375,8 +436,8 @@ export class TabularService {
       );
     }
     if (projectId) this.repository.requireActiveProject(projectId);
-    if (input.workflowId) {
-      this.repository.requireActiveTabularWorkflow(input.workflowId);
+    if (resolvedWorkflowId) {
+      this.repository.requireActiveTabularWorkflow(resolvedWorkflowId);
     }
     if (input.modelProfileId) {
       if (this.generation) {
@@ -397,7 +458,7 @@ export class TabularService {
     return this.repository.create({
       id: reviewId,
       projectId,
-      workflowId: input.workflowId ?? null,
+      workflowId: resolvedWorkflowId,
       modelProfileId: input.modelProfileId ?? null,
       title: input.title,
       documentIds: input.documentIds,
@@ -410,6 +471,13 @@ export class TabularService {
   updateDraftMatrix(id: string, value: unknown) {
     const input = UpdateTabularDraftMatrixSchema.parse(value);
     const existing = this.repository.requireDetail(id);
+    if (existing.review.workflowId !== null) {
+      throw new WorkspaceApiError(
+        409,
+        "CONFLICT",
+        "A workflow-preset review has immutable columns and document scope; create a custom review to edit its matrix.",
+      );
+    }
     const columns = input.columns.map((column, ordinal) =>
       columnRecordFromInput(column, {
         reviewId: id,

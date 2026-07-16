@@ -126,6 +126,9 @@ export class WorkspaceTabularV1RuntimeAdapter
   private readonly pollMs: number;
   private readonly streamTimeoutMs: number;
   private readonly delay: (milliseconds: number) => Promise<void>;
+  private readonly workflowReferences?: Readonly<{
+    getMikeBuiltinMapping(workflowId: string): { upstreamId: string } | null;
+  }>;
 
   constructor(
     private readonly database: WorkspaceDatabaseAdapter,
@@ -135,9 +138,15 @@ export class WorkspaceTabularV1RuntimeAdapter
       pollMs?: number;
       streamTimeoutMs?: number;
       delay?: (milliseconds: number) => Promise<void>;
+      workflowReferences?: Readonly<{
+        getMikeBuiltinMapping(
+          workflowId: string,
+        ): { upstreamId: string } | null;
+      }>;
     } = {},
   ) {
     this.exporter = new TabularExporter(repository);
+    this.workflowReferences = options.workflowReferences;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
     this.streamTimeoutMs =
       options.streamTimeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS;
@@ -176,7 +185,12 @@ export class WorkspaceTabularV1RuntimeAdapter
       title: detail.review.title,
       columns_config: detail.columns.map(columnWire),
       document_ids: [...detail.review.documentIds],
-      workflow_id: detail.review.workflowId,
+      workflow_id:
+        detail.review.workflowId === null
+          ? null
+          : (this.workflowReferences?.getMikeBuiltinMapping(
+              detail.review.workflowId,
+            )?.upstreamId ?? detail.review.workflowId),
       model_profile_id: detail.review.modelProfileId,
       status: detail.review.status,
       practice: row?.practice == null ? null : String(row.practice),

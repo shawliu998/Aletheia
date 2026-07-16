@@ -3,7 +3,7 @@
 // Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
 // frontend/src/app/(pages)/projects/[id]/tabular-reviews/page.tsx
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { ProjectReviewsTable } from "@/app/components/projects/ProjectReviewsTable";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/app/components/projects/ProjectWorkspace";
 import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
+import { ContractReviewModal } from "@/app/components/tabular/ContractReviewModal";
 import { useI18n } from "@/app/i18n";
 import {
   createVeraTabularReview,
@@ -25,6 +26,7 @@ const PAGE_SIZE = 50;
 
 export default function ProjectTabularReviewsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const routes = useWorkspaceRoutes();
   const { t, errorMessage } = useI18n();
   const { projectId, project, documents, search } = useProjectWorkspace();
@@ -33,9 +35,15 @@ export default function ProjectTabularReviewsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const requestedWorkflowId = searchParams.get("workflow_id");
+  const [contractModalOpen, setContractModalOpen] = useState(
+    () => routes.kind === "matter" && requestedWorkflowId !== null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [deleteReview, setDeleteReview] = useState<VeraTabularReview | null>(null);
+  const [deleteReview, setDeleteReview] = useState<VeraTabularReview | null>(
+    null,
+  );
   const [deleteConfirmName, setDeleteConfirmName] = useState("");
   const [deleting, setDeleting] = useState(false);
 
@@ -64,7 +72,10 @@ export default function ProjectTabularReviewsPage() {
   }, [reviews, search]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageItems = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const pageItems = filtered.slice(
+    safePage * PAGE_SIZE,
+    (safePage + 1) * PAGE_SIZE,
+  );
 
   useEffect(() => {
     if (page !== safePage) queueMicrotask(() => setPage(safePage));
@@ -76,6 +87,7 @@ export default function ProjectTabularReviewsPage() {
     try {
       const created = await createVeraTabularReview(input);
       setNewModalOpen(false);
+      setContractModalOpen(false);
       router.push(routes.tabularReviewHref(projectId, created.id));
     } catch (reason) {
       setError(errorMessage(reason as Error));
@@ -86,11 +98,7 @@ export default function ProjectTabularReviewsPage() {
   };
 
   const confirmDelete = async () => {
-    if (
-      !deleteReview ||
-      deleteConfirmName !== deleteReview.title ||
-      deleting
-    ) {
+    if (!deleteReview || deleteConfirmName !== deleteReview.title || deleting) {
       return;
     }
     setDeleting(true);
@@ -123,23 +131,45 @@ export default function ProjectTabularReviewsPage() {
                 onClick={() => setSelectedIds([])}
                 className="text-xs text-gray-500 hover:text-gray-900"
               >
-                {t("tabular.list.clearSelection", { count: selectedIds.length })}
+                {t("tabular.list.clearSelection", {
+                  count: selectedIds.length,
+                })}
               </button>
             )}
             <button
               type="button"
               onClick={() => setNewModalOpen(true)}
-              disabled={creating || documents.every((document) => document.status !== "ready")}
+              disabled={
+                creating ||
+                documents.every((document) => document.status !== "ready")
+              }
               className="rounded-full bg-gray-950 px-3 py-1 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-40"
             >
               + {t("tabular.create")}
             </button>
+            {routes.kind === "matter" && (
+              <button
+                type="button"
+                onClick={() => setContractModalOpen(true)}
+                disabled={
+                  creating ||
+                  project?.status !== "active" ||
+                  documents.every((document) => document.status !== "ready")
+                }
+                className="rounded-full bg-violet-700 px-3 py-1 text-xs font-medium text-white hover:bg-violet-600 disabled:opacity-40"
+              >
+                + {t("workflows.contractReview.create")}
+              </button>
+            )}
           </div>
         }
       />
 
       {error && (
-        <div role="alert" className="mx-4 mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 md:mx-10">
+        <div
+          role="alert"
+          className="mx-4 mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 md:mx-10"
+        >
           {error}
         </div>
       )}
@@ -179,11 +209,15 @@ export default function ProjectTabularReviewsPage() {
             >
               {t("tabular.table.previousPage")}
             </button>
-            <span>{safePage + 1} / {pageCount}</span>
+            <span>
+              {safePage + 1} / {pageCount}
+            </span>
             <button
               type="button"
               disabled={safePage >= pageCount - 1}
-              onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+              onClick={() =>
+                setPage((current) => Math.min(pageCount - 1, current + 1))
+              }
               className="hover:text-gray-950 disabled:opacity-30"
             >
               {t("tabular.table.nextPage")}
@@ -193,13 +227,25 @@ export default function ProjectTabularReviewsPage() {
       )}
 
       {project && (
-        <NewTRModal
-          open={newModalOpen}
-          fixedProject={project}
-          creating={creating}
-          onClose={() => setNewModalOpen(false)}
-          onCreate={create}
-        />
+        <>
+          <NewTRModal
+            open={newModalOpen}
+            fixedProject={project}
+            creating={creating}
+            onClose={() => setNewModalOpen(false)}
+            onCreate={create}
+          />
+          {routes.kind === "matter" && (
+            <ContractReviewModal
+              open={contractModalOpen}
+              project={project}
+              initialWorkflowId={requestedWorkflowId}
+              creating={creating}
+              onClose={() => setContractModalOpen(false)}
+              onCreate={create}
+            />
+          )}
+        </>
       )}
 
       <ConfirmPopup

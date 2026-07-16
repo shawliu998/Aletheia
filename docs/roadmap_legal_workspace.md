@@ -166,11 +166,10 @@ Rules:
 
 ### Stage 5 — Legal research loop and UI
 
-Status: partially implemented. The bounded prompt/tool loop, Provider status,
-Draft result, Matter Drafts workbench, templates, and DraftPlan preview are
-wired. The document-only Assistant source model still rejects durable legal
-authority citations; the deterministic boundary audit records that exact
-fail-closed gap.
+Status: implemented for deterministic test-only research. The bounded
+prompt/tool loop, Provider status, legal-authority citation projection, Draft
+result, Matter Drafts workbench, templates, and DraftPlan preview are wired.
+Production provider activation remains closed.
 
 Objective: let one Matter Assistant distinguish local facts from legal
 authorities, search only when authorized, read selected sources, cite evidence,
@@ -188,6 +187,9 @@ Deliverables:
 
 ### Stage 6 — Deterministic packaged end-to-end acceptance
 
+Status: implemented for the test-only Provider; live-provider acceptance is
+not asserted.
+
 Objective: prove the complete local vertical without confusing test-provider
 and live-provider evidence.
 
@@ -199,6 +201,22 @@ restarts the app, and verifies Matter/chat/sources/Draft/version persistence.
 Live-provider acceptance is a separate run using the licensed account and its
 retention rules. If no credential is available, the packaged test may pass
 while the live stage remains explicitly blocked.
+
+### Stage 7 — Matter contract bulk extraction preset
+
+Status: implemented on the current feature branch without a schema migration.
+
+One active built-in Tabular workflow can open the current Matter Review with a
+server-managed column preset. Creation omits renderer-owned columns; the
+backend validates an active global built-in workflow and snapshots the full
+column definition, including format and tags. Preset columns and document
+scope are immutable after creation, while custom Tabular reviews remain
+editable. The UI groups only persisted cell status/flags, preserves the matrix
+and exact-source views, and states that every output requires lawyer review.
+
+This stage is a contract bulk-extraction workflow, not a legal risk rubric,
+approved review state, or Tabular-to-contract-memo handoff. The next controlled
+slice is a source-preserving Tabular-to-`contract_review_memo` Studio handoff.
 
 ## 4. Migration order
 

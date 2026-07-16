@@ -23,7 +23,7 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { PageHeader } from "@/app/components/vera-shell/PageHeader";
 import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n } from "@/app/i18n";
-import { listVeraProjects } from "@/app/lib/veraApi";
+import { listVeraProjects, VeraApiError } from "@/app/lib/veraApi";
 import {
   getVeraModelSettingsStatus,
   type VeraModelProfile,
@@ -43,8 +43,10 @@ import {
   type VeraTabularColumn,
   type VeraTabularReviewDetail,
 } from "@/app/lib/veraTabularApi";
+import { getVeraWorkflow, type VeraWorkflow } from "@/app/lib/veraWorkflowApi";
 import type { VeraProjectWire } from "@/app/lib/veraWireTypes";
 import { AddColumnModal } from "./AddColumnModal";
+import { ContractReviewIssues } from "./ContractReviewIssues";
 import { TabularDocumentsModal } from "./TabularDocumentsModal";
 import { TabularReviewDetailsModal } from "./TabularReviewDetailsModal";
 import { TRSidePanel } from "./TRSidePanel";
@@ -132,12 +134,20 @@ export function TabularReviewView({
   const [projects, setProjects] = useState<VeraProjectWire[]>([]);
   const [models, setModels] = useState<VeraModelProfile[]>([]);
   const [generationAvailable, setGenerationAvailable] = useState(false);
+  const [presetWorkflow, setPresetWorkflow] = useState<VeraWorkflow | null>(
+    null,
+  );
+  const [presetLoading, setPresetLoading] = useState(false);
+  const [presetError, setPresetError] = useState<string | null>(null);
+  const [reviewView, setReviewView] = useState<"issues" | "matrix">("issues");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
-  const [liveUpdates, setLiveUpdates] = useState<Record<string, LiveCellUpdate>>({});
+  const [liveUpdates, setLiveUpdates] = useState<
+    Record<string, LiveCellUpdate>
+  >({});
   const [columnModalOpen, setColumnModalOpen] = useState(false);
   const [editingColumn, setEditingColumn] = useState<VeraTabularColumn>();
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
@@ -196,9 +206,55 @@ export function TabularReviewView({
     };
   }, [errorMessage, reload]);
 
-  const hasPersistedActiveCells = detail?.cells.some(
-    (cell) => cell.status === "generating",
-  ) ?? false;
+  const boundWorkflowId = detail?.review.workflow_id ?? null;
+
+  useEffect(() => {
+    if (!boundWorkflowId) {
+      queueMicrotask(() => {
+        setPresetWorkflow(null);
+        setPresetLoading(false);
+        setPresetError(null);
+        setReviewView("matrix");
+      });
+      return;
+    }
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      setPresetLoading(true);
+      setPresetError(null);
+    });
+    getVeraWorkflow(boundWorkflowId, controller.signal)
+      .then((workflow) => {
+        if (controller.signal.aborted) return;
+        if (
+          workflow.id !== boundWorkflowId ||
+          workflow.metadata.type !== "tabular" ||
+          (workflow.columns_config?.length ?? 0) === 0
+        ) {
+          setPresetWorkflow(null);
+          setReviewView("matrix");
+          return;
+        }
+        setPresetWorkflow(workflow);
+        setReviewView("issues");
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setPresetWorkflow(null);
+        setReviewView("matrix");
+        if (!(reason instanceof VeraApiError && reason.status === 404)) {
+          setPresetError(errorMessage(reason as Error));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPresetLoading(false);
+      });
+    return () => controller.abort();
+  }, [boundWorkflowId, errorMessage]);
+
+  const hasPersistedActiveCells =
+    detail?.cells.some((cell) => cell.status === "generating") ?? false;
   const shouldPoll =
     detail?.review.status === "running" || hasPersistedActiveCells;
 
@@ -212,7 +268,8 @@ export function TabularReviewView({
       reload(controller.signal)
         .then(() => setError(null))
         .catch((reason: unknown) => {
-          if (!controller.signal.aborted) setError(errorMessage(reason as Error));
+          if (!controller.signal.aborted)
+            setError(errorMessage(reason as Error));
         })
         .finally(() => {
           requestActive = false;
@@ -263,9 +320,12 @@ export function TabularReviewView({
       document.filename.toLocaleLowerCase().includes(query),
     );
   }, [detail?.documents, search]);
-  const expandedCell = displayCells.find((cell) => cell.id === expandedCellId) ?? null;
+  const expandedCell =
+    displayCells.find((cell) => cell.id === expandedCellId) ?? null;
   const expandedDocument = expandedCell
-    ? detail?.documents.find((document) => document.id === expandedCell.document_id)
+    ? detail?.documents.find(
+        (document) => document.id === expandedCell.document_id,
+      )
     : undefined;
   const expandedColumn = expandedCell
     ? detail?.review.columns_config.find(
@@ -278,9 +338,10 @@ export function TabularReviewView({
   const activeModel = models.find(
     (model) => model.id === detail?.review.model_profile_id,
   );
-  const failedRetryable = detail?.cells.filter(
-    (cell) => cell.status === "error" && cell.error?.retryable,
-  ) ?? [];
+  const failedRetryable =
+    detail?.cells.filter(
+      (cell) => cell.status === "error" && cell.error?.retryable,
+    ) ?? [];
   const nextColumnIndex =
     detail?.review.columns_config.reduce(
       (maximum, column) => Math.max(maximum, column.index),
@@ -304,7 +365,9 @@ export function TabularReviewView({
       .sort((left, right) => left.index - right.index)
       .map((column, index) => ({ ...column, index }));
     await updateVeraTabularReview(reviewId, {
-      columns_config: normalizedColumns,
+      ...(detail.review.workflow_id === null
+        ? { columns_config: normalizedColumns }
+        : {}),
       document_ids: documentIds,
     });
     await reload();
@@ -359,7 +422,9 @@ export function TabularReviewView({
 
   const cancelAll = () =>
     runMutation("cancel-all", async () => {
-      const active = displayCells.filter((cell) => cell.status === "generating");
+      const active = displayCells.filter(
+        (cell) => cell.status === "generating",
+      );
       await runBoundedMutations(active, (cell) =>
         cancelVeraTabularCell(reviewId, {
           cell_id: cell.id,
@@ -430,6 +495,8 @@ export function TabularReviewView({
   const running = busyAction === "generate" || shouldPoll;
   const matrixMutable =
     !running && review?.status !== "archived" && review?.status !== "cancelled";
+  const documentScopeMutable = matrixMutable && boundWorkflowId === null;
+  const columnsMutable = matrixMutable && boundWorkflowId === null;
   const reviewRunnable =
     review !== undefined &&
     review.status !== "archived" &&
@@ -444,7 +511,11 @@ export function TabularReviewView({
           ...(projectId
             ? [
                 {
-                  label: t(routes.kind === "matter" ? "matters.title" : "projects.title"),
+                  label: t(
+                    routes.kind === "matter"
+                      ? "matters.title"
+                      : "projects.title",
+                  ),
                   onClick: () => router.push(routes.collectionHref),
                 },
                 {
@@ -522,7 +593,11 @@ export function TabularReviewView({
                       ) : (
                         <Square className="h-4 w-4" />
                       ),
-                    label: <span className="hidden sm:inline">{t("tabular.stop")}</span>,
+                    label: (
+                      <span className="hidden sm:inline">
+                        {t("tabular.stop")}
+                      </span>
+                    ),
                   },
                 ]
               : [
@@ -536,8 +611,14 @@ export function TabularReviewView({
                       review.document_ids.length === 0 ||
                       review.columns_config.length === 0,
                     icon: <Play className="h-4 w-4" />,
-                    label: <span className="hidden sm:inline">{t("tabular.run")}</span>,
-                    tooltip: !activeModel ? t("tabular.new.noReadyModel") : undefined,
+                    label: (
+                      <span className="hidden sm:inline">
+                        {t("tabular.run")}
+                      </span>
+                    ),
+                    tooltip: !activeModel
+                      ? t("tabular.new.noReadyModel")
+                      : undefined,
                   },
                 ],
           },
@@ -545,18 +626,46 @@ export function TabularReviewView({
       />
 
       {error && (
-        <div role="alert" className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 md:mx-10">
+        <div
+          role="alert"
+          className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 md:mx-10"
+        >
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)} aria-label={t("common.actions.close")}>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label={t("common.actions.close")}
+          >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
       )}
+      {presetError && (
+        <div
+          role="alert"
+          className="mx-4 mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 md:mx-10"
+        >
+          {presetError}
+        </div>
+      )}
 
       <TableToolbar
-        items={[]}
-        active="table"
-        onChange={() => undefined}
+        items={
+          presetWorkflow
+            ? [
+                {
+                  id: "issues" as const,
+                  label: t("workflows.contractReview.views.issues"),
+                },
+                {
+                  id: "matrix" as const,
+                  label: t("workflows.contractReview.views.matrix"),
+                },
+              ]
+            : []
+        }
+        active={reviewView}
+        onChange={setReviewView}
         actions={
           <div className="ml-auto flex min-w-0 items-center gap-3 md:gap-5">
             {review && (
@@ -575,7 +684,7 @@ export function TabularReviewView({
                 {t("tabular.retryFailed", { count: failedRetryable.length })}
               </button>
             )}
-            {selectedDocumentIds.length > 0 && matrixMutable && (
+            {selectedDocumentIds.length > 0 && documentScopeMutable && (
               <button
                 type="button"
                 onClick={() =>
@@ -584,64 +693,89 @@ export function TabularReviewView({
                 disabled={busyAction !== null}
                 className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-40"
               >
-                {t("tabular.clearSelected", { count: selectedDocumentIds.length })}
+                {t("tabular.clearSelected", {
+                  count: selectedDocumentIds.length,
+                })}
               </button>
             )}
             <button
               type="button"
               onClick={() => setDocumentsModalOpen(true)}
-              disabled={!matrixMutable || !review?.project_id}
+              disabled={!documentScopeMutable || !review?.project_id}
               className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FilePlus2 className="h-3.5 w-3.5" />
               {t("tabular.addDocuments")}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingColumn(undefined);
-                setColumnModalOpen(true);
-              }}
-              disabled={!matrixMutable || !canAddColumn}
-              title={!canAddColumn ? t("tabular.documents.matrixLimit") : undefined}
-              className="text-xs font-medium text-gray-600 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              + {t("tabular.addColumn")}
-            </button>
+            {!boundWorkflowId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingColumn(undefined);
+                  setColumnModalOpen(true);
+                }}
+                disabled={!matrixMutable || !canAddColumn}
+                title={
+                  !canAddColumn ? t("tabular.documents.matrixLimit") : undefined
+                }
+                className="text-xs font-medium text-gray-600 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                + {t("tabular.addColumn")}
+              </button>
+            )}
           </div>
         }
       />
 
-      <TRTable
-        loading={loading}
-        columns={review?.columns_config ?? []}
-        documents={filteredDocuments}
-        cells={displayCells}
-        selectedDocumentIds={selectedDocumentIds}
-        disabled={!matrixMutable || busyAction !== null}
-        canAddColumn={canAddColumn}
-        onSelectionChange={setSelectedDocumentIds}
-        onOpenCell={(cell) => setExpandedCellId(cell.id)}
-        onEditColumn={(column) => {
-          setEditingColumn(column);
-          setColumnModalOpen(true);
-        }}
-        onDeleteColumn={async (columnIndex) => {
-          if (!detail) return;
-          await runMutation(`delete-column-${columnIndex}`, async () => {
-            await saveMatrix(
-              detail.review.columns_config.filter(
-                (column) => column.index !== columnIndex,
-              ),
+      {presetLoading && boundWorkflowId ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t("workflows.contractReview.loadingPreset")}
+        </div>
+      ) : presetWorkflow && reviewView === "issues" && detail ? (
+        <ContractReviewIssues
+          detail={detail}
+          search={search}
+          onOpenCell={(cell) => setExpandedCellId(cell.id)}
+        />
+      ) : (
+        <TRTable
+          loading={loading}
+          columns={review?.columns_config ?? []}
+          documents={filteredDocuments}
+          cells={displayCells}
+          selectedDocumentIds={selectedDocumentIds}
+          disabled={!matrixMutable || busyAction !== null}
+          canAddColumn={canAddColumn && !boundWorkflowId}
+          canEditColumns={columnsMutable}
+          onSelectionChange={setSelectedDocumentIds}
+          onOpenCell={(cell) => setExpandedCellId(cell.id)}
+          onEditColumn={(column) => {
+            setEditingColumn(column);
+            setColumnModalOpen(true);
+          }}
+          onDeleteColumn={async (columnIndex) => {
+            if (!detail || !columnsMutable) return;
+            await runMutation(
+              `delete-column-${columnIndex}`,
+              async () => {
+                await saveMatrix(
+                  detail.review.columns_config.filter(
+                    (column) => column.index !== columnIndex,
+                  ),
+                );
+              },
+              true,
             );
-          }, true);
-        }}
-        onAddColumn={() => {
-          setEditingColumn(undefined);
-          setColumnModalOpen(true);
-        }}
-        onAddDocuments={() => setDocumentsModalOpen(true)}
-      />
+          }}
+          onAddColumn={() => {
+            if (!columnsMutable) return;
+            setEditingColumn(undefined);
+            setColumnModalOpen(true);
+          }}
+          onAddDocuments={() => setDocumentsModalOpen(true)}
+        />
+      )}
 
       {expandedCell && expandedDocument && expandedColumn && (
         <TRSidePanel
@@ -664,7 +798,8 @@ export function TabularReviewView({
             runMutation(`cancel-${expandedCell.id}`, async () => {
               await cancelVeraTabularCell(reviewId, {
                 cell_id: expandedCell.id,
-                reason: "Tabular cell cancellation requested by the local user.",
+                reason:
+                  "Tabular cell cancellation requested by the local user.",
               });
               await reload();
               setLiveUpdates((current) => {
@@ -683,7 +818,7 @@ export function TabularReviewView({
       )}
 
       <AddColumnModal
-        open={columnModalOpen}
+        open={columnModalOpen && columnsMutable}
         nextIndex={nextColumnIndex + 1}
         maxColumns={
           editingColumn
@@ -708,11 +843,12 @@ export function TabularReviewView({
           if (!detail) return;
           await runMutation(
             `edit-column-${saved.index}`,
-            () => saveMatrix(
-              detail.review.columns_config.map((column) =>
-                column.index === saved.index ? saved : column,
+            () =>
+              saveMatrix(
+                detail.review.columns_config.map((column) =>
+                  column.index === saved.index ? saved : column,
+                ),
               ),
-            ),
             true,
           );
         }}
@@ -720,11 +856,12 @@ export function TabularReviewView({
           if (!detail) return;
           await runMutation(
             `delete-column-${columnIndex}`,
-            () => saveMatrix(
-              detail.review.columns_config.filter(
-                (column) => column.index !== columnIndex,
+            () =>
+              saveMatrix(
+                detail.review.columns_config.filter(
+                  (column) => column.index !== columnIndex,
+                ),
               ),
-            ),
             true,
           );
         }}
@@ -757,31 +894,35 @@ export function TabularReviewView({
         lockProject={(review?.document_ids.length ?? 0) > 0}
         onClose={() => setDetailsModalOpen(false)}
         onSave={async (input) => {
-          await runMutation("save-details", async () => {
-            if (!review) return;
-            const projectChanged = input.project_id !== review.project_id;
-            const updated = await updateVeraTabularReview(reviewId, {
-              title: input.title,
-              model_profile_id: input.model_profile_id,
-              ...(projectChanged
-                ? {
-                    project_id: input.project_id,
-                    document_ids: review.document_ids,
-                    columns_config: review.columns_config,
-                  }
-                : {}),
-            });
-            if (projectId && updated.project_id !== projectId) {
-              if (!updated.project_id) {
-                throw new Error(t("tabular.errors.projectScope"));
+          await runMutation(
+            "save-details",
+            async () => {
+              if (!review) return;
+              const projectChanged = input.project_id !== review.project_id;
+              const updated = await updateVeraTabularReview(reviewId, {
+                title: input.title,
+                model_profile_id: input.model_profile_id,
+                ...(projectChanged
+                  ? {
+                      project_id: input.project_id,
+                      document_ids: review.document_ids,
+                      columns_config: review.columns_config,
+                    }
+                  : {}),
+              });
+              if (projectId && updated.project_id !== projectId) {
+                if (!updated.project_id) {
+                  throw new Error(t("tabular.errors.projectScope"));
+                }
+                router.replace(
+                  routes.tabularReviewHref(updated.project_id, reviewId),
+                );
+              } else {
+                await reload();
               }
-              router.replace(
-                routes.tabularReviewHref(updated.project_id, reviewId),
-              );
-            } else {
-              await reload();
-            }
-          }, true);
+            },
+            true,
+          );
         }}
       />
 
@@ -806,10 +947,7 @@ export function TabularReviewView({
             setSelectedDocumentIds((current) =>
               current.filter((id) => !ids.includes(id)),
             );
-            if (
-              expandedCell &&
-              ids.includes(expandedCell.document_id)
-            ) {
+            if (expandedCell && ids.includes(expandedCell.document_id)) {
               setExpandedCellId(null);
             }
             setClearConfirmDocumentIds(null);
@@ -827,7 +965,9 @@ export function TabularReviewView({
             {review && (
               <label className="block space-y-1.5">
                 <span className="block text-[11px] text-gray-500">
-                  {t("tabular.deleteConfirm.namePrompt", { name: review.title })}
+                  {t("tabular.deleteConfirm.namePrompt", {
+                    name: review.title,
+                  })}
                 </span>
                 <input
                   autoFocus

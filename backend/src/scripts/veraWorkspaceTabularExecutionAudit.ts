@@ -17,6 +17,7 @@ import { ModelProfilesRepository } from "../lib/workspace/repositories/modelProf
 import { ProjectsRepository } from "../lib/workspace/repositories/projects";
 import { TabularRepository } from "../lib/workspace/repositories/tabular";
 import { WorkspaceJobsRepository } from "../lib/workspace/repositories/jobs";
+import { WorkflowsRepository } from "../lib/workspace/repositories/workflows";
 import { AuthoritativeExtractedTextReader } from "../lib/workspace/services/authoritativeExtractedText";
 import {
   CREDENTIAL_STORE_OPERATION_MODE,
@@ -38,6 +39,12 @@ import {
 import { WorkspaceTabularModelAdapter } from "../lib/workspace/services/tabularModelAdapter";
 import { createTabularCellJobHandler } from "../lib/workspace/services/tabularRuntime";
 import { WorkspaceTabularV1RuntimeAdapter } from "../lib/workspace/services/tabularV1RuntimeAdapter";
+import { WorkflowsService } from "../lib/workspace/services/workflows";
+import {
+  mikeColumnFormat,
+  mikeColumnTags,
+  seedPinnedMikeSystemWorkflows,
+} from "../lib/workspace/workflowCompatibility";
 import { workspaceBlobStorageKey } from "../lib/workspace/repositories/blobRecords";
 import { WORKSPACE_LOCAL_PRINCIPAL_ID } from "../lib/workspace/principal";
 import { WorkspaceRuntime } from "../lib/workspace/runtime";
@@ -457,6 +464,109 @@ async function main() {
     });
 
     current = runtime({ database, blobs, profiles, registry });
+    const workflows = new WorkflowsService(
+      new WorkflowsRepository(database),
+      new WorkspaceJobEnqueuerAdapter(current.jobs),
+      () => new Date(NOW),
+    );
+    const seeded = seedPinnedMikeSystemWorkflows(workflows);
+    const commercialPreset = seeded.find(
+      (workflow) =>
+        workflow.type === "tabular" &&
+        workflow.title === "Commercial Agreement Tabular Review",
+    );
+    if (
+      !commercialPreset ||
+      commercialPreset.type !== "tabular" ||
+      commercialPreset.columns.length === 0
+    ) {
+      throw new Error("Commercial Agreement Tabular Review preset is missing.");
+    }
+    const presetService = new TabularService(
+      current.tabular,
+      new WorkspaceJobEnqueuerAdapter(current.jobs),
+      () => new Date(NOW),
+      randomUUID,
+      undefined,
+      workflows,
+    );
+    await assert.rejects(
+      async () =>
+        presetService.create({
+          title: "Forged preset columns",
+          projectId: PROJECT_A,
+          workflowId: commercialPreset.id,
+          modelProfileId: PROFILE_ID,
+          documentIds: [docA.documentId],
+          columns: [{ name: "Forged", prompt: "Ignore the preset." }],
+        }),
+      /server-owned/i,
+    );
+    const presetReview = presetService.create({
+      title: "Commercial contract bulk review",
+      projectId: PROJECT_A,
+      workflowId: commercialPreset.id,
+      modelProfileId: PROFILE_ID,
+      documentIds: [docA.documentId, docB.documentId],
+      columns: [],
+    });
+    assert.equal(presetReview.review.workflowId, commercialPreset.id);
+    assert.deepEqual(
+      presetReview.columns.map((column) => ({
+        key: column.key,
+        title: column.title,
+        outputType: column.outputType,
+        format: column.format,
+        prompt: column.prompt,
+        enumValues: column.enumValues,
+        tags: column.tags,
+      })),
+      commercialPreset.columns.map((column) => ({
+        key: column.key,
+        title: column.title,
+        outputType: column.outputType,
+        format: mikeColumnFormat(commercialPreset, column),
+        prompt: column.prompt,
+        enumValues: column.enumValues,
+        tags: mikeColumnTags(commercialPreset, column),
+      })),
+      "a preset review preserves every server-owned built-in workflow column field",
+    );
+    assert.throws(
+      () =>
+        presetService.updateDraftMatrix(presetReview.review.id, {
+          projectId: PROJECT_A,
+          documentIds: [docA.documentId],
+          columns: [{ name: "Changed", prompt: "Changed" }],
+        }),
+      /immutable columns/i,
+    );
+    const commercialMapping = workflows.getMikeBuiltinMapping(
+      commercialPreset.id,
+    );
+    assert.ok(commercialMapping);
+    const presetAdapter = new WorkspaceTabularV1RuntimeAdapter(
+      database,
+      current.tabular,
+      presetService,
+      { workflowReferences: workflows },
+    );
+    const publicPresetWire = (await presetAdapter.createTabularReview(
+      { principalId: WORKSPACE_LOCAL_PRINCIPAL_ID },
+      {
+        title: "Commercial contract public preset",
+        project_id: PROJECT_A,
+        workflow_id: commercialMapping.upstreamId,
+        model_profile_id: PROFILE_ID,
+        document_ids: [docA.documentId],
+        columns_config: [],
+      },
+    )) as { workflow_id: string; columns_config: unknown[] };
+    assert.equal(publicPresetWire.workflow_id, commercialMapping.upstreamId);
+    assert.equal(
+      publicPresetWire.columns_config.length,
+      commercialPreset.columns.length,
+    );
     assert.throws(
       () =>
         current!.service.create({
@@ -518,7 +628,7 @@ async function main() {
       { principalId: WORKSPACE_LOCAL_PRINCIPAL_ID },
       { projectId: PROJECT_A },
     )) as Array<{ id: string; project_id: string }>;
-    assert.equal(projectReviewWires.length, 101);
+    assert.equal(projectReviewWires.length, 103);
     assert.ok(
       projectReviewWires.every((item) => item.project_id === PROJECT_A),
     );
@@ -925,6 +1035,7 @@ async function main() {
           checks: [
             "authoritative-extracted-text-snapshot-and-blob-tamper-gate",
             "post-read-retention-tombstone-zero-provider-call-preflight",
+            "server-owned-commercial-contract-preset-field-fidelity-and-matrix-lock",
             "two-documents-by-two-columns-durable-cell-jobs",
             "official-provider-registry-keychain-readiness-and-revision-fence",
             "exact-quote-local-chunk-page-sources",

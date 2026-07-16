@@ -699,7 +699,10 @@ export const MikeTabularCreateSchema = strictObject({
   title: z.string().trim().max(240).optional(),
   document_ids: z.array(Id).max(1000).default([]),
   columns_config: z.array(ColumnSchema).max(100).default([]),
-  workflow_id: Id.nullable().optional(),
+  workflow_id: z
+    .union([Id, z.string().regex(/^builtin-[a-z0-9-]{1,232}$/)])
+    .nullable()
+    .optional(),
   project_id: Id.nullable().optional(),
   // Local-client extension: Mike's cloud service selected a model outside the
   // review payload, while Vera persists the explicit local profile binding.

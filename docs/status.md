@@ -88,6 +88,16 @@ search -> durable read -> cited Assistant answer -> cited Studio Draft -> user
 accepted suggestion -> DOCX -> reopen. It is test evidence, not live-provider
 acceptance or a claim that the production activation gate is open.
 
+The current feature branch also connects active built-in Tabular workflow
+presets to Matter contract bulk extraction. The server, not the renderer,
+snapshots the preset's complete column definition (including formats and
+tags), rejects forged columns, and locks the preset matrix. The Matter UI can
+open a preset directly from its Workflow, select ready local documents and a
+verified model, run the existing durable Tabular jobs, inspect persisted
+flags/sources, and export through the existing path. These outputs are
+AI-generated extraction drafts requiring lawyer review; they are not approved
+legal conclusions, a risk-scoring rubric, or a unified Review Center.
+
 No production legal provider is claimed ready. The active Workspace now owns a
 v18 YuanDian Provider Hub, Keychain-only credential operations, authenticated
 configuration/test APIs, and the Settings surface. A separately invoked live

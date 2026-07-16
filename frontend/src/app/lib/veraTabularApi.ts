@@ -52,8 +52,7 @@ export const VERA_TABULAR_CELL_STATUSES = [
 export type VeraTabularFormat = (typeof VERA_TABULAR_FORMATS)[number];
 export type VeraTabularReviewStatus =
   (typeof VERA_TABULAR_REVIEW_STATUSES)[number];
-export type VeraTabularCellStatus =
-  (typeof VERA_TABULAR_CELL_STATUSES)[number];
+export type VeraTabularCellStatus = (typeof VERA_TABULAR_CELL_STATUSES)[number];
 
 export interface VeraTabularColumn {
   index: number;
@@ -153,6 +152,7 @@ export interface VeraTabularReviewUpdateInput {
 type WireRecord = Record<string, unknown>;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BUILTIN_WORKFLOW_ID_PATTERN = /^builtin-[a-z0-9-]{1,232}$/;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const LOCAL_PATH_PATTERN =
   /(?:^|[\s"'(])(?:\/[Uu]sers\/|\/home\/|\/private\/|[A-Za-z]:\\|file:\/\/)/;
@@ -367,9 +367,7 @@ function uuidArray(value: unknown, label: string): string[] {
   return ids;
 }
 
-export function parseVeraTabularColumn(
-  value: unknown,
-): VeraTabularColumn {
+export function parseVeraTabularColumn(value: unknown): VeraTabularColumn {
   const wire = record(value, "Tabular column");
   exactKeys(
     wire,
@@ -410,9 +408,7 @@ export function parseVeraTabularColumn(
   };
 }
 
-export function parseVeraTabularReview(
-  value: unknown,
-): VeraTabularReview {
+export function parseVeraTabularReview(value: unknown): VeraTabularReview {
   assertNoVeraTabularSensitiveFields(value);
   const wire = record(value, "Tabular review");
   exactKeys(
@@ -437,7 +433,10 @@ export function parseVeraTabularReview(
     [],
     "Tabular review",
   );
-  if (!Array.isArray(wire.columns_config) || wire.columns_config.length > MAX_COLUMNS) {
+  if (
+    !Array.isArray(wire.columns_config) ||
+    wire.columns_config.length > MAX_COLUMNS
+  ) {
     return invalid("Tabular review columns");
   }
   const columns = wire.columns_config.map(parseVeraTabularColumn);
@@ -475,7 +474,10 @@ export function parseVeraTabularReview(
     }),
     columns_config: columns,
     document_ids: documentIds,
-    workflow_id: nullableUuid(wire.workflow_id, "Tabular workflow id"),
+    workflow_id: nullableWorkflowReference(
+      wire.workflow_id,
+      "Tabular workflow id",
+    ),
     model_profile_id: nullableUuid(
       wire.model_profile_id,
       "Tabular model profile id",
@@ -542,12 +544,7 @@ function parseStructuredError(value: unknown): VeraTabularStructuredError {
 
 function parseCellContent(value: unknown): VeraTabularCellContent {
   const wire = record(value, "Tabular cell content");
-  exactKeys(
-    wire,
-    ["summary"],
-    ["flag", "reasoning"],
-    "Tabular cell content",
-  );
+  exactKeys(wire, ["summary"], ["flag", "reasoning"], "Tabular cell content");
   const content: VeraTabularCellContent = {
     summary: stringValue(wire.summary, "Tabular cell summary", {
       max: 100_000,
@@ -561,11 +558,9 @@ function parseCellContent(value: unknown): VeraTabularCellContent {
     );
   }
   if (Object.hasOwn(wire, "reasoning")) {
-    content.reasoning = stringValue(
-      wire.reasoning,
-      "Tabular cell reasoning",
-      { max: 100_000 },
-    );
+    content.reasoning = stringValue(wire.reasoning, "Tabular cell reasoning", {
+      max: 100_000,
+    });
   }
   return content;
 }
@@ -662,7 +657,8 @@ export function parseVeraTabularCell(value: unknown): VeraTabularCell {
     "Tabular completed timestamp",
   );
   if (
-    (status === "done" && (content === null || completedAt === null || error)) ||
+    (status === "done" &&
+      (content === null || completedAt === null || error)) ||
     (status === "error" && error === null) ||
     ((status === "pending" || status === "generating") && error !== null)
   ) {
@@ -736,7 +732,8 @@ function parseDocument(value: unknown): VeraDocumentWire {
     wire.owner_email !== null ||
     wire.storage_path !== null ||
     wire.structure_tree !== null ||
-    (wire.pdf_storage_path !== null && wire.pdf_storage_path !== "local-preview")
+    (wire.pdf_storage_path !== null &&
+      wire.pdf_storage_path !== "local-preview")
   ) {
     invalid("Tabular document projection");
   }
@@ -816,16 +813,18 @@ export function parseVeraTabularReviewDetail(
     documents.some(
       (document, index) => document.id !== review.document_ids[index],
     ) ||
-    new Set(documents.map((document) => document.id)).size !== documents.length ||
+    new Set(documents.map((document) => document.id)).size !==
+      documents.length ||
     documents.some(
       (document) =>
         !documentIds.has(document.id) ||
-        (review.project_id !== null && document.project_id !== review.project_id),
+        (review.project_id !== null &&
+          document.project_id !== review.project_id),
     ) ||
-    cells.length !== review.document_ids.length * review.columns_config.length ||
-    new Set(
-      cells.map((cell) => `${cell.document_id}:${cell.column_index}`),
-    ).size !== cells.length ||
+    cells.length !==
+      review.document_ids.length * review.columns_config.length ||
+    new Set(cells.map((cell) => `${cell.document_id}:${cell.column_index}`))
+      .size !== cells.length ||
     cells.some(
       (cell) =>
         cell.review_id !== review.id ||
@@ -843,12 +842,7 @@ export function parseVeraTabularCapabilities(
 ): VeraTabularCapabilities {
   assertNoVeraTabularSensitiveFields(value);
   const wire = record(value, "Tabular capabilities");
-  exactKeys(
-    wire,
-    ["generation", "chat"],
-    [],
-    "Tabular capabilities",
-  );
+  exactKeys(wire, ["generation", "chat"], [], "Tabular capabilities");
   return {
     generation: booleanValue(wire.generation, "Tabular generation capability"),
     chat: booleanValue(wire.chat, "Tabular chat capability"),
@@ -860,6 +854,27 @@ function safeId(value: string, label: string): string {
     throw new VeraRuntimeConfigurationError(`The Vera ${label} is invalid.`);
   }
   return value;
+}
+
+function safeWorkflowReference(value: string): string {
+  if (!UUID_PATTERN.test(value) && !BUILTIN_WORKFLOW_ID_PATTERN.test(value)) {
+    throw new VeraRuntimeConfigurationError(
+      "The Vera Tabular workflow id is invalid.",
+    );
+  }
+  return value;
+}
+
+function nullableWorkflowReference(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  const reference = stringValue(value, label, { min: 1, max: 240 });
+  if (
+    !UUID_PATTERN.test(reference) &&
+    !BUILTIN_WORKFLOW_ID_PATTERN.test(reference)
+  ) {
+    invalid(label);
+  }
+  return reference;
 }
 
 function safeColumns(value: VeraTabularColumn[]): VeraTabularColumn[] {
@@ -944,10 +959,7 @@ export async function listVeraTabularReviews(
     return invalid("Tabular review list");
   }
   const reviews = value.map(parseVeraTabularReview);
-  if (
-    projectId &&
-    reviews.some((review) => review.project_id !== projectId)
-  ) {
+  if (projectId && reviews.some((review) => review.project_id !== projectId)) {
     return invalid("Tabular project review list");
   }
   return reviews;
@@ -972,6 +984,10 @@ export async function createVeraTabularReview(
   );
   const documentIds = safeDocumentIds(input.document_ids);
   const columns = safeColumns(input.columns_config);
+  const workflowId =
+    input.workflow_id === undefined || input.workflow_id === null
+      ? null
+      : safeWorkflowReference(input.workflow_id);
   if (documentIds.length * columns.length > MAX_CELLS) {
     throw new VeraRuntimeConfigurationError(
       "The Vera Tabular matrix is too large.",
@@ -984,16 +1000,13 @@ export async function createVeraTabularReview(
         title: safeTitle(input.title),
         project_id: projectId,
         document_ids: documentIds,
-        columns_config: columns,
         model_profile_id: modelProfileId,
-        ...(input.workflow_id === undefined
-          ? {}
-          : {
-              workflow_id:
-                input.workflow_id === null
-                  ? null
-                  : safeId(input.workflow_id, "Tabular workflow id"),
-            }),
+        ...(workflowId === null
+          ? {
+              columns_config: columns,
+              ...(input.workflow_id === null ? { workflow_id: null } : {}),
+            }
+          : { workflow_id: workflowId }),
       },
       signal,
     }),
@@ -1001,6 +1014,7 @@ export async function createVeraTabularReview(
   if (
     created.project_id !== projectId ||
     created.model_profile_id !== modelProfileId ||
+    (workflowId !== null && created.workflow_id !== workflowId) ||
     !sameIds(created.document_ids, documentIds) ||
     !sameColumns(created.columns_config, columns)
   ) {
@@ -1210,7 +1224,10 @@ export async function* streamVeraTabularGeneration(
         "The Vera Tabular event stream returned an unexpected event.",
       );
     }
-    if (event.column_index > 99 || (event.status === "done" && !event.content)) {
+    if (
+      event.column_index > 99 ||
+      (event.status === "done" && !event.content)
+    ) {
       throw new VeraSseProtocolError(
         "The Vera Tabular cell update is invalid.",
       );
