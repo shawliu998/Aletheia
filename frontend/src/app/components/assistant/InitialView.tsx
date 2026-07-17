@@ -3,10 +3,12 @@
 // UI composition ported from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
 // frontend/src/app/components/assistant/InitialView.tsx
 import { VeraMark } from "@/app/components/vera-brand";
+import { useRef } from "react";
 import type { Message } from "@/app/components/shared/types";
 import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
 import { useI18n } from "@/app/i18n";
-import { ChatInput } from "./ChatInput";
+import { AssistantStarterPanel } from "./AssistantStarterPanel";
+import { ChatInput, type ChatInputHandle } from "./ChatInput";
 
 export function InitialView({
   onSubmit,
@@ -20,6 +22,10 @@ export function InitialView({
   error?: string | null;
 }) {
   const { t } = useI18n();
+  const chatInputRef = useRef<ChatInputHandle>(null);
+  const readyDocumentCount =
+    availableDocuments?.filter((document) => document.status === "ready")
+      .length ?? 0;
 
   return (
     <div className="flex h-full w-full flex-col px-6">
@@ -31,7 +37,15 @@ export function InitialView({
               {projectName ?? t("assistant.empty.title")}
             </h1>
           </div>
+          <div className="mb-5 flex justify-center">
+            <AssistantStarterPanel
+              inputRef={chatInputRef}
+              scopeAvailable={availableDocuments !== undefined}
+              showReadyHint={readyDocumentCount < 2}
+            />
+          </div>
           <ChatInput
+            ref={chatInputRef}
             onSubmit={onSubmit}
             onCancel={() => undefined}
             isLoading={false}

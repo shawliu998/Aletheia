@@ -16,6 +16,7 @@ export function AssistantDocumentPicker({
   onSelect,
   documents: providedDocuments,
   selectedIds,
+  minimumSelection = 1,
   title,
 }: {
   open: boolean;
@@ -23,6 +24,7 @@ export function AssistantDocumentPicker({
   onSelect: (documents: VeraDocumentWire[]) => void;
   documents?: readonly VeraDocumentWire[];
   selectedIds: ReadonlySet<string>;
+  minimumSelection?: number;
   title?: string;
 }) {
   const { t } = useI18n();
@@ -71,6 +73,10 @@ export function AssistantDocumentPicker({
         document.filename.toLocaleLowerCase().includes(normalized),
       )
     : available;
+  const selectedAvailableCount = available.filter((document) =>
+    draftIds.has(document.id),
+  ).length;
+  const effectiveMinimumSelection = Math.max(1, minimumSelection);
 
   const apply = () => {
     onSelect(available.filter((document) => draftIds.has(document.id)));
@@ -88,9 +94,16 @@ export function AssistantDocumentPicker({
           ? t("assistant.documents.addCount", { count: draftIds.size })
           : t("assistant.documents.add"),
         onClick: apply,
-        disabled: draftIds.size === 0,
+        disabled: selectedAvailableCount < effectiveMinimumSelection,
       }}
     >
+      {minimumSelection > 1 && (
+        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {t("assistant.documents.minimumRequired", {
+            count: minimumSelection,
+          })}
+        </p>
+      )}
       <label className="mb-3 flex h-9 items-center gap-2 rounded-xl border border-white/70 bg-white/70 px-3 text-gray-400 shadow-inner">
         <Search className="h-3.5 w-3.5" />
         <input

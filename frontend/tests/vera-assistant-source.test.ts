@@ -167,6 +167,13 @@ test("Agent-created Draft events render a Matter-safe open action", () => {
   assert.match(assistantMessage, /AssistantArtifactCard/);
   assert.match(artifactCard, /assistant-\$\{artifact\.kind\}-result-/);
   assert.match(artifactCard, /router\.push\(artifact\.route\)/);
+  assert.match(
+    artifactCard,
+    /routes\.documentStudioHref\(projectId, artifact\.id\)/,
+  );
+  assert.match(artifactCard, /exportVeraStudioDocx/);
+  assert.match(artifactCard, /artifact\.versionId/);
+  assert.match(artifactCard, /saveBlob/);
   assert.match(artifactCard, /draftDocxHint/);
   assert.doesNotMatch(artifactCard, /window\.open\(artifact\.route/);
 });
@@ -187,6 +194,13 @@ test("Agent-created Tabular Review events persist, render, and open the Matter R
   assert.match(hook, /type: "tabular_review_created"/);
   assert.match(assistantMessage, /AssistantArtifactCard/);
   assert.match(artifactCard, /assistant\.artifacts\.reviewDescription/);
+  assert.match(
+    artifactCard,
+    /routes\.tabularReviewHref\(projectId, artifact\.id\)/,
+  );
+  assert.match(artifactCard, /exportVeraTabularReview\(artifact\.id, "xlsx"\)/);
+  assert.match(artifactCard, /assistant\.artifacts\.exporting/);
+  assert.match(artifactCard, /assistant\.artifacts\.exportFailed/);
   assert.match(artifactCard, /reviewXlsxHint/);
   assert.match(summary, /MAX_TASK_PROGRESS_ITEMS = 6/);
   assert.match(summary, /run_contract_review/);
@@ -225,19 +239,47 @@ test("Project Assistant document citations reuse the scoped source viewer and ex
   );
 });
 
-test("Matter Assistant offers a contract-review starter without submitting it", () => {
+test("Assistant starters remain visible and Matter starters enforce their document scope", () => {
   const chatView = source("src/app/components/assistant/ChatView.tsx");
   const chatInput = source("src/app/components/assistant/ChatInput.tsx");
+  const initialView = source("src/app/components/assistant/InitialView.tsx");
+  const starterPanel = source(
+    "src/app/components/assistant/AssistantStarterPanel.tsx",
+  );
+  const customDialog = source(
+    "src/app/components/assistant/CustomExtractionFieldsDialog.tsx",
+  );
 
-  assert.match(chatView, /pathname\.startsWith\("\/matters\/"\)/);
+  assert.match(starterPanel, /key: "contractReview"/);
+  assert.match(starterPanel, /key: "customExtraction"/);
+  assert.match(starterPanel, /key: "caseTimeline"/);
+  assert.match(starterPanel, /key: "legalMemo"/);
   assert.match(
     chatView,
     /availableDocuments\?\.filter\(\(document\) => document\.status === "ready"\)/,
   );
-  assert.match(chatView, />= 2/);
-  assert.match(chatView, /chatInputRef\.current\?\.setPrompt/);
+  assert.match(chatView, /readyDocumentCount < 2/);
+  assert.match(starterPanel, /inputRef\.current\?\.setPrompt/);
+  assert.match(starterPanel, /inputRef\.current\?\.setMinimumDocuments/);
+  assert.match(starterPanel, /inputRef\.current\?\.openDocumentPicker/);
+  assert.match(starterPanel, /disabled=\{!scopeAvailable\}/);
+  assert.match(initialView, /AssistantStarterPanel/);
+  assert.match(
+    chatView,
+    /artifactScope=\{projectId \? \{ projectId \} : undefined\}/,
+  );
   assert.doesNotMatch(chatView, /startContractReview[\s\S]{0,240}handleChat/);
   assert.match(chatInput, /setPrompt: \(prompt: string\) => void/);
+  assert.match(chatInput, /setMinimumDocuments: \(count: number\) => void/);
+  assert.match(chatInput, /useState\(0\)/);
+  assert.match(chatInput, /attachedDocs\.length < minimumDocuments/);
+  assert.match(chatInput, /openDocumentPicker: \(\) => void/);
+  assert.match(customDialog, /MAX_FIELDS = 15/);
+  assert.match(customDialog, /DEFAULT_FIELD_KEYS/);
+  assert.match(customDialog, /role="dialog"/);
+  assert.match(customDialog, /maxLength=\{120\}/);
+  assert.match(customDialog, /maxLength=\{4000\}/);
+  assert.match(customDialog, /duplicateNames/);
   assert.equal(
     MESSAGES["zh-CN"].assistant.starters.contractReview.label,
     "审查一批合同",
@@ -255,6 +297,14 @@ test("Matter Assistant offers a contract-review starter without submitting it", 
     "自定义信息提取",
   );
   assert.equal(
+    MESSAGES["zh-CN"].assistant.customExtraction.fields.signingDate.name,
+    "签署日期",
+  );
+  assert.equal(
+    MESSAGES["en-US"].assistant.customExtraction.fields.signingDate.name,
+    "Signing date",
+  );
+  assert.equal(
     MESSAGES["en-US"].assistant.starters.caseTimeline.label,
     "Build a case timeline",
   );
@@ -262,7 +312,7 @@ test("Matter Assistant offers a contract-review starter without submitting it", 
     MESSAGES["en-US"].assistant.starters.legalMemo.label,
     "Draft a legal memo",
   );
-  assert.match(chatView, /startStarter\(starter\.prompt\)/);
+  assert.match(starterPanel, /startStarter\([\s\S]*starter\.prompt/);
 });
 
 test("Assistant UI folds durable task plans and only renders real artifact completion cards", () => {
@@ -280,6 +330,8 @@ test("Assistant UI folds durable task plans and only renders real artifact compl
     summary,
     /stepStatus\.get\(`\$\{event\.plan_id\}:\$\{step\.id\}`\) \?\? step\.status/,
   );
+  assert.match(summary, /const latestPlan/);
+  assert.match(summary, /activeAction \? \[\.\.\.planItems, activeAction\]/);
   assert.match(artifactCard, /reviewXlsxHint/);
   assert.match(artifactCard, /draftDocxHint/);
 });

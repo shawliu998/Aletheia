@@ -30,6 +30,7 @@ import {
   ProjectCitationSourceViewer,
   type ProjectAssistantCitationSource,
 } from "@/app/components/projects/ProjectCitationSourceViewer";
+import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n, type Translate } from "@/app/i18n";
 import { createVeraStudioDraftFromAssistant } from "@/app/lib/veraDocumentStudioApi";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -90,6 +91,7 @@ export function AssistantMessage({
   onRetry,
   onRegenerate,
   studioHandoff,
+  artifactScope,
   citationScope,
 }: {
   message: Message;
@@ -98,12 +100,14 @@ export function AssistantMessage({
   onRetry: () => void | Promise<void>;
   onRegenerate: () => void | Promise<void>;
   studioHandoff?: Readonly<{ projectId: string; chatId: string }>;
+  artifactScope?: Readonly<{ projectId: string }>;
   citationScope?: Readonly<{
     projectId: string;
     documentIds: readonly string[];
   }>;
 }) {
   const router = useRouter();
+  const routes = useWorkspaceRoutes();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
@@ -170,7 +174,7 @@ export function AssistantMessage({
         },
       );
       router.push(
-        `/projects/${draft.project_id}/documents/${draft.document_id}/studio`,
+        routes.documentStudioHref(draft.project_id, draft.document_id),
       );
     } catch {
       setDraftFailure(true);
@@ -234,9 +238,11 @@ export function AssistantMessage({
           artifact={{
             kind: "draft",
             id: draft.draft_id,
+            versionId: draft.version_id,
             title: draft.title,
             route: draft.route,
           }}
+          projectId={artifactScope?.projectId}
         />
       ))}
 
@@ -250,6 +256,7 @@ export function AssistantMessage({
             route: review.route,
             documentCount: review.document_count,
           }}
+          projectId={artifactScope?.projectId}
         />
       ))}
 

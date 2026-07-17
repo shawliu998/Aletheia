@@ -15,6 +15,7 @@ import {
   toUiMessage,
 } from "../src/app/hooks/useAssistantChat.ts";
 import { VeraApiError } from "../src/app/lib/veraApi.ts";
+import { summarizeTaskRunEvents } from "../src/app/components/assistant/TaskRunSummary.tsx";
 
 const chatId = "11111111-1111-4111-8111-111111111111";
 const jobId = "22222222-2222-4222-8222-222222222222";
@@ -26,6 +27,39 @@ const localUserId = "00000000-0000-4000-8000-000000000001";
 const now = "2026-07-15T01:02:03.004Z";
 const token = "vdt_1234567890abcdefghijklmnopqrstuvwxyz";
 const planId = "77777777-7777-4777-8777-777777777777";
+
+test("task summary preserves every durable plan step plus one active action", () => {
+  const summary = summarizeTaskRunEvents([
+    {
+      type: "task_plan",
+      plan_id: planId,
+      goal: "Create review and memo",
+      steps: [
+        { id: "inspect", title: "Inspect sources", status: "completed" },
+        { id: "review", title: "Create review", status: "pending" },
+        { id: "draft", title: "Create memo", status: "pending" },
+      ],
+    },
+    {
+      type: "task_step_update",
+      plan_id: planId,
+      step_id: "review",
+      status: "in_progress",
+    },
+    { type: "tool_call_start", name: "run_custom_extraction" },
+    {
+      type: "tool_call_start",
+      name: "create_memo_from_tabular_review",
+      isStreaming: true,
+    },
+  ]);
+  assert.deepEqual(
+    summary.map((item) => item.kind),
+    ["plan", "plan", "plan", "tool"],
+  );
+  assert.equal(summary[1]?.status, "in_progress");
+  assert.equal(summary[3]?.active, true);
+});
 
 function status(
   state:

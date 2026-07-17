@@ -502,6 +502,7 @@ const zhCN = {
       loadError: "无法读取文档，请关闭后重试。",
       empty: "没有可用的已解析文档。",
       addCount: "添加（{count}）",
+      minimumRequired: "此任务至少需要选择 {count} 份已解析文档。",
       projectTitle: "{project} · 添加文档",
       assistantTitle: "助手 · 添加文档",
     },
@@ -511,6 +512,10 @@ const zhCN = {
       modelSettings: "模型设置",
     },
     starters: {
+      matterScopeHint:
+        "这些任务需要 Matter 范围。请进入一个 Matter 的 Assistant 后开始。",
+      matterReadyHint:
+        "合同审查和时间线建议至少选择 2 份已解析完成的 Matter 文档。",
       contractReview: {
         label: "审查一批合同",
         prompt:
@@ -530,6 +535,49 @@ const zhCN = {
         label: "起草法律备忘录",
         prompt:
           "请阅读我选择的材料，整理关键事实、待解决的法律问题和初步分析，并起草一份法律备忘录。",
+      },
+    },
+    customExtraction: {
+      title: "自定义信息提取",
+      description: "选择需要从材料中提取并比较的字段。",
+      readyHint:
+        "建议至少选择 2 份已解析完成的 Matter 文档，以便生成可比较的结果。",
+      fieldLabel: "提取字段 {number}",
+      fieldName: "字段 {number} 名称",
+      fieldInstruction: "字段 {number} 提取说明",
+      fieldFormat: "字段 {number} 格式",
+      namePlaceholder: "字段名称",
+      instructionPlaceholder: "说明应提取什么，以及缺失时如何处理",
+      duplicateNames: "字段名称不能重复。",
+      removeField: "删除字段 {number}",
+      addField: "添加字段",
+      confirm: "生成提取提示",
+      formats: { text: "文本", date: "日期", number: "数字", boolean: "是/否" },
+      fields: {
+        party: {
+          name: "当事人",
+          instruction: "提取合同或材料中明确列明的当事人全称。",
+        },
+        signingDate: {
+          name: "签署日期",
+          instruction: "提取明确的签署日期；没有明确日期时标记为未发现。",
+        },
+        contractAmount: {
+          name: "合同金额",
+          instruction: "提取合同总金额及币种，不推算未明确的金额。",
+        },
+        paymentTerm: {
+          name: "付款期限",
+          instruction: "提取付款节点、期限和触发条件。",
+        },
+        terminationRight: {
+          name: "解除权",
+          instruction: "提取各方解除或终止合同的条件、通知期和后果。",
+        },
+        jurisdictionCourt: {
+          name: "管辖法院",
+          instruction: "提取明确约定的法院、仲裁机构或争议解决地点。",
+        },
       },
     },
     model: {
@@ -581,6 +629,10 @@ const zhCN = {
       reviewXlsxHint: "可在 Review 中导出 XLSX。",
       draftDescription: "可在文稿中导出 DOCX。",
       draftDocxHint: "可在文稿中导出 DOCX。",
+      exportXlsx: "导出 XLSX",
+      exportDocx: "导出 DOCX",
+      exporting: "正在导出…",
+      exportFailed: "导出失败，请重试。",
     },
     empty: {
       title: "开始和 Vera 对话",
@@ -2034,6 +2086,7 @@ const enUS = {
         "Documents could not be read. Close this dialog and try again.",
       empty: "No parsed documents are available.",
       addCount: "Add ({count})",
+      minimumRequired: "This task requires at least {count} parsed documents.",
       projectTitle: "{project} · Add documents",
       assistantTitle: "Assistant · Add documents",
     },
@@ -2043,6 +2096,10 @@ const enUS = {
       modelSettings: "Model settings",
     },
     starters: {
+      matterScopeHint:
+        "These tasks require a Matter. Open a Matter Assistant to begin.",
+      matterReadyHint:
+        "For contract review and timelines, select at least two ready Matter documents.",
       contractReview: {
         label: "Review contracts",
         prompt:
@@ -2062,6 +2119,62 @@ const enUS = {
         label: "Draft a legal memo",
         prompt:
           "Read the selected materials, organize the key facts, legal questions, and preliminary analysis, then draft a legal memorandum.",
+      },
+    },
+    customExtraction: {
+      title: "Custom extraction",
+      description:
+        "Choose the fields to extract and compare from the selected materials.",
+      readyHint:
+        "For a useful comparison, select at least two ready Matter documents.",
+      fieldLabel: "Extraction field {number}",
+      fieldName: "Field {number} name",
+      fieldInstruction: "Field {number} instruction",
+      fieldFormat: "Field {number} format",
+      namePlaceholder: "Field name",
+      instructionPlaceholder:
+        "Describe what to extract and how to handle missing content",
+      duplicateNames: "Field names must be unique.",
+      removeField: "Remove field {number}",
+      addField: "Add field",
+      confirm: "Prepare extraction",
+      formats: {
+        text: "Text",
+        date: "Date",
+        number: "Number",
+        boolean: "Yes/No",
+      },
+      fields: {
+        party: {
+          name: "Parties",
+          instruction:
+            "Extract the full names of the parties expressly identified in the materials.",
+        },
+        signingDate: {
+          name: "Signing date",
+          instruction:
+            "Extract the express signing date; use Not found when no date is stated.",
+        },
+        contractAmount: {
+          name: "Contract amount",
+          instruction:
+            "Extract the total contract amount and currency without inferring unstated amounts.",
+        },
+        paymentTerm: {
+          name: "Payment term",
+          instruction:
+            "Extract payment milestones, deadlines, and triggering conditions.",
+        },
+        terminationRight: {
+          name: "Termination right",
+          instruction:
+            "Extract each party's termination conditions, notice period, and consequences.",
+        },
+        jurisdictionCourt: {
+          name: "Jurisdiction court",
+          instruction:
+            "Extract the stated court, arbitral institution, or dispute-resolution venue.",
+        },
       },
     },
     model: {
@@ -2113,6 +2226,10 @@ const enUS = {
       reviewXlsxHint: "Export XLSX from Review.",
       draftDescription: "Export DOCX from the draft.",
       draftDocxHint: "Export DOCX from the draft.",
+      exportXlsx: "Export XLSX",
+      exportDocx: "Export DOCX",
+      exporting: "Exporting…",
+      exportFailed: "Export failed. Try again.",
     },
     empty: {
       title: "Start a conversation with Vera",

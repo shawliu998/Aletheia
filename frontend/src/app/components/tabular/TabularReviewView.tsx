@@ -24,6 +24,7 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { PageHeader } from "@/app/components/vera-shell/PageHeader";
 import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n } from "@/app/i18n";
+import { saveBlob } from "@/app/lib/downloadBlob";
 import { listVeraProjects, VeraApiError } from "@/app/lib/veraApi";
 import { createVeraStudioDraftFromTabularReview } from "@/app/lib/veraDocumentStudioApi";
 import {
@@ -107,19 +108,6 @@ function fallbackExportName(title: string, format: "csv" | "xlsx"): string {
     .trim()
     .slice(0, 180);
   return `${base || "vera-tabular-review"}.${format}`;
-}
-
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  queueMicrotask(() => URL.revokeObjectURL(url));
 }
 
 export function TabularReviewView({
@@ -578,15 +566,10 @@ export function TabularReviewView({
                           {
                             label:
                               busyAction === "create-contract-review-memo"
-                                ? t(
-                                    "workflows.contractReview.memo.creating",
-                                  )
-                                : t(
-                                    "workflows.contractReview.memo.create",
-                                  ),
+                                ? t("workflows.contractReview.memo.creating")
+                                : t("workflows.contractReview.memo.create"),
                             icon: FilePenLine,
-                            onSelect: () =>
-                              void createContractReviewMemo(),
+                            onSelect: () => void createContractReviewMemo(),
                             disabled:
                               running ||
                               busyAction !== null ||

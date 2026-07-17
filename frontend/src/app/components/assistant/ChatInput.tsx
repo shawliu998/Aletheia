@@ -25,7 +25,9 @@ import { ModelToggle } from "./ModelToggle";
 export interface ChatInputHandle {
   addDoc: (document: VeraDocumentWire) => void;
   setPrompt: (prompt: string) => void;
+  setMinimumDocuments: (count: number) => void;
   focus: () => void;
+  openDocumentPicker: () => void;
 }
 
 interface Props {
@@ -58,10 +60,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const preferredModelId =
     selectableModels.find(
       (profile) => profile.id === settings?.default_model_profile_id,
-    )?.id ?? selectableModels[0]?.id ?? "";
+    )?.id ??
+    selectableModels[0]?.id ??
+    "";
   const [modelId, setModelId] = useState(preferredModelId);
   const [value, setValue] = useState("");
   const [attachedDocs, setAttachedDocs] = useState<VeraDocumentWire[]>([]);
+  const [minimumDocuments, setMinimumDocuments] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -73,28 +78,43 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     }
   }, [modelId, preferredModelId, selectableModels]);
 
-  useImperativeHandle(ref, () => ({
-    addDoc(document) {
-      if (document.status !== "ready") return;
-      setAttachedDocs((current) =>
-        current.some((item) => item.id === document.id)
-          ? current
-          : [...current, document],
-      );
-    },
-    setPrompt(prompt) {
-      setValue(prompt);
-      window.requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        resize(textarea);
-        textarea.focus();
-      });
-    },
-    focus() {
-      textareaRef.current?.focus();
-    },
-  }));
+  useImperativeHandle(
+    ref,
+    () => ({
+      addDoc(document) {
+        if (document.status !== "ready") return;
+        setAttachedDocs((current) =>
+          current.some((item) => item.id === document.id)
+            ? current
+            : [...current, document],
+        );
+      },
+      setPrompt(prompt) {
+        setValue(prompt);
+        textareaRef.current?.focus();
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          resize(textarea);
+        });
+      },
+      setMinimumDocuments(count) {
+        setMinimumDocuments(Math.max(0, Math.floor(count)));
+      },
+      focus() {
+        textareaRef.current?.focus();
+      },
+      openDocumentPicker() {
+        if (
+          availableDocuments === undefined ||
+          availableDocuments.some((document) => document.status === "ready")
+        ) {
+          setPickerOpen(true);
+        }
+      },
+    }),
+    [availableDocuments],
+  );
 
   const resize = (element: HTMLTextAreaElement) => {
     element.style.height = "auto";
@@ -103,7 +123,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
   const submit = async () => {
     const prompt = value.trim();
-    if (!prompt || !modelId || isLoading || submittingRef.current) return;
+    if (
+      !prompt ||
+      !modelId ||
+      attachedDocs.length < minimumDocuments ||
+      isLoading ||
+      submittingRef.current
+    )
+      return;
     const message: Message = {
       role: "user",
       content: prompt,
@@ -124,6 +151,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       if (!result) return;
       setValue("");
       setAttachedDocs([]);
+      setMinimumDocuments(0);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
     } finally {
       submittingRef.current = false;
@@ -135,7 +163,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     () => new Set(attachedDocs.map((document) => document.id)),
     [attachedDocs],
   );
-  const modelUnavailable = loadState !== "loading" && selectableModels.length === 0;
+  const modelUnavailable =
+    loadState !== "loading" && selectableModels.length === 0;
 
   return (
     <>
@@ -172,6 +201,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 </div>
               ))}
             </div>
+          )}
+
+          {value.trim() && attachedDocs.length < minimumDocuments && (
+            <p className="px-4 pt-2 text-xs text-amber-800" role="status">
+              {t("assistant.documents.minimumRequired", {
+                count: minimumDocuments,
+              })}
+            </p>
           )}
 
           <div className="px-4 pt-4">
@@ -230,12 +267,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 className={cn(
                   "relative flex h-8 w-8 items-center justify-center rounded-[10px] border border-white/30 bg-gradient-to-b from-neutral-700 to-black text-white shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)] transition-all active:enabled:scale-95 disabled:cursor-default disabled:opacity-40",
                 )}
-                onClick={() =>
-                  isLoading ? void onCancel() : void submit()
-                }
+                onClick={() => (isLoading ? void onCancel() : void submit())}
                 disabled={
                   !isLoading &&
-                  (submitting || !value.trim() || !modelId)
+                  (submitting ||
+                    !value.trim() ||
+                    !modelId ||
+                    attachedDocs.length < minimumDocuments)
                 }
                 aria-label={
                   isLoading ? t("assistant.stop") : t("assistant.send")
@@ -243,7 +281,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 title={isLoading ? t("assistant.stop") : t("assistant.send")}
               >
                 {isLoading ? (
-                  <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
+                  <Square
+                    className="h-3.5 w-3.5"
+                    fill="currentColor"
+                    strokeWidth={0}
+                  />
                 ) : submitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -260,6 +302,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         onClose={() => setPickerOpen(false)}
         documents={availableDocuments}
         selectedIds={selectedIds}
+        minimumSelection={minimumDocuments}
         title={
           projectName
             ? t("assistant.documents.projectTitle", { project: projectName })

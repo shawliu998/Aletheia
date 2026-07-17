@@ -122,7 +122,39 @@ export function summarizeTaskRunEvents(
   });
   const unique = new Map<string, TaskProgressItem>();
   for (const entry of entries) unique.set(entry.key, entry);
-  return [...unique.values()].slice(-MAX_TASK_PROGRESS_ITEMS);
+  const latestPlan = [...events]
+    .reverse()
+    .find(
+      (event): event is Extract<AssistantEvent, { type: "task_plan" }> =>
+        event.type === "task_plan",
+    );
+  if (!latestPlan) {
+    return [...unique.values()].slice(-MAX_TASK_PROGRESS_ITEMS);
+  }
+  const planItems = latestPlan.steps
+    .slice(0, MAX_TASK_PROGRESS_ITEMS)
+    .map((step): TaskProgressItem => {
+      const status =
+        stepStatus.get(`${latestPlan.plan_id}:${step.id}`) ?? step.status;
+      return {
+        key: `plan-${latestPlan.plan_id}-${step.id}`,
+        labelKey: "assistant.events.planStep",
+        values: { title: step.title },
+        active: status === "in_progress",
+        status,
+        kind: "plan",
+      };
+    });
+  const activeAction = [...unique.values()]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.active &&
+        (entry.kind === "tool" ||
+          entry.kind === "document" ||
+          entry.kind === "status"),
+    );
+  return activeAction ? [...planItems, activeAction] : planItems;
 }
 
 export function TaskRunSummary({

@@ -9,6 +9,7 @@ import { usePathname } from "next/navigation";
 import type { Message } from "@/app/components/shared/types";
 import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
 import { AssistantMessage } from "./AssistantMessage";
+import { AssistantStarterPanel } from "./AssistantStarterPanel";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { UserMessage } from "./UserMessage";
 import { VeraMark } from "@/app/components/vera-brand";
@@ -59,41 +60,6 @@ export function ChatView({
   const readyDocumentCount =
     availableDocuments?.filter((document) => document.status === "ready")
       .length ?? 0;
-  const starters = [
-    ...(pathname.startsWith("/matters/") && readyDocumentCount >= 2
-      ? [
-          {
-            key: "contractReview" as const,
-            label: t("assistant.starters.contractReview.label"),
-            prompt: t("assistant.starters.contractReview.prompt"),
-          },
-        ]
-      : []),
-    ...(readyDocumentCount >= 1
-      ? [
-          {
-            key: "customExtraction" as const,
-            label: t("assistant.starters.customExtraction.label"),
-            prompt: t("assistant.starters.customExtraction.prompt"),
-          },
-          {
-            key: "caseTimeline" as const,
-            label: t("assistant.starters.caseTimeline.label"),
-            prompt: t("assistant.starters.caseTimeline.prompt"),
-          },
-          {
-            key: "legalMemo" as const,
-            label: t("assistant.starters.legalMemo.label"),
-            prompt: t("assistant.starters.legalMemo.prompt"),
-          },
-        ]
-      : []),
-  ] as const;
-
-  const startStarter = useCallback((prompt: string) => {
-    chatInputRef.current?.setPrompt(prompt);
-  }, []);
-
   useEffect(() => {
     const input = inputContainerRef.current;
     if (!input) return;
@@ -167,20 +133,13 @@ export function ChatView({
                     {projectName ?? t("assistant.empty.title")}
                   </p>
                 </div>
-                {starters.length > 0 && (
-                  <div className="flex max-w-xl flex-wrap justify-center gap-2">
-                    {starters.map((starter) => (
-                      <button
-                        key={starter.key}
-                        type="button"
-                        onClick={() => startStarter(starter.prompt)}
-                        className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
-                      >
-                        {starter.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <AssistantStarterPanel
+                  inputRef={chatInputRef}
+                  scopeAvailable={availableDocuments !== undefined}
+                  showReadyHint={
+                    pathname.startsWith("/matters/") && readyDocumentCount < 2
+                  }
+                />
               </div>
             )}
             {messages.map((message, index) => (
@@ -205,6 +164,7 @@ export function ChatView({
                     studioHandoff={
                       projectId && chatId ? { projectId, chatId } : undefined
                     }
+                    artifactScope={projectId ? { projectId } : undefined}
                     citationScope={
                       projectId
                         ? {
