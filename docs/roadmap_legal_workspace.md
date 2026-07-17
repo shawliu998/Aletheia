@@ -4,29 +4,35 @@ Date: 2026-07-17
 
 Status: canonical forward plan
 
-Current merged `main`: `5611699e46552a20bf42ce84396a8e65aa139d16`
+Current merged `main`: `39144bb3e0e535053bd29669b8368299173c18c3`
 
-Current feature-branch Workspace schema: v24
+Current Workspace schema: v25
 
 ## 1. Product truth source
 
 ```text
 Current product:
-Vera local general legal workspace
+Vera General Legal Agent Preview
 
 Current primary navigation:
 Assistant / Matters / Workflows / Review / Settings
 
 Current core:
-Mike-derived local workspace + Vera encrypted desktop runtime
+Mike-derived local workspace + Vera encrypted desktop runtime:
+contract batch review plus risk memo, custom extraction, timeline plus fact
+summary, Starters, task plans, direct XLSX/DOCX export, stop/retry/recovery
 
 Legacy:
 default-disabled compatibility and reusable implementation source only
 
 Next milestone:
-Agent Tool Expansion
-+ One Authorized Legal Research Provider
-+ Agent-to-Draft End-to-End Vertical
+General Legal Agent Reliability
++ three-task real-model smoke
++ asynchronous tool-loop completion
++ restart-safe task recovery
+
+Parallel externally blocked track:
+One Authorized Legal Research Provider
 ```
 
 The next milestone is not a redesign and does not introduce a second database,
@@ -40,7 +46,7 @@ The following capability families are merged and available in the active
 Workspace runtime:
 
 - one Electron-managed loopback Next.js/Express lifecycle;
-- one SQLCipher Workspace database with additive migrations through v24;
+- one SQLCipher Workspace database with additive migrations through v25;
 - encrypted local Blob storage and isolated Keychain credential handling;
 - Project-owned Matter Profile, explicit workspace classification, capability
   projections, continuous Matter shell, and unified inference policy;
@@ -204,7 +210,7 @@ while the live stage remains explicitly blocked.
 
 ### Stage 7 — Matter contract bulk extraction preset
 
-Status: implemented on the current feature branch through Workspace schema v24.
+Status: implemented and merged in current main through Workspace schema v25.
 
 One active built-in Tabular workflow can open the current Matter Review with a
 server-managed column preset. Creation omits renderer-owned columns; the
@@ -244,15 +250,15 @@ Legora feature parity.
 
 ## 4. Migration order
 
-Migrations v1-v23 are published and immutable; v24 is the current additive
-feature-branch migration. The Tool Registry needed no migration. v18 owns
-Provider configuration, v19 owns the Assistant action
+Migrations v1-v24 are published and immutable; v25 is the current additive
+migration. The Tool Registry needed no migration. v18 owns Provider
+configuration, v19 owns the Assistant action
 ledger, v20 owns Draft type/origin metadata, v21 owns the local template
 catalogue plus bounded DraftPlans, v22 owns bounded durable legal-research
 replay/read/message-source bindings, and v23 owns immutable Tabular Review to
-Studio Draft evidence handoffs. v24 strictly extends the existing Assistant
-event and action-ledger enums for durable contract-review orchestration without
-adding another state table:
+Studio Draft evidence handoffs. v24 owns durable contract-review orchestration.
+v25 strictly extends the existing Assistant event enum for durable task-plan and
+task-step-update events without adding another state table:
 
 ```text
 legal_research_sessions
@@ -309,6 +315,8 @@ provider, removes its credential reference, cancels in-flight calls, and keeps
 permitted snapshots under their recorded retention policy. Schema rollback
 uses a verified pre-upgrade backup when binary compatibility requires it.
 
-Current external blockers are the missing authorized Provider material and
-licensed live acceptance account. Developer ID signing/notarization credentials
-are a separate distribution blocker, not a blocker for local implementation.
+Current external blockers are the missing authorized Provider material,
+licensed live acceptance account, and the incomplete real-model three-task
+smoke test (the attempted Kimi endpoint returned HTTP 403). Developer ID
+signing/notarization credentials and Apple notarization are separate
+distribution blockers; macOS artifacts remain unsigned and unnotarized.
