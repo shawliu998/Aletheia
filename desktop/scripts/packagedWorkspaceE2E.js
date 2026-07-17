@@ -1180,6 +1180,16 @@ async function apiBytes(token, route, options = {}) {
   return { response, bytes };
 }
 
+async function waitForCompletedReview(token, reviewId, label) {
+  return pollUntil(label, async () => {
+    const detail = await apiJson(token, `/tabular-review/${reviewId}`);
+    const status = detail.review.status;
+    if (status === "queued" || status === "running") return undefined;
+    assert.equal(status, "complete", `${label} reached ${status}.`);
+    return detail;
+  });
+}
+
 async function pollUntil(label, operation, timeoutMs = POLL_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2428,11 +2438,11 @@ async function main() {
     )?.replace("assistant-draft-result-", "");
     assert.match(flagshipReviewId ?? "", /^[0-9a-f-]{36}$/i);
     assert.match(flagshipMemoDocumentId ?? "", /^[0-9a-f-]{36}$/i);
-    const flagshipReview = await apiJson(
+    const flagshipReview = await waitForCompletedReview(
       token,
-      `/tabular-review/${flagshipReviewId}`,
+      flagshipReviewId,
+      "Flagship contract Review",
     );
-    assert.equal(flagshipReview.review.status, "complete");
     assert.equal(flagshipReview.review.document_ids.length, 3);
     assert.equal(flagshipReview.cells.length, 54);
     assert.ok(flagshipReview.cells.every((cell) => cell.status === "done"));
@@ -2522,11 +2532,11 @@ async function main() {
       await customReviewCard.getAttribute("data-testid")
     )?.replace("assistant-review-result-", "");
     assert.match(customExtractionReviewId ?? "", /^[0-9a-f-]{36}$/i);
-    const customExtractionReview = await apiJson(
+    const customExtractionReview = await waitForCompletedReview(
       token,
-      `/tabular-review/${customExtractionReviewId}`,
+      customExtractionReviewId,
+      "Custom extraction Review",
     );
-    assert.equal(customExtractionReview.review.status, "complete");
     assert.deepEqual(
       customExtractionReview.review.document_ids.sort(),
       gate1MatterDocumentIds.slice(0, 2).sort(),
@@ -2600,11 +2610,11 @@ async function main() {
     )?.replace("assistant-draft-result-", "");
     assert.match(timelineReviewId ?? "", /^[0-9a-f-]{36}$/i);
     assert.match(timelineMemoDocumentId ?? "", /^[0-9a-f-]{36}$/i);
-    const timelineReview = await apiJson(
+    const timelineReview = await waitForCompletedReview(
       token,
-      `/tabular-review/${timelineReviewId}`,
+      timelineReviewId,
+      "Timeline Review",
     );
-    assert.equal(timelineReview.review.status, "complete");
     assert.equal(timelineReview.cells.length, 14);
     assert.ok(timelineReview.cells.every((cell) => cell.status === "done"));
     assert.ok(timelineReview.cells.every((cell) => cell.sources.length >= 1));
