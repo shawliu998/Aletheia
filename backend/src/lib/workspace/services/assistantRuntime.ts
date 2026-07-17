@@ -1186,6 +1186,7 @@ export class AssistantRuntimeService {
       let totalToolCalls = 0;
       let consecutiveToolFailures = 0;
       let deliverableRecoveryAttempted = false;
+      let deliveryClosureAttempted = false;
       let finalTurn: AssistantModelTurn | null = null;
       let fullText = "";
       const latestUserContent =
@@ -1720,6 +1721,89 @@ export class AssistantRuntimeService {
           content: turn.content,
           toolCalls: turn.toolCalls,
         });
+        const requestedDeliverablesAreComplete =
+          expectedDeliverables.size > 0 &&
+          [...expectedDeliverables].every((kind) =>
+            completedDeliverables.has(kind),
+          );
+        if (requestedDeliverablesAreComplete) {
+          for (const call of turn.toolCalls) {
+            if (usedToolCallIds.has(call.id)) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant model reused a tool call id.",
+              );
+            }
+            usedToolCallIds.add(call.id);
+            totalToolCalls += 1;
+            if (totalToolCalls > MAX_TOTAL_TOOL_CALLS) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant exceeded the total tool-call limit.",
+              );
+            }
+            if (JSON.stringify(call.input).length > MAX_TOOL_INPUT_CHARS) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant tool input exceeded the safe limit.",
+              );
+            }
+            assertMikeSafePayload(call.input);
+            if (!toolsByName.has(call.name)) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant model requested an unregistered tool.",
+              );
+            }
+            throwIfAborted(input.signal);
+            this.assertClaim(snapshot, input);
+          }
+          if (deliveryClosureAttempted) {
+            updatePlanStep(
+              "finalize",
+              "failed",
+              "The Assistant requested more tools after every requested deliverable was completed.",
+            );
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant attempted additional tools after all requested deliverables were completed.",
+            );
+          }
+          deliveryClosureAttempted = true;
+          updatePlanStep(
+            "finalize",
+            "in_progress",
+            "All requested deliverables are complete; requesting the final response without more tools.",
+          );
+          for (const call of turn.toolCalls) {
+            const content = JSON.stringify({
+              executed: false,
+              status: "delivery_complete",
+              instruction:
+                "All requested deliverables are already complete. Do not call more tools; provide the final response only.",
+            });
+            totalToolResultChars += content.length;
+            if (totalToolResultChars > MAX_ALL_TOOL_RESULTS_CHARS) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant tool results exceeded the aggregate limit.",
+              );
+            }
+            assertMikeSafePayload(content);
+            messages.push({
+              role: "tool",
+              toolCallId: call.id,
+              content,
+            });
+          }
+          continue;
+        }
         for (const call of turn.toolCalls) {
           if (usedToolCallIds.has(call.id)) {
             throw new WorkspaceApiError(

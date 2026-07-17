@@ -2457,6 +2457,390 @@ async function run() {
       "complete",
     );
 
+    const deliveryClosureTools = [
+      recoveryDraftTool,
+      loopGuardTool,
+    ] as const;
+    const deliveryClosureChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Completed deliverable closure audit",
+    });
+    const deliveryClosureGeneration = service.requestGeneration({
+      chatId: deliveryClosureChat.id,
+      prompt: "Draft and export a Word document for this Matter.",
+    });
+    const deliveryClosureClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:29.100Z",
+      "delivery-closure-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(deliveryClosureClaim?.id, deliveryClosureGeneration.jobId);
+    const deliveryClosureDraftId = randomUUID();
+    const deliveryClosureVersionId = randomUUID();
+    let deliveryClosureTurns = 0;
+    let deliveryClosureExecutions = 0;
+    let deliveryClosureSettlements = 0;
+    const deliveryClosureRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "delivery-closure-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ messages, onTextDelta }) {
+          deliveryClosureTurns += 1;
+          if (deliveryClosureTurns === 1) {
+            return {
+              content: "",
+              toolCalls: [
+                {
+                  id: "delivery-closure-create-draft",
+                  name: "create_draft",
+                  input: { title: "Completed delivery audit Draft" },
+                },
+              ],
+              sources: [],
+            };
+          }
+          if (deliveryClosureTurns === 2) {
+            assert.equal(messages.at(-1)?.role, "tool");
+            return {
+              content: "",
+              toolCalls: [
+                {
+                  id: "delivery-closure-extra-tool",
+                  name: "list_documents",
+                  input: {},
+                },
+              ],
+              sources: [],
+            };
+          }
+          assert.equal(deliveryClosureTurns, 3);
+          const synthetic = messages.at(-1);
+          assert.equal(synthetic?.role, "tool");
+          assert.equal(synthetic?.toolCallId, "delivery-closure-extra-tool");
+          assert.deepEqual(JSON.parse(synthetic?.content ?? "{}"), {
+            executed: false,
+            status: "delivery_complete",
+            instruction:
+              "All requested deliverables are already complete. Do not call more tools; provide the final response only.",
+          });
+          await onTextDelta("The requested Word document is complete.");
+          return {
+            content: "The requested Word document is complete.",
+            toolCalls: [],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:29.100Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "delivery-closure-tools",
+              tools: deliveryClosureTools,
+            };
+          },
+          async execute({ call }) {
+            deliveryClosureExecutions += 1;
+            assert.equal(call.name, "create_draft");
+            return {
+              content: JSON.stringify({ ok: true, draft_id: deliveryClosureDraftId }),
+              events: [
+                {
+                  type: "draft_created" as const,
+                  draft_id: deliveryClosureDraftId,
+                  version_id: deliveryClosureVersionId,
+                  title: "Completed delivery audit Draft",
+                  route: `/projects/${budgetAuditProject}/documents/${deliveryClosureDraftId}/studio`,
+                },
+              ],
+            };
+          },
+          async settleLifecycle({ phase }) {
+            if (phase === "after_execution") deliveryClosureSettlements += 1;
+            return null;
+          },
+        },
+      },
+    );
+    await deliveryClosureRuntime.execute({
+      jobId: deliveryClosureGeneration.jobId,
+      leaseOwner: "delivery-closure-worker",
+      attempt: deliveryClosureClaim!.attempt,
+      signal: new AbortController().signal,
+    });
+    assert.equal(deliveryClosureTurns, 3);
+    assert.equal(deliveryClosureExecutions, 1);
+    assert.equal(deliveryClosureSettlements, 1);
+    assert.equal(
+      jobs.getJob(deliveryClosureGeneration.jobId)?.status,
+      "complete",
+    );
+    const deliveryClosureEvents = database
+      .prepare(
+        `SELECT event_type, event_json FROM assistant_generation_events
+          WHERE job_id=? ORDER BY sequence`,
+      )
+      .all(deliveryClosureGeneration.jobId) as Array<{
+      event_type: string;
+      event_json: string;
+    }>;
+    assert.equal(
+      deliveryClosureEvents.filter((event) => event.event_type === "tool_call_start")
+        .length,
+      1,
+      "the suppressed tool call never creates a tool_call_start event",
+    );
+    assert.equal(
+      deliveryClosureEvents.filter(
+        (event) => event.event_type === "draft_created",
+      ).length,
+      1,
+      "synthetic closure results never create artifacts",
+    );
+    const deliveryClosurePlan = deliveryClosureEvents
+      .filter((event) => event.event_type === "task_plan")
+      .flatMap((event) => {
+        const parsed = MikeAssistantStreamEventSchema.parse(
+          JSON.parse(event.event_json),
+        );
+        return parsed.type === "task_plan"
+          ? parsed.deliverables.map((deliverable) => deliverable.kind)
+          : [];
+      });
+    assert.deepEqual(
+      [...new Set(deliveryClosurePlan)].sort(),
+      ["docx", "draft"],
+      "a synthetic closure result never adds or completes a new deliverable",
+    );
+    assert.ok(
+      deliveryClosureEvents.some(
+        (event) =>
+          event.event_type === "task_step_update" &&
+          JSON.parse(event.event_json).step_id === "finalize" &&
+          JSON.parse(event.event_json).status === "in_progress",
+      ),
+      "the closure moves finalization into progress before requesting a final-only answer",
+    );
+
+    const repeatedDeliveryClosureChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Repeated completed deliverable closure audit",
+    });
+    const repeatedDeliveryClosureGeneration = service.requestGeneration({
+      chatId: repeatedDeliveryClosureChat.id,
+      prompt: "Draft and export a Word document for this Matter.",
+    });
+    const repeatedDeliveryClosureClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:29.200Z",
+      "repeated-delivery-closure-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(
+      repeatedDeliveryClosureClaim?.id,
+      repeatedDeliveryClosureGeneration.jobId,
+    );
+    const repeatedDeliveryClosureDraftId = randomUUID();
+    const repeatedDeliveryClosureVersionId = randomUUID();
+    let repeatedDeliveryClosureTurns = 0;
+    let repeatedDeliveryClosureExecutions = 0;
+    const repeatedDeliveryClosureRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "repeated-delivery-closure-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn() {
+          repeatedDeliveryClosureTurns += 1;
+          if (repeatedDeliveryClosureTurns === 1) {
+            return {
+              content: "",
+              toolCalls: [
+                {
+                  id: "repeated-delivery-closure-create-draft",
+                  name: "create_draft",
+                  input: { title: "Repeated closure audit Draft" },
+                },
+              ],
+              sources: [],
+            };
+          }
+          assert.ok(repeatedDeliveryClosureTurns <= 3);
+          return {
+            content: "",
+            toolCalls: [
+              {
+                id: `repeated-delivery-closure-extra-${repeatedDeliveryClosureTurns}`,
+                name: "list_documents",
+                input: {},
+              },
+            ],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:29.200Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "repeated-delivery-closure-tools",
+              tools: deliveryClosureTools,
+            };
+          },
+          async execute({ call }) {
+            repeatedDeliveryClosureExecutions += 1;
+            assert.equal(call.name, "create_draft");
+            return {
+              content: JSON.stringify({
+                ok: true,
+                draft_id: repeatedDeliveryClosureDraftId,
+              }),
+              events: [
+                {
+                  type: "draft_created" as const,
+                  draft_id: repeatedDeliveryClosureDraftId,
+                  version_id: repeatedDeliveryClosureVersionId,
+                  title: "Repeated closure audit Draft",
+                  route: `/projects/${budgetAuditProject}/documents/${repeatedDeliveryClosureDraftId}/studio`,
+                },
+              ],
+            };
+          },
+        },
+      },
+    );
+    await assert.rejects(
+      repeatedDeliveryClosureRuntime.execute({
+        jobId: repeatedDeliveryClosureGeneration.jobId,
+        leaseOwner: "repeated-delivery-closure-worker",
+        attempt: repeatedDeliveryClosureClaim!.attempt,
+        signal: new AbortController().signal,
+      }),
+      /additional tools after all requested deliverables were completed/,
+    );
+    assert.equal(repeatedDeliveryClosureTurns, 3);
+    assert.equal(repeatedDeliveryClosureExecutions, 1);
+    assert.equal(
+      jobs.getJob(repeatedDeliveryClosureGeneration.jobId)?.status,
+      "failed",
+    );
+    assert.equal(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM assistant_generation_events
+            WHERE job_id=? AND event_type='tool_call_start'`,
+        )
+        .get(repeatedDeliveryClosureGeneration.jobId)?.count,
+      1,
+      "a repeated closure tool call fails before it can emit a tool event",
+    );
+    assert.equal(
+      database
+        .prepare(
+          `SELECT json_extract(event_json,'$.status') AS status
+             FROM assistant_generation_events
+            WHERE job_id=? AND event_type='task_step_update'
+              AND json_extract(event_json,'$.step_id')='finalize'
+            ORDER BY sequence DESC LIMIT 1`,
+        )
+        .get(repeatedDeliveryClosureGeneration.jobId)?.status,
+      "failed",
+      "a repeated closure tool call marks finalization failed before the job fails",
+    );
+
+    const ordinaryToolCallChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Ordinary tool execution isolation audit",
+    });
+    const ordinaryToolCallGeneration = service.requestGeneration({
+      chatId: ordinaryToolCallChat.id,
+      prompt: "What documents are available in this Matter?",
+    });
+    const ordinaryToolCallClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:29.300Z",
+      "ordinary-tool-call-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(ordinaryToolCallClaim?.id, ordinaryToolCallGeneration.jobId);
+    let ordinaryToolCallTurns = 0;
+    let ordinaryToolCallExecutions = 0;
+    const ordinaryToolCallRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "ordinary-tool-call-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ onTextDelta }) {
+          ordinaryToolCallTurns += 1;
+          if (ordinaryToolCallTurns === 1) {
+            return {
+              content: "",
+              toolCalls: [
+                {
+                  id: "ordinary-tool-call-list-documents",
+                  name: "list_documents",
+                  input: {},
+                },
+              ],
+              sources: [],
+            };
+          }
+          assert.equal(ordinaryToolCallTurns, 2);
+          await onTextDelta("No documents are currently available.");
+          return {
+            content: "No documents are currently available.",
+            toolCalls: [],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:29.300Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "ordinary-tool-call-tools",
+              tools: [loopGuardTool],
+            };
+          },
+          async execute({ call }) {
+            ordinaryToolCallExecutions += 1;
+            assert.equal(call.name, "list_documents");
+            return { content: JSON.stringify({ documents: [] }) };
+          },
+        },
+      },
+    );
+    await ordinaryToolCallRuntime.execute({
+      jobId: ordinaryToolCallGeneration.jobId,
+      leaseOwner: "ordinary-tool-call-worker",
+      attempt: ordinaryToolCallClaim!.attempt,
+      signal: new AbortController().signal,
+    });
+    assert.equal(ordinaryToolCallTurns, 2);
+    assert.equal(ordinaryToolCallExecutions, 1);
+
     const deliverableIntentCases = [
       {
         prompt: "把结果做成表格。",
