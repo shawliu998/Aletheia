@@ -2,10 +2,10 @@
 
 import { Check, Download, FilePenLine, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n } from "@/app/i18n";
-import { saveBlob } from "@/app/lib/downloadBlob";
+import { isSaveDialogCancellation, saveBlob } from "@/app/lib/downloadBlob";
 import { exportVeraStudioDocx } from "@/app/lib/veraDocumentStudioApi";
 import { exportVeraTabularReview } from "@/app/lib/veraTabularApi";
 
@@ -25,6 +25,8 @@ type Artifact =
       route: string;
     }>;
 
+type ExportState = "idle" | "exporting" | "success" | "failed";
+
 /** A consistent, route-backed card for every durable Assistant deliverable. */
 export function AssistantArtifactCard({
   artifact,
@@ -36,8 +38,8 @@ export function AssistantArtifactCard({
   const router = useRouter();
   const routes = useWorkspaceRoutes();
   const { t } = useI18n();
-  const [exporting, setExporting] = useState(false);
-  const [exportFailure, setExportFailure] = useState(false);
+  const [exportState, setExportState] = useState<ExportState>("idle");
+  const exporting = exportState === "exporting";
   const review = artifact.kind === "review";
   const Icon = review ? Check : FilePenLine;
   const action = review
@@ -49,6 +51,12 @@ export function AssistantArtifactCard({
       : routes.documentStudioHref(projectId, artifact.id)
     : artifact.route;
 
+  useEffect(() => {
+    if (exportState !== "success") return;
+    const timeout = window.setTimeout(() => setExportState("idle"), 3_000);
+    return () => window.clearTimeout(timeout);
+  }, [exportState]);
+
   function openArtifact() {
     if (!projectId) {
       router.push(artifact.route);
@@ -59,8 +67,7 @@ export function AssistantArtifactCard({
 
   async function exportArtifact() {
     if (!projectId || exporting) return;
-    setExporting(true);
-    setExportFailure(false);
+    setExportState("exporting");
     try {
       if (artifact.kind === "review") {
         const result = await exportVeraTabularReview(artifact.id, "xlsx");
@@ -73,10 +80,12 @@ export function AssistantArtifactCard({
         );
         saveBlob(result.blob, result.filename);
       }
-    } catch {
-      setExportFailure(true);
-    } finally {
-      setExporting(false);
+      setExportState("success");
+    } catch (error) {
+      // The current browser download path cannot observe the OS save picker.
+      // Keep this branch for a compatible desktop bridge, whose cancelled
+      // picker must not be presented as a failed export.
+      setExportState(isSaveDialogCancellation(error) ? "idle" : "failed");
     }
   }
 
@@ -90,7 +99,7 @@ export function AssistantArtifactCard({
       data-testid={`assistant-${artifact.kind}-result-${artifact.id}`}
       data-artifact-kind={artifact.kind}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-gray-900">
           {artifact.title}
         </p>
@@ -102,7 +111,7 @@ export function AssistantArtifactCard({
             : t("assistant.artifacts.draftDescription")}
         </p>
       </div>
-      <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
         <button
           type="button"
           disabled={!projectId || exporting}
@@ -112,7 +121,7 @@ export function AssistantArtifactCard({
               ? t("assistant.artifacts.reviewXlsxHint")
               : t("assistant.artifacts.draftDocxHint")
           }
-          className={`flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium shadow-sm ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`flex min-w-0 items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium shadow-sm ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             review
               ? "text-emerald-700 ring-emerald-100 hover:bg-emerald-50"
               : "text-blue-700 ring-blue-100 hover:bg-blue-50"
@@ -132,7 +141,7 @@ export function AssistantArtifactCard({
         <button
           type="button"
           onClick={openArtifact}
-          className={`flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium shadow-sm ring-1 transition-colors ${
+          className={`flex min-w-0 items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium shadow-sm ring-1 transition-colors ${
             review
               ? "text-emerald-700 ring-emerald-100 hover:bg-emerald-50"
               : "text-blue-700 ring-blue-100 hover:bg-blue-50"
@@ -142,7 +151,12 @@ export function AssistantArtifactCard({
           {action}
         </button>
       </div>
-      {exportFailure && (
+      {exportState === "success" && (
+        <p role="status" aria-live="polite" className="w-full text-xs text-emerald-700">
+          {t("assistant.artifacts.exported")}
+        </p>
+      )}
+      {exportState === "failed" && (
         <p role="alert" className="w-full text-xs text-red-600">
           {t("assistant.artifacts.exportFailed")}
         </p>

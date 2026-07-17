@@ -634,6 +634,7 @@ const zhCN = {
       exportXlsx: "导出 XLSX",
       exportDocx: "导出 DOCX",
       exporting: "正在导出…",
+      exported: "已开始导出。",
       exportFailed: "导出失败，请重试。",
     },
     empty: {
@@ -2233,6 +2234,7 @@ const enUS = {
       exportXlsx: "Export XLSX",
       exportDocx: "Export DOCX",
       exporting: "Exporting…",
+      exported: "Export started.",
       exportFailed: "Export failed. Try again.",
     },
     empty: {

@@ -200,7 +200,12 @@ test("Agent-created Tabular Review events persist, render, and open the Matter R
   );
   assert.match(artifactCard, /exportVeraTabularReview\(artifact\.id, "xlsx"\)/);
   assert.match(artifactCard, /assistant\.artifacts\.exporting/);
+  assert.match(artifactCard, /type ExportState = "idle" \| "exporting" \| "success" \| "failed"/);
+  assert.match(artifactCard, /role="status"/);
+  assert.match(artifactCard, /assistant\.artifacts\.exported/);
   assert.match(artifactCard, /assistant\.artifacts\.exportFailed/);
+  assert.match(artifactCard, /isSaveDialogCancellation/);
+  assert.match(artifactCard, /disabled=\{!projectId \|\| exporting\}/);
   assert.match(artifactCard, /reviewXlsxHint/);
   assert.match(summary, /MAX_TASK_PROGRESS_ITEMS = 6/);
   assert.match(summary, /run_contract_review/);
