@@ -895,6 +895,29 @@ async function connectCredentialWorkerToBackend(credentialWorker, backend) {
   }
 }
 
+function waitForUtilityStreamDrain(stream, timeoutMs = 1_000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      stream?.off("end", finish);
+      stream?.off("close", finish);
+      stream?.off("error", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, timeoutMs);
+    if (!stream || stream.readableEnded || stream.destroyed) {
+      setImmediate(finish);
+      return;
+    }
+    stream.once("end", finish);
+    stream.once("close", finish);
+    stream.once("error", finish);
+  });
+}
+
 function runUtilityOnce(label, modulePath, options) {
   return new Promise((resolve, reject) => {
     const child = utilityProcess.fork(modulePath, options.args ?? [], {
@@ -909,18 +932,24 @@ function runUtilityOnce(label, modulePath, options) {
     children.add(child);
     let stdout = "";
     let stderr = "";
+    const stdoutStream = child.stdout;
+    const stderrStream = child.stderr;
     const timeout = setTimeout(() => {
       child.kill();
       reject(new Error(`${label} timed out.`));
     }, options.timeoutMs ?? 120_000);
-    child.stdout?.on("data", (chunk) => {
+    stdoutStream?.on("data", (chunk) => {
       stdout = `${stdout}${chunk.toString()}`.slice(-32_768);
     });
-    child.stderr?.on("data", (chunk) => {
+    stderrStream?.on("data", (chunk) => {
       stderr = `${stderr}${chunk.toString()}`.slice(-32_768);
     });
-    child.once("exit", (code) => {
+    child.once("exit", async (code) => {
       clearTimeout(timeout);
+      await Promise.all([
+        waitForUtilityStreamDrain(stdoutStream),
+        waitForUtilityStreamDrain(stderrStream),
+      ]);
       children.delete(child);
       if (code === 0) {
         desktopLog("info", label, "utility_complete", {

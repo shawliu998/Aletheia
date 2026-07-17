@@ -21,6 +21,15 @@ const getInfoEnd = main.indexOf(
 );
 assert.ok(getInfoStart >= 0 && getInfoEnd > getInfoStart);
 const getInfoHandler = main.slice(getInfoStart, getInfoEnd);
+const runUtilityOnceStart = main.indexOf("function runUtilityOnce");
+const runUtilityOnceEnd = main.indexOf(
+  "\nfunction assertPackagedResources",
+  runUtilityOnceStart,
+);
+assert.ok(
+  runUtilityOnceStart >= 0 && runUtilityOnceEnd > runUtilityOnceStart,
+);
+const runUtilityOnce = main.slice(runUtilityOnceStart, runUtilityOnceEnd);
 
 assert.match(
   preload,
@@ -62,6 +71,11 @@ assert.doesNotMatch(
   globals,
   /^\s*(?:dataDir|logsDir):\s*string;/m,
   "the renderer bridge type must not advertise local filesystem paths",
+);
+assert.match(
+  runUtilityOnce,
+  /child\.once\("exit", async \(code\) => \{[\s\S]*?await Promise\.all\(\[[\s\S]*?waitForUtilityStreamDrain\(stdoutStream\),[\s\S]*?waitForUtilityStreamDrain\(stderrStream\),[\s\S]*?\]\);[\s\S]*?if \(code === 0\)/u,
+  "one-shot utility output must drain after exit before callers parse it",
 );
 
 console.log("vera workspace packaged bridge audit passed");
