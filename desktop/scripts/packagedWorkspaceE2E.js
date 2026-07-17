@@ -2006,7 +2006,11 @@ async function main() {
 
     await reviewCard.getByRole("button", { name: /打开 Review|Open Review/ }).click();
     await packaged.page.waitForURL(
-      (url) => url.pathname === `/matters/${gate1MatterId}/review/${flagshipReviewId}`,
+      (url) =>
+        url.pathname ===
+          `/matters/${gate1MatterId}/review/${flagshipReviewId}` ||
+        url.pathname ===
+          `/projects/${gate1MatterId}/tabular-reviews/${flagshipReviewId}`,
       { timeout: 90_000 },
     );
     const actions = packaged.page.getByRole("button", {
