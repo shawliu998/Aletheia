@@ -56,13 +56,43 @@ export function ChatView({
   const chatInputRef = useRef<ChatInputHandle>(null);
   const [inputHeight, setInputHeight] = useState(0);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const showContractReviewStarter =
-    pathname.startsWith("/matters/") &&
-    (availableDocuments?.filter((document) => document.status === "ready").length ?? 0) >= 2;
+  const readyDocumentCount =
+    availableDocuments?.filter((document) => document.status === "ready")
+      .length ?? 0;
+  const starters = [
+    ...(pathname.startsWith("/matters/") && readyDocumentCount >= 2
+      ? [
+          {
+            key: "contractReview" as const,
+            label: t("assistant.starters.contractReview.label"),
+            prompt: t("assistant.starters.contractReview.prompt"),
+          },
+        ]
+      : []),
+    ...(readyDocumentCount >= 1
+      ? [
+          {
+            key: "customExtraction" as const,
+            label: t("assistant.starters.customExtraction.label"),
+            prompt: t("assistant.starters.customExtraction.prompt"),
+          },
+          {
+            key: "caseTimeline" as const,
+            label: t("assistant.starters.caseTimeline.label"),
+            prompt: t("assistant.starters.caseTimeline.prompt"),
+          },
+          {
+            key: "legalMemo" as const,
+            label: t("assistant.starters.legalMemo.label"),
+            prompt: t("assistant.starters.legalMemo.prompt"),
+          },
+        ]
+      : []),
+  ] as const;
 
-  const startContractReview = useCallback(() => {
-    chatInputRef.current?.setPrompt(t("assistant.starters.contractReview.prompt"));
-  }, [t]);
+  const startStarter = useCallback((prompt: string) => {
+    chatInputRef.current?.setPrompt(prompt);
+  }, []);
 
   useEffect(() => {
     const input = inputContainerRef.current;
@@ -137,14 +167,19 @@ export function ChatView({
                     {projectName ?? t("assistant.empty.title")}
                   </p>
                 </div>
-                {showContractReviewStarter && (
-                  <button
-                    type="button"
-                    onClick={startContractReview}
-                    className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
-                  >
-                    {t("assistant.starters.contractReview.label")}
-                  </button>
+                {starters.length > 0 && (
+                  <div className="flex max-w-xl flex-wrap justify-center gap-2">
+                    {starters.map((starter) => (
+                      <button
+                        key={starter.key}
+                        type="button"
+                        onClick={() => startStarter(starter.prompt)}
+                        className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
+                      >
+                        {starter.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             )}

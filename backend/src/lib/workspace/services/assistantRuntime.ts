@@ -22,12 +22,174 @@ import type { InferenceOperation } from "../inferencePolicy";
 const Id = z.string().uuid();
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_CALLS_PER_ROUND = 16;
+const MAX_TOTAL_TOOL_CALLS = 32;
+const MAX_CONSECUTIVE_TOOL_FAILURES = 3;
+const MAX_IDENTICAL_TOOL_NO_PROGRESS = 3;
 const MAX_ASSISTANT_CONTENT_CHARS = 200_000;
 const MAX_HISTORY_CHARS = 1_000_000;
 const MAX_TOOL_RESULT_CHARS = 200_000;
 const MAX_ALL_TOOL_RESULTS_CHARS = 1_000_000;
 const MAX_REASONING_CHARS = 200_000;
 const MAX_TOOL_INPUT_CHARS = 100_000;
+
+type AssistantDeliverableKind = "review" | "xlsx" | "draft" | "docx";
+type AssistantPlanStepId =
+  | "inspect_sources"
+  | "run_workflow"
+  | "produce_review"
+  | "produce_draft"
+  | "finalize";
+
+const PLAN_STEP_TITLES: Record<AssistantPlanStepId, string> = {
+  inspect_sources: "Inspect the relevant sources",
+  run_workflow: "Run the requested workflow",
+  produce_review: "Create the tabular review",
+  produce_draft: "Create the legal draft",
+  finalize: "Check deliverables and report results",
+};
+
+const DELIVERABLE_LABELS: Record<AssistantDeliverableKind, string> = {
+  review: "Tabular review",
+  xlsx: "Excel workbook",
+  draft: "Studio draft",
+  docx: "Word document",
+};
+
+const DELIVERABLE_RECOVERY_TOOLS: Record<
+  AssistantDeliverableKind,
+  readonly AssistantToolName[]
+> = {
+  review: ["run_contract_review", "run_custom_extraction"],
+  xlsx: ["run_contract_review", "run_custom_extraction"],
+  draft: [
+    "create_draft",
+    "create_legal_memo",
+    "create_memo_from_tabular_review",
+  ],
+  docx: [
+    "create_draft",
+    "create_legal_memo",
+    "create_memo_from_tabular_review",
+  ],
+};
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? "null" : serialized;
+}
+
+function failedToolResult(content: string) {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  if (typeof result.error === "string" && result.error.trim().length > 0) {
+    return true;
+  }
+  if (result.ok === false || result.success === false) return true;
+  const nestedReview = result.review;
+  if (
+    nestedReview &&
+    typeof nestedReview === "object" &&
+    !Array.isArray(nestedReview) &&
+    typeof (nestedReview as Record<string, unknown>).status === "string" &&
+    ["failed", "cancelled"].includes(
+      String((nestedReview as Record<string, unknown>).status).toLowerCase(),
+    )
+  ) {
+    return true;
+  }
+  return (
+    typeof result.status === "string" &&
+    ["failed", "error"].includes(result.status.toLowerCase())
+  );
+}
+
+function requestedDeliverables(content: string) {
+  const request = content
+    .replace(/^\[The user attached[\s\S]*?\]\n\n/, "")
+    .trim();
+  const kinds = new Set<AssistantDeliverableKind>();
+  if (
+    /^(?:how|what|why|when|where|explain)\b/i.test(request) ||
+    /^(?:如何|怎么|为什么|什么|解释)/.test(request)
+  ) {
+    return kinds;
+  }
+  const action =
+    /create|generate|prepare|produce|export|draft|write|build|make|起草|草拟|生成|制作|创建|导出|输出|整理|形成|做一份|写一份/i;
+  if (/\b(?:draft|write)\b|起草|草拟/i.test(request)) {
+    kinds.add("draft");
+  }
+  if (
+    (action.test(request) &&
+      /contract review|review matrix|合同审查|合同审核|风险审查/i.test(
+        request,
+      )) ||
+    /\b(?:review|analyze)\b[\s\S]{0,40}\bcontracts?\b|(?:审查|审核)[\s\S]{0,20}合同/i.test(
+      request,
+    )
+  ) {
+    kinds.add("review");
+  }
+  if (
+    action.test(request) &&
+    /\bxlsx\b|\bexcel\b|spreadsheet|比较表|对比表|电子表格|时间线表/i.test(
+      request,
+    )
+  ) {
+    kinds.add("xlsx");
+  }
+  if (
+    action.test(request) &&
+    /\bdocx\b|\bword document\b|Word 文档|Word文件/i.test(request)
+  ) {
+    kinds.add("docx");
+  }
+  return kinds;
+}
+
+function planStepForTool(name: AssistantToolName): AssistantPlanStepId {
+  if (
+    name === "run_contract_review" ||
+    name === "get_contract_review" ||
+    name === "run_custom_extraction"
+  ) {
+    return "produce_review";
+  }
+  if (
+    name === "create_draft" ||
+    name === "create_legal_memo" ||
+    name === "create_memo_from_tabular_review" ||
+    name === "suggest_draft_edit" ||
+    name === "suggest_studio_edit"
+  ) {
+    return "produce_draft";
+  }
+  if (
+    name === "list_workflows" ||
+    name === "read_workflow" ||
+    name === "run_workflow" ||
+    name === "get_workflow_run"
+  ) {
+    return "run_workflow";
+  }
+  return "inspect_sources";
+}
 
 const AssistantToolNameSchema = z.enum([
   "list_documents",
@@ -47,6 +209,9 @@ const AssistantToolNameSchema = z.enum([
   "read_legal_source",
   "run_contract_review",
   "get_contract_review",
+  "run_custom_extraction",
+  "create_legal_memo",
+  "create_memo_from_tabular_review",
 ]);
 const TOOL_EVENT_TYPES = new Set([
   "doc_read_start",
@@ -69,6 +234,9 @@ const TOOL_CALL_BUDGETS: Partial<Record<AssistantToolName, number>> = {
   get_workflow_run: 8,
   run_contract_review: 1,
   get_contract_review: 8,
+  run_custom_extraction: 2,
+  create_legal_memo: 1,
+  create_memo_from_tabular_review: 1,
 };
 
 export const AssistantModelSourceSchema = z
@@ -529,9 +697,11 @@ CORE RULES:
 - When the user requests deliverable legal work product and create_draft is registered, create a new Draft instead of placing an unnecessarily long document in chat. Never overwrite an existing Draft or accept an edit suggestion for the user.
 - Before create_draft, form a bounded Draft Plan with a title, document type, and ordered sections. Draft section by section against the evidence actually read, then submit one coherent Markdown document. Do not expose internal planning unless it helps the user, and do not invent content merely to fill a template section; mark material gaps explicitly.
 - For Draft citations, submit only evidenceSources returned by document or legal-authority read tools in this attempt, using the returned evidence id and its exact quote. Never submit sourceSnapshotIds, citationAnchorIds, or identifiers outside the current evidence; the backend reverifies durable ownership.
-- Use at most 10 tool-use rounds per response. Batch independent tool calls and leave room for the final answer.
-- Per response, use at most 4 legal searches, 12 legal-source reads, 1 Draft creation, 5 Draft suggestions, 2 Workflow runs, and 8 Workflow status reads. When a budget is exhausted, stop that activity, answer from evidence already read, and disclose the limitation.
+- Use at most 10 tool-use rounds and 32 total tool calls per response. Batch independent tool calls and leave room for the final answer.
+- Per response, use at most 4 legal searches, 12 legal-source reads, 1 direct Draft creation, 2 custom extractions, 1 legal memo, 1 memo-from-Review handoff, 5 Draft suggestions, 2 Workflow runs, and 8 Workflow status reads. When a budget is exhausted, stop that activity, answer from evidence already read, and disclose the limitation.
 - If run_contract_review or get_contract_review returns asynchronous=true, immediately call get_contract_review with that exact review id; never start a replacement Review. Continue until the Review is terminal or the 8-read budget is exhausted. Do not present a normal final answer while the Review is still running; if the read budget is exhausted, state that it remains in progress and direct the user to the returned Review route.
+- For custom field extraction or a case timeline, call run_custom_extraction once. Use preset=timeline for timelines. The runtime waits for the exact Review to become terminal; never invent a polling tool or start a duplicate Review.
+- When the user also requests a memo from a completed custom extraction or timeline, call create_memo_from_tabular_review with that exact Review id. For a standalone memo based on evidence read in this run, call create_legal_memo. Do not use either tool to replace the automatic contract-review memo handoff.
 - Use only the registered tools listed below. Never directly attempt shell, Python, arbitrary network access, MCP, CourtListener, cloud storage, dynamic tools, or multi-agent delegation. A registered legal-research tool may use its fixed backend provider boundary; do not invent or call provider tools directly.
 - Read each relevant document/version at most once per response. After a read/fetch tool returns document text, use that result or find_in_document for targeted checks.
 - Chat-local labels such as "doc-0" are internal. Use them only in tool arguments and citation data; refer to documents by filename in prose.
@@ -978,10 +1148,172 @@ export class AssistantRuntimeService {
       let usedEvidenceTool = false;
       const usedToolCallIds = new Set<string>();
       const toolCallsByName = new Map<AssistantToolName, number>();
+      const identicalToolResults = new Map<
+        string,
+        { content: string; count: number }
+      >();
+      let totalToolCalls = 0;
+      let consecutiveToolFailures = 0;
+      let deliverableRecoveryAttempted = false;
       let finalTurn: AssistantModelTurn | null = null;
       let fullText = "";
+      const latestUserContent =
+        [...messages].reverse().find((message) => message.role === "user")
+          ?.content ?? "";
+      const planGoal =
+        latestUserContent
+          .replace(/^\[The user attached[\s\S]*?\]\n\n/, "")
+          .trim()
+          .slice(0, 500) || "Complete the requested legal task";
+      const planId = this.createId();
+      const expectedDeliverables = requestedDeliverables(latestUserContent);
+      const completedDeliverables = new Map<
+        AssistantDeliverableKind,
+        { artifactId: string; route: string }
+      >();
+      const tabularArtifacts = new Map<
+        string,
+        { artifactId: string; route: string }
+      >();
+      const planSteps = new Map<
+        AssistantPlanStepId,
+        "pending" | "in_progress" | "completed" | "failed"
+      >();
+      if (expectedDeliverables.size > 0 && snapshot.documents.length > 0) {
+        planSteps.set("inspect_sources", "pending");
+      }
+      if (
+        expectedDeliverables.has("review") ||
+        expectedDeliverables.has("xlsx")
+      ) {
+        planSteps.set("produce_review", "pending");
+      }
+      if (
+        expectedDeliverables.has("draft") ||
+        expectedDeliverables.has("docx")
+      ) {
+        planSteps.set("produce_draft", "pending");
+      }
+      if (expectedDeliverables.size > 0) planSteps.set("finalize", "pending");
+      let planEmitted = false;
+
+      const emitPlan = () => {
+        if (planSteps.size === 0) return;
+        const stepOrder: readonly AssistantPlanStepId[] = [
+          "inspect_sources",
+          "run_workflow",
+          "produce_review",
+          "produce_draft",
+          "finalize",
+        ];
+        persistEvent(
+          MikeAssistantStreamEventSchema.parse({
+            type: "task_plan",
+            plan_id: planId,
+            goal: planGoal,
+            steps: stepOrder
+              .filter((id) => planSteps.has(id))
+              .map((id) => ({
+                id,
+                title: PLAN_STEP_TITLES[id],
+                status: planSteps.get(id)!,
+              })),
+            deliverables: [...expectedDeliverables].map((kind) => {
+              const artifact = completedDeliverables.get(kind);
+              return {
+                kind,
+                label: DELIVERABLE_LABELS[kind],
+                status: artifact
+                  ? ("completed" as const)
+                  : ("pending" as const),
+                ...(artifact
+                  ? {
+                      artifact_id: artifact.artifactId,
+                      route: artifact.route,
+                    }
+                  : {}),
+              };
+            }),
+          }),
+        );
+        planEmitted = true;
+      };
+
+      const updatePlanStep = (
+        stepId: AssistantPlanStepId,
+        status: "in_progress" | "completed" | "failed",
+        detail?: string,
+      ) => {
+        if (!planSteps.has(stepId)) planSteps.set(stepId, "pending");
+        if (!planSteps.has("finalize")) planSteps.set("finalize", "pending");
+        if (!planEmitted) emitPlan();
+        planSteps.set(stepId, status);
+        persistEvent(
+          MikeAssistantStreamEventSchema.parse({
+            type: "task_step_update",
+            plan_id: planId,
+            step_id: stepId,
+            status,
+            ...(detail ? { detail } : {}),
+          }),
+        );
+      };
+
+      const expectDeliverablesForTool = (name: AssistantToolName) => {
+        let changed = false;
+        if (
+          name === "run_contract_review" ||
+          name === "get_contract_review" ||
+          name === "run_custom_extraction"
+        ) {
+          for (const kind of ["review", "xlsx"] as const) {
+            if (expectedDeliverables.has(kind)) continue;
+            expectedDeliverables.add(kind);
+            changed = true;
+          }
+        }
+        if (
+          name === "create_draft" ||
+          name === "create_legal_memo" ||
+          name === "create_memo_from_tabular_review"
+        ) {
+          for (const kind of ["draft", "docx"] as const) {
+            if (expectedDeliverables.has(kind)) continue;
+            expectedDeliverables.add(kind);
+            changed = true;
+          }
+        }
+        const stepId = planStepForTool(name);
+        if (!planSteps.has(stepId)) {
+          planSteps.set(stepId, "pending");
+          changed = true;
+        }
+        if (!planSteps.has("finalize")) {
+          planSteps.set("finalize", "pending");
+          changed = true;
+        }
+        if (changed || !planEmitted) emitPlan();
+        return stepId;
+      };
+
+      const completeArtifact = (
+        kinds: readonly AssistantDeliverableKind[],
+        artifactId: string,
+        route: string,
+      ) => {
+        let changed = false;
+        for (const kind of kinds) {
+          if (!expectedDeliverables.has(kind)) continue;
+          if (!completedDeliverables.has(kind)) {
+            completedDeliverables.set(kind, { artifactId, route });
+            changed = true;
+          }
+        }
+        if (changed) emitPlan();
+      };
       const persistToolEvents = (
         events: readonly MikeAssistantStreamEvent[] | undefined,
+        terminalRecovery = false,
       ) => {
         if (events !== undefined && !Array.isArray(events)) {
           throw new WorkspaceApiError(
@@ -990,6 +1322,10 @@ export class AssistantRuntimeService {
             "Assistant tool emitted invalid events.",
           );
         }
+        const recoveredTabularArtifacts: Array<{
+          artifactId: string;
+          route: string;
+        }> = [];
         for (const event of events ?? []) {
           const parsed = MikeAssistantStreamEventSchema.parse(event);
           if (!TOOL_EVENT_TYPES.has(parsed.type)) {
@@ -1025,8 +1361,64 @@ export class AssistantRuntimeService {
           }
           assertMikeSafePayload(parsed);
           persistEvent(parsed);
+          if (parsed.type === "tabular_review_created") {
+            tabularArtifacts.set(parsed.review_id, {
+              artifactId: parsed.review_id,
+              route: parsed.route,
+            });
+            if (terminalRecovery) {
+              recoveredTabularArtifacts.push({
+                artifactId: parsed.review_id,
+                route: parsed.route,
+              });
+            }
+          }
+          if (parsed.type === "draft_created") {
+            completeArtifact(["draft", "docx"], parsed.draft_id, parsed.route);
+          }
+        }
+        if (terminalRecovery) {
+          for (const artifact of recoveredTabularArtifacts) {
+            completeArtifact(
+              ["review", "xlsx"],
+              artifact.artifactId,
+              artifact.route,
+            );
+          }
         }
       };
+
+      const completeTerminalReviewFromResult = (content: string) => {
+        let value: unknown;
+        try {
+          value = JSON.parse(content);
+        } catch {
+          return;
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) return;
+        const review = (value as Record<string, unknown>).review;
+        if (!review || typeof review !== "object" || Array.isArray(review)) {
+          return;
+        }
+        const result = review as Record<string, unknown>;
+        if (
+          result.terminal !== true ||
+          result.status !== "complete" ||
+          typeof result.review_id !== "string"
+        ) {
+          return;
+        }
+        const artifact = tabularArtifacts.get(result.review_id);
+        if (artifact) {
+          completeArtifact(
+            ["review", "xlsx"],
+            artifact.artifactId,
+            artifact.route,
+          );
+        }
+      };
+
+      if (planSteps.size > 0) emitPlan();
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
         throwIfAborted(input.signal);
@@ -1036,6 +1428,9 @@ export class AssistantRuntimeService {
         this.assertClaim(snapshot, input);
         let roundDeltaChars = 0;
         const roundDeltas: string[] = [];
+        const bufferRoundContent = [...expectedDeliverables].some(
+          (kind) => !completedDeliverables.has(kind),
+        );
         let roundReasoningOpen = false;
         const turn = ModelTurnSchema.parse(
           await this.model.runTurn({
@@ -1070,15 +1465,17 @@ export class AssistantRuntimeService {
                   "Assistant model text deltas exceeded the limit.",
                 );
               }
-              const nextPartial = partialContent + delta;
-              assertMikeSafePayload(nextPartial);
-              persistEvent(
-                MikeAssistantStreamEventSchema.parse({
-                  type: "content_delta",
-                  text: delta,
-                }),
-              );
-              partialContent = nextPartial;
+              if (!bufferRoundContent) {
+                const nextPartial = partialContent + delta;
+                assertMikeSafePayload(nextPartial);
+                persistEvent(
+                  MikeAssistantStreamEventSchema.parse({
+                    type: "content_delta",
+                    text: delta,
+                  }),
+                );
+                partialContent = nextPartial;
+              }
             },
             onReasoningDelta: async (delta) => {
               throwIfAborted(input.signal);
@@ -1144,27 +1541,37 @@ export class AssistantRuntimeService {
               "Assistant model content exceeded the limit.",
             );
           }
-          const nextPartial = partialContent + turn.content;
-          assertMikeSafePayload(nextPartial);
-          persistEvent(
-            MikeAssistantStreamEventSchema.parse({
-              type: "content_delta",
-              text: turn.content,
-            }),
-          );
-          partialContent = nextPartial;
         }
-        if (
-          fullText.length + turn.content.length >
-          MAX_ASSISTANT_CONTENT_CHARS
-        ) {
-          throw new WorkspaceApiError(
-            502,
-            "JOB_FAILED",
-            "Assistant model content exceeded the limit.",
-          );
-        }
-        fullText += turn.content;
+        const persistRoundContent = () => {
+          if (
+            fullText.length + turn.content.length >
+            MAX_ASSISTANT_CONTENT_CHARS
+          ) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant model content exceeded the limit.",
+            );
+          }
+          const deltas =
+            bufferRoundContent && roundDeltas.length > 0
+              ? roundDeltas
+              : roundDeltas.length === 0 && turn.content.length > 0
+                ? [turn.content]
+                : [];
+          for (const delta of deltas) {
+            const nextPartial = partialContent + delta;
+            assertMikeSafePayload(nextPartial);
+            persistEvent(
+              MikeAssistantStreamEventSchema.parse({
+                type: "content_delta",
+                text: delta,
+              }),
+            );
+            partialContent = nextPartial;
+          }
+          fullText += turn.content;
+        };
 
         if (turn.toolCalls.length === 0) {
           if (turn.content.length === 0) {
@@ -1206,7 +1613,66 @@ export class AssistantRuntimeService {
               "Assistant final lifecycle settlement is invalid.",
             );
           }
-          persistToolEvents(finalSettlement?.events);
+          persistToolEvents(finalSettlement?.events, true);
+          const missingDeliverables = [...expectedDeliverables].filter(
+            (kind) => !completedDeliverables.has(kind),
+          );
+          if (missingDeliverables.length > 0) {
+            const recoveryTools = [
+              ...new Set(
+                missingDeliverables.flatMap((kind) =>
+                  DELIVERABLE_RECOVERY_TOOLS[kind].filter((name) =>
+                    toolsByName.has(name),
+                  ),
+                ),
+              ),
+            ];
+            const canRecoverEveryDeliverable = missingDeliverables.every(
+              (kind) =>
+                DELIVERABLE_RECOVERY_TOOLS[kind].some((name) =>
+                  toolsByName.has(name),
+                ),
+            );
+            const hasToolAndFinalRoundsRemaining = round + 2 < MAX_TOOL_ROUNDS;
+            if (
+              !deliverableRecoveryAttempted &&
+              canRecoverEveryDeliverable &&
+              recoveryTools.length > 0 &&
+              hasToolAndFinalRoundsRemaining
+            ) {
+              deliverableRecoveryAttempted = true;
+              messages.push({ role: "assistant", content: turn.content });
+              messages.push({
+                role: "user",
+                content: `Delivery recovery: the prior response cannot be finalized because these requested deliverables are still missing: ${missingDeliverables
+                  .map((kind) => `${DELIVERABLE_LABELS[kind]} (${kind})`)
+                  .join(
+                    ", ",
+                  )}. Call the appropriate registered artifact tool now (${recoveryTools.join(", ")}). Do not repeat or treat the prior final text as completion. This recovery opportunity is allowed once; after the tool result, report only the actual outcome.`,
+              });
+              updatePlanStep(
+                "finalize",
+                "in_progress",
+                `Recovering missing deliverables once: ${missingDeliverables.join(", ")}.`,
+              );
+              continue;
+            }
+            updatePlanStep(
+              "finalize",
+              "failed",
+              `Missing required deliverables: ${missingDeliverables.join(", ")}.`,
+            );
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              `Assistant cannot finish before creating the requested deliverables: ${missingDeliverables.join(", ")}.`,
+            );
+          }
+          persistRoundContent();
+          if (planEmitted) {
+            updatePlanStep("finalize", "in_progress");
+            updatePlanStep("finalize", "completed");
+          }
           finalTurn = turn;
           break;
         }
@@ -1217,6 +1683,7 @@ export class AssistantRuntimeService {
             "Assistant sources are only accepted on the final model turn.",
           );
         }
+        persistRoundContent();
         messages.push({
           role: "assistant",
           content: turn.content,
@@ -1231,6 +1698,21 @@ export class AssistantRuntimeService {
             );
           }
           usedToolCallIds.add(call.id);
+          totalToolCalls += 1;
+          const planStepId = expectDeliverablesForTool(call.name);
+          if (totalToolCalls > MAX_TOTAL_TOOL_CALLS) {
+            updatePlanStep(
+              planStepId,
+              "failed",
+              "The Assistant stopped after reaching the total tool-call limit.",
+            );
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant exceeded the total tool-call limit.",
+            );
+          }
+          updatePlanStep(planStepId, "in_progress");
           if (JSON.stringify(call.input).length > MAX_TOOL_INPUT_CHARS) {
             throw new WorkspaceApiError(
               502,
@@ -1265,21 +1747,31 @@ export class AssistantRuntimeService {
           };
           const didExecute =
             nameBudget === undefined || usedForName < nameBudget;
-          const executed: AssistantToolExecutionResult = didExecute
-            ? await this.options.tools.execute({
-                context: executionContext,
-                call,
-                signal: input.signal,
-              })
-            : {
-                content: JSON.stringify({
-                  error: "tool_budget_exhausted",
-                  tool: call.name,
-                  limit: nameBudget,
-                  instruction:
-                    "Stop this activity, answer from evidence already read, and disclose the limitation.",
-                }),
-              };
+          let executed: AssistantToolExecutionResult;
+          try {
+            executed = didExecute
+              ? await this.options.tools.execute({
+                  context: executionContext,
+                  call,
+                  signal: input.signal,
+                })
+              : {
+                  content: JSON.stringify({
+                    error: "tool_budget_exhausted",
+                    tool: call.name,
+                    limit: nameBudget,
+                    instruction:
+                      "Stop this activity, answer from evidence already read, and disclose the limitation.",
+                  }),
+                };
+          } catch (error) {
+            updatePlanStep(
+              planStepId,
+              "failed",
+              "The tool failed before producing a usable result.",
+            );
+            throw error;
+          }
           if (nameBudget !== undefined && usedForName < nameBudget) {
             toolCallsByName.set(call.name, usedForName + 1);
           }
@@ -1398,6 +1890,57 @@ export class AssistantRuntimeService {
               };
             }
             persistToolEvents(settlement?.events);
+          }
+          const finalToolMessage = messages[messages.length - 1];
+          if (finalToolMessage?.role !== "tool") {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant tool result message is missing.",
+            );
+          }
+          completeTerminalReviewFromResult(finalToolMessage.content);
+          const toolFailed = failedToolResult(finalToolMessage.content);
+          consecutiveToolFailures = toolFailed
+            ? consecutiveToolFailures + 1
+            : 0;
+          const identicalKey = `${call.name}\0${canonicalJson(call.input)}`;
+          const previousIdentical = identicalToolResults.get(identicalKey);
+          const identicalCount =
+            previousIdentical?.content === finalToolMessage.content
+              ? previousIdentical.count + 1
+              : 1;
+          identicalToolResults.set(identicalKey, {
+            content: finalToolMessage.content,
+            count: identicalCount,
+          });
+          if (toolFailed) {
+            updatePlanStep(
+              planStepId,
+              "failed",
+              "The tool returned an error result.",
+            );
+          } else {
+            updatePlanStep(planStepId, "completed");
+          }
+          if (consecutiveToolFailures >= MAX_CONSECUTIVE_TOOL_FAILURES) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant stopped after three consecutive tool failures.",
+            );
+          }
+          if (identicalCount >= MAX_IDENTICAL_TOOL_NO_PROGRESS) {
+            updatePlanStep(
+              planStepId,
+              "failed",
+              "The same tool request repeated without progress.",
+            );
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant repeated an identical tool request without progress.",
+            );
           }
         }
       }

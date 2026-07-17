@@ -480,7 +480,7 @@ async function main() {
     process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
     const database = new WorkspaceDatabase(path.join(root, "workspace.sqlite"));
     try {
-      assert.equal(database.migration?.currentVersion, 24);
+      assert.equal(database.migration?.currentVersion, 25);
       const eventSql = String(
         database
           .prepare(
@@ -507,7 +507,7 @@ async function main() {
   }
 
   console.log(
-    "veraWorkspaceAssistantContractReviewToolsAudit passed: success, deterministic replay, timeout recovery, between-poll and pre-abort cancellation, Matter fencing, failed-cell memo suppression, event dedupe, strict v24 persistence schema.",
+    "veraWorkspaceAssistantContractReviewToolsAudit passed: success, deterministic replay, timeout recovery, between-poll and pre-abort cancellation, Matter fencing, failed-cell memo suppression, event dedupe, strict v25 persistence schema.",
   );
 }
 

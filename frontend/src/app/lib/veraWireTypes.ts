@@ -289,7 +289,31 @@ export type VeraAssistantEventWire =
       error?: string;
       isStreaming?: boolean;
     }
-  | { type: "workflow_applied"; workflow_id: string; title: string };
+  | { type: "workflow_applied"; workflow_id: string; title: string }
+  | {
+      type: "task_plan";
+      plan_id: string;
+      goal: string;
+      steps: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "in_progress" | "completed" | "failed";
+      }>;
+      deliverables?: Array<{
+        kind: "tabular_review" | "review" | "xlsx" | "draft" | "docx";
+        label: string;
+        status: "pending" | "completed";
+        artifact_id?: string;
+        route?: string;
+      }>;
+    }
+  | {
+      type: "task_step_update";
+      plan_id: string;
+      step_id: string;
+      status: "in_progress" | "completed" | "failed";
+      detail?: string;
+    };
 
 export interface VeraMessageWire {
   id: string;

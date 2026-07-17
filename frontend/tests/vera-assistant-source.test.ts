@@ -158,12 +158,17 @@ test("Agent-created Draft events render a Matter-safe open action", () => {
   const assistantMessage = source(
     "src/app/components/assistant/AssistantMessage.tsx",
   );
+  const artifactCard = source(
+    "src/app/components/assistant/AssistantArtifactCard.tsx",
+  );
   assert.match(api, /case "draft_created"/);
   assert.match(api, /Assistant Draft route ownership/);
   assert.match(hook, /type: "draft_created"/);
-  assert.match(assistantMessage, /assistant-draft-result-/);
-  assert.match(assistantMessage, /router\.push\(draft\.route\)/);
-  assert.doesNotMatch(assistantMessage, /window\.open\(draft\.route/);
+  assert.match(assistantMessage, /AssistantArtifactCard/);
+  assert.match(artifactCard, /assistant-\$\{artifact\.kind\}-result-/);
+  assert.match(artifactCard, /router\.push\(artifact\.route\)/);
+  assert.match(artifactCard, /draftDocxHint/);
+  assert.doesNotMatch(artifactCard, /window\.open\(artifact\.route/);
 });
 
 test("Agent-created Tabular Review events persist, render, and open the Matter Review route", () => {
@@ -172,14 +177,17 @@ test("Agent-created Tabular Review events persist, render, and open the Matter R
   const assistantMessage = source(
     "src/app/components/assistant/AssistantMessage.tsx",
   );
+  const artifactCard = source(
+    "src/app/components/assistant/AssistantArtifactCard.tsx",
+  );
   const summary = source("src/app/components/assistant/TaskRunSummary.tsx");
 
   assert.match(api, /case "tabular_review_created"/);
   assert.match(api, /tabular-reviews\/\$\{reviewId\}/);
   assert.match(hook, /type: "tabular_review_created"/);
-  assert.match(assistantMessage, /assistant-review-result-/);
-  assert.match(assistantMessage, /routes\.tabularReviewHref/);
-  assert.match(assistantMessage, /assistant\.artifacts\.reviewDescription/);
+  assert.match(assistantMessage, /AssistantArtifactCard/);
+  assert.match(artifactCard, /assistant\.artifacts\.reviewDescription/);
+  assert.match(artifactCard, /reviewXlsxHint/);
   assert.match(summary, /MAX_TASK_PROGRESS_ITEMS = 6/);
   assert.match(summary, /run_contract_review/);
   assert.match(summary, /get_contract_review/);
@@ -224,15 +232,56 @@ test("Matter Assistant offers a contract-review starter without submitting it", 
   assert.match(chatView, /pathname\.startsWith\("\/matters\/"\)/);
   assert.match(
     chatView,
-    /availableDocuments\?\.filter\(\(document\) => document\.status === "ready"\)\.length/,
+    /availableDocuments\?\.filter\(\(document\) => document\.status === "ready"\)/,
   );
   assert.match(chatView, />= 2/);
   assert.match(chatView, /chatInputRef\.current\?\.setPrompt/);
   assert.doesNotMatch(chatView, /startContractReview[\s\S]{0,240}handleChat/);
   assert.match(chatInput, /setPrompt: \(prompt: string\) => void/);
-  assert.equal(MESSAGES["zh-CN"].assistant.starters.contractReview.label, "审查一批合同");
-  assert.equal(MESSAGES["en-US"].assistant.starters.contractReview.label, "Review contracts");
-  assert.match(MESSAGES["en-US"].assistant.starters.contractReview.prompt, /change-of-control/);
+  assert.equal(
+    MESSAGES["zh-CN"].assistant.starters.contractReview.label,
+    "审查一批合同",
+  );
+  assert.equal(
+    MESSAGES["en-US"].assistant.starters.contractReview.label,
+    "Review contracts",
+  );
+  assert.match(
+    MESSAGES["en-US"].assistant.starters.contractReview.prompt,
+    /change-of-control/,
+  );
+  assert.equal(
+    MESSAGES["zh-CN"].assistant.starters.customExtraction.label,
+    "自定义信息提取",
+  );
+  assert.equal(
+    MESSAGES["en-US"].assistant.starters.caseTimeline.label,
+    "Build a case timeline",
+  );
+  assert.equal(
+    MESSAGES["en-US"].assistant.starters.legalMemo.label,
+    "Draft a legal memo",
+  );
+  assert.match(chatView, /startStarter\(starter\.prompt\)/);
+});
+
+test("Assistant UI folds durable task plans and only renders real artifact completion cards", () => {
+  const api = source("src/app/lib/veraAssistantApi.ts");
+  const hook = source("src/app/hooks/useAssistantChat.ts");
+  const summary = source("src/app/components/assistant/TaskRunSummary.tsx");
+  const artifactCard = source(
+    "src/app/components/assistant/AssistantArtifactCard.tsx",
+  );
+  assert.match(api, /case "task_plan"/);
+  assert.match(api, /case "task_step_update"/);
+  assert.match(hook, /type: "task_plan"/);
+  assert.match(hook, /type: "task_step_update"/);
+  assert.match(
+    summary,
+    /stepStatus\.get\(`\$\{event\.plan_id\}:\$\{step\.id\}`\) \?\? step\.status/,
+  );
+  assert.match(artifactCard, /reviewXlsxHint/);
+  assert.match(artifactCard, /draftDocxHint/);
 });
 
 test("Assistant source viewer opens one exact page excerpt for multi-page citations", () => {

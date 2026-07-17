@@ -156,23 +156,46 @@ export function toUiMessage(message: VeraAssistantMessage): Message {
       ? {
           events: [
             ...(content ? [{ type: "content" as const, text: content }] : []),
-            ...(message.events ?? []).map((event): AssistantEvent =>
-              event.type === "draft_created"
-                ? {
+            ...(message.events ?? []).map((event): AssistantEvent => {
+              switch (event.type) {
+                case "draft_created":
+                  return {
                     type: "draft_created",
                     draft_id: event.draft_id,
                     version_id: event.version_id,
                     title: event.title,
                     route: event.route,
-                  }
-                : {
+                  };
+                case "tabular_review_created":
+                  return {
                     type: "tabular_review_created",
                     review_id: event.review_id,
                     title: event.title,
                     route: event.route,
                     document_count: event.document_count,
-                  },
-            ),
+                  };
+                case "task_plan":
+                  return {
+                    type: "task_plan",
+                    plan_id: event.plan_id,
+                    goal: event.goal,
+                    steps: event.steps,
+                    ...(event.deliverables === undefined
+                      ? {}
+                      : { deliverables: event.deliverables }),
+                  };
+                case "task_step_update":
+                  return {
+                    type: "task_step_update",
+                    plan_id: event.plan_id,
+                    step_id: event.step_id,
+                    status: event.status,
+                    ...(event.detail === undefined
+                      ? {}
+                      : { detail: event.detail }),
+                  };
+              }
+            }),
           ],
           annotations: citations,
           citationStatus: citations.length ? ("final" as const) : undefined,
@@ -414,6 +437,36 @@ function applyStreamEvent(
             title: wire.title,
             route: wire.route,
             document_count: wire.document_count,
+          },
+        ],
+      };
+    case "task_plan":
+      return {
+        ...message,
+        events: [
+          ...finaliseStreamingEvents(events),
+          {
+            type: "task_plan",
+            plan_id: wire.plan_id,
+            goal: wire.goal,
+            steps: wire.steps,
+            ...(wire.deliverables === undefined
+              ? {}
+              : { deliverables: wire.deliverables }),
+          },
+        ],
+      };
+    case "task_step_update":
+      return {
+        ...message,
+        events: [
+          ...finaliseStreamingEvents(events),
+          {
+            type: "task_step_update",
+            plan_id: wire.plan_id,
+            step_id: wire.step_id,
+            status: wire.status,
+            ...(wire.detail === undefined ? {} : { detail: wire.detail }),
           },
         ],
       };

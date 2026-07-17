@@ -516,6 +516,21 @@ const zhCN = {
         prompt:
           "请审查我选择的合同，比较控制权变更、责任上限、自动续期和适用法条款；生成一份比较表，并起草一份风险备忘录。",
       },
+      customExtraction: {
+        label: "自定义信息提取",
+        prompt:
+          "请从我选择的材料中提取关键事实。先给出建议字段，再生成一份可导出的结构化比较表。",
+      },
+      caseTimeline: {
+        label: "整理案件时间线",
+        prompt:
+          "请阅读我选择的案件材料，整理事件时间线、涉及主体和对应来源，生成一份可导出的时间线表，并起草一份案件事实摘要。没有明确依据的内容不要推测，请列入待确认事项。",
+      },
+      legalMemo: {
+        label: "起草法律备忘录",
+        prompt:
+          "请阅读我选择的材料，整理关键事实、待解决的法律问题和初步分析，并起草一份法律备忘录。",
+      },
     },
     model: {
       choose: "选择模型",
@@ -544,6 +559,9 @@ const zhCN = {
       getWorkflowRun: "读取工作流运行状态",
       runContractReview: "正在启动合同审查",
       getContractReview: "正在检查合同审查",
+      runCustomExtraction: "正在创建结构化提取表",
+      createLegalMemo: "正在创建法律备忘录",
+      createMemoFromReview: "正在根据表格生成备忘录",
       searchLegalSources: "检索授权法律数据源",
       readLegalSource: "读取法律来源",
       readingDocument: "正在读取 {filename}",
@@ -554,12 +572,15 @@ const zhCN = {
       draftCreated: "已创建文稿 {title}",
       reviewCreated: "已创建合同审查 {title}（{count} 份文档）",
       taskProgress: "任务进度",
+      planStep: "{title}",
       thinking: "正在思考",
     },
     artifacts: {
       reviewDescription: "已审查 {count} 份文档；可在 Review 中导出 XLSX。",
       openReview: "打开 Review",
       reviewXlsxHint: "可在 Review 中导出 XLSX。",
+      draftDescription: "可在文稿中导出 DOCX。",
+      draftDocxHint: "可在文稿中导出 DOCX。",
     },
     empty: {
       title: "开始和 Vera 对话",
@@ -2027,6 +2048,21 @@ const enUS = {
         prompt:
           "Review the selected contracts. Compare change-of-control, limitation-of-liability, auto-renewal, and governing-law clauses; produce a comparison table and draft a risk memorandum.",
       },
+      customExtraction: {
+        label: "Extract information",
+        prompt:
+          "Extract key facts from the selected materials. First propose useful fields, then produce an exportable structured comparison table.",
+      },
+      caseTimeline: {
+        label: "Build a case timeline",
+        prompt:
+          "Read the selected case materials, organize an event timeline with parties and source references, produce an exportable timeline table, and draft a case fact summary. Do not infer unsupported facts; list them as items requiring confirmation.",
+      },
+      legalMemo: {
+        label: "Draft a legal memo",
+        prompt:
+          "Read the selected materials, organize the key facts, legal questions, and preliminary analysis, then draft a legal memorandum.",
+      },
     },
     model: {
       choose: "Choose model",
@@ -2055,6 +2091,9 @@ const enUS = {
       getWorkflowRun: "Reading workflow run status",
       runContractReview: "Starting contract review",
       getContractReview: "Checking contract review",
+      runCustomExtraction: "Creating structured extraction",
+      createLegalMemo: "Creating legal memorandum",
+      createMemoFromReview: "Creating memorandum from Review",
       searchLegalSources: "Searching authorized legal sources",
       readLegalSource: "Reading legal authority",
       readingDocument: "Reading {filename}",
@@ -2065,12 +2104,15 @@ const enUS = {
       draftCreated: "Created draft {title}",
       reviewCreated: "Created contract review {title} ({count} documents)",
       taskProgress: "Task progress",
+      planStep: "{title}",
       thinking: "Thinking",
     },
     artifacts: {
       reviewDescription: "Reviewed {count} documents; export XLSX from Review.",
       openReview: "Open Review",
       reviewXlsxHint: "Export XLSX from Review.",
+      draftDescription: "Export DOCX from the draft.",
+      draftDocxHint: "Export DOCX from the draft.",
     },
     empty: {
       title: "Start a conversation with Vera",

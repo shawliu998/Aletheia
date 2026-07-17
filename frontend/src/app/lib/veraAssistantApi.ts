@@ -81,18 +81,13 @@ export interface VeraAssistantLegalAuthorityCitation {
   ref: number;
   title: string;
   source_type:
-    | "statute"
-    | "regulation"
-    | "judicial_interpretation"
-    | "case"
-    | "guidance";
+    "statute" | "regulation" | "judicial_interpretation" | "case" | "guidance";
   locator: VeraAssistantLegalAuthorityLocator;
   quote: string;
 }
 
 export type VeraAssistantCitation =
-  | VeraAssistantDocumentCitation
-  | VeraAssistantLegalAuthorityCitation;
+  VeraAssistantDocumentCitation | VeraAssistantLegalAuthorityCitation;
 
 export interface VeraAssistantMessage {
   id: string;
@@ -161,6 +156,9 @@ export type VeraAssistantStreamEvent =
         | "get_workflow_run"
         | "run_contract_review"
         | "get_contract_review"
+        | "run_custom_extraction"
+        | "create_legal_memo"
+        | "create_memo_from_tabular_review"
         | "search_legal_sources"
         | "read_legal_source";
     }
@@ -188,13 +186,43 @@ export type VeraAssistantStreamEvent =
       route: string;
       document_count: number;
     }
+  | {
+      type: "task_plan";
+      plan_id: string;
+      goal: string;
+      steps: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "in_progress" | "completed" | "failed";
+      }>;
+      deliverables?: Array<{
+        kind: "tabular_review" | "review" | "xlsx" | "draft" | "docx";
+        label: string;
+        status: "pending" | "completed";
+        artifact_id?: string;
+        route?: string;
+      }>;
+    }
+  | {
+      type: "task_step_update";
+      plan_id: string;
+      step_id: string;
+      status: "in_progress" | "completed" | "failed";
+      detail?: string;
+    }
   | VeraAssistantCitation
   | { type: "complete"; message_id: string; job_id: string }
   | { type: "error"; code?: string; message: string };
 
 export type VeraAssistantMessageEvent = Extract<
   VeraAssistantStreamEvent,
-  { type: "draft_created" | "tabular_review_created" }
+  {
+    type:
+      | "draft_created"
+      | "tabular_review_created"
+      | "task_plan"
+      | "task_step_update";
+  }
 >;
 
 export interface VeraAssistantDurableEvent {
@@ -634,7 +662,9 @@ function parseMessage(value: unknown): VeraAssistantMessage {
     const event = parseVeraAssistantStreamEvent(item);
     if (
       event.type !== "draft_created" &&
-      event.type !== "tabular_review_created"
+      event.type !== "tabular_review_created" &&
+      event.type !== "task_plan" &&
+      event.type !== "task_step_update"
     ) {
       return invalid("Assistant message durable event type");
     }
@@ -800,6 +830,9 @@ const TOOL_NAMES = [
   "get_workflow_run",
   "run_contract_review",
   "get_contract_review",
+  "run_custom_extraction",
+  "create_legal_memo",
+  "create_memo_from_tabular_review",
   "search_legal_sources",
   "read_legal_source",
 ] as const;
@@ -935,7 +968,11 @@ export function parseVeraAssistantStreamEvent(
         "Assistant Tabular Review event",
       );
       const reviewId = uuid(raw.review_id, "Assistant Tabular Review id");
-      const route = stringValue(raw.route, "Assistant Tabular Review route", 240);
+      const route = stringValue(
+        raw.route,
+        "Assistant Tabular Review route",
+        240,
+      );
       if (
         !new RegExp(
           `^/projects/[0-9a-f-]{36}/tabular-reviews/${reviewId}$`,
@@ -956,6 +993,131 @@ export function parseVeraAssistantStreamEvent(
         ),
       };
     }
+    case "task_plan": {
+      exactKeys(
+        raw,
+        ["type", "plan_id", "goal", "steps"],
+        ["deliverables"],
+        "Assistant task plan event",
+      );
+      if (
+        !Array.isArray(raw.steps) ||
+        raw.steps.length < 1 ||
+        raw.steps.length > 6
+      ) {
+        return invalid("Assistant task plan steps");
+      }
+      const steps = raw.steps.map((value) => {
+        const step = record(value, "Assistant task plan step");
+        exactKeys(
+          step,
+          ["id", "title", "status"],
+          [],
+          "Assistant task plan step",
+        );
+        return {
+          id: stringValue(step.id, "Assistant task plan step id", 120),
+          title: stringValue(step.title, "Assistant task plan step title", 240),
+          status: enumValue(
+            step.status,
+            ["pending", "in_progress", "completed", "failed"] as const,
+            "Assistant task plan step status",
+          ),
+        };
+      });
+      const deliverables = raw.deliverables;
+      if (
+        deliverables !== undefined &&
+        (!Array.isArray(deliverables) || deliverables.length > 8)
+      ) {
+        return invalid("Assistant task plan deliverables");
+      }
+      return {
+        type,
+        plan_id: uuid(raw.plan_id, "Assistant task plan id"),
+        goal: stringValue(raw.goal, "Assistant task plan goal", 1_000),
+        steps,
+        ...(deliverables === undefined
+          ? {}
+          : {
+              deliverables: deliverables.map((value) => {
+                const deliverable = record(value, "Assistant task deliverable");
+                exactKeys(
+                  deliverable,
+                  ["kind", "label", "status"],
+                  ["artifact_id", "route"],
+                  "Assistant task deliverable",
+                );
+                return {
+                  kind: enumValue(
+                    deliverable.kind,
+                    [
+                      "tabular_review",
+                      "review",
+                      "xlsx",
+                      "draft",
+                      "docx",
+                    ] as const,
+                    "Assistant task deliverable kind",
+                  ),
+                  label: stringValue(
+                    deliverable.label,
+                    "Assistant task deliverable label",
+                    240,
+                  ),
+                  status: enumValue(
+                    deliverable.status,
+                    ["pending", "completed"] as const,
+                    "Assistant task deliverable status",
+                  ),
+                  ...(deliverable.artifact_id === undefined
+                    ? {}
+                    : {
+                        artifact_id: uuid(
+                          deliverable.artifact_id,
+                          "Assistant task deliverable artifact id",
+                        ),
+                      }),
+                  ...(deliverable.route === undefined
+                    ? {}
+                    : {
+                        route: stringValue(
+                          deliverable.route,
+                          "Assistant task deliverable route",
+                          240,
+                        ),
+                      }),
+                };
+              }),
+            }),
+      };
+    }
+    case "task_step_update":
+      exactKeys(
+        raw,
+        ["type", "plan_id", "step_id", "status"],
+        ["detail"],
+        "Assistant task step update event",
+      );
+      return {
+        type,
+        plan_id: uuid(raw.plan_id, "Assistant task plan id"),
+        step_id: stringValue(raw.step_id, "Assistant task plan step id", 120),
+        status: enumValue(
+          raw.status,
+          ["in_progress", "completed", "failed"] as const,
+          "Assistant task step status",
+        ),
+        ...(raw.detail === undefined
+          ? {}
+          : {
+              detail: stringValue(
+                raw.detail,
+                "Assistant task step detail",
+                1_000,
+              ),
+            }),
+      };
     case "citation_data":
       return parseVeraAssistantCitation(raw);
     case "complete":

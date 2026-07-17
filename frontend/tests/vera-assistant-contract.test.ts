@@ -25,6 +25,7 @@ const versionId = "66666666-6666-4666-8666-666666666666";
 const localUserId = "00000000-0000-4000-8000-000000000001";
 const now = "2026-07-15T01:02:03.004Z";
 const token = "vdt_1234567890abcdefghijklmnopqrstuvwxyz";
+const planId = "77777777-7777-4777-8777-777777777777";
 
 function status(
   state:
@@ -158,6 +159,49 @@ test("Assistant chat/status contracts require exact canonical local wire data", 
   );
 });
 
+test("task plans are durable display state while created artifacts remain separate facts", () => {
+  const plan = parseVeraAssistantStreamEvent({
+    type: "task_plan",
+    plan_id: planId,
+    goal: "Build a case timeline and legal memo",
+    steps: [
+      { id: "read", title: "Read selected materials", status: "completed" },
+      { id: "extract", title: "Create timeline", status: "in_progress" },
+    ],
+    deliverables: [
+      { kind: "xlsx", label: "Timeline", status: "pending" },
+      { kind: "docx", label: "Fact memo", status: "pending" },
+    ],
+  });
+  assert.equal(plan.type, "task_plan");
+  assert.equal(plan.steps[1]?.status, "in_progress");
+  assert.equal(plan.deliverables?.[0]?.kind, "xlsx");
+  assert.deepEqual(
+    parseVeraAssistantStreamEvent({
+      type: "task_step_update",
+      plan_id: planId,
+      step_id: "extract",
+      status: "completed",
+      detail: "Timeline table created",
+    }),
+    {
+      type: "task_step_update",
+      plan_id: planId,
+      step_id: "extract",
+      status: "completed",
+      detail: "Timeline table created",
+    },
+  );
+  assert.throws(() =>
+    parseVeraAssistantStreamEvent({
+      type: "task_plan",
+      plan_id: planId,
+      goal: "Bad plan",
+      steps: [],
+    }),
+  );
+});
+
 test("legal authority citations expose only bounded title, locator, type, and exact quote", () => {
   const detail = parseVeraAssistantChatDetail({
     chat: {
@@ -197,7 +241,10 @@ test("legal authority citations expose only bounded title, locator, type, and ex
     locator: { article: "第五百零九条", paragraph: "第一款" },
     quote: "当事人应当按照约定全面履行自己的义务。",
   });
-  assert.equal(toUiMessage(detail.messages[0]).annotations?.[0].kind, "legal_authority");
+  assert.equal(
+    toUiMessage(detail.messages[0]).annotations?.[0].kind,
+    "legal_authority",
+  );
 
   for (const forbidden of [
     { url: "blocked endpoint" },
@@ -346,7 +393,10 @@ test("completed chat detail restores its bounded Tabular Review projection on re
     ],
   });
   const restored = toUiMessage(detail.messages[0]);
-  assert.deepEqual(restored.events?.find((event) => event.type === "tabular_review_created"), reviewEvent);
+  assert.deepEqual(
+    restored.events?.find((event) => event.type === "tabular_review_created"),
+    reviewEvent,
+  );
 });
 
 test("JSON recovery drains more than 100 durable events through the terminal event", async () => {

@@ -30,12 +30,12 @@ import {
   ProjectCitationSourceViewer,
   type ProjectAssistantCitationSource,
 } from "@/app/components/projects/ProjectCitationSourceViewer";
-import { useWorkspaceRoutes } from "@/app/components/projects/WorkspaceRouteAdapter";
 import { useI18n, type Translate } from "@/app/i18n";
 import { createVeraStudioDraftFromAssistant } from "@/app/lib/veraDocumentStudioApi";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { ResponseStatus } from "./ResponseStatus";
 import { TaskRunSummary } from "./TaskRunSummary";
+import { AssistantArtifactCard } from "./AssistantArtifactCard";
 
 function citationLocation(citation: CitationAnnotation, t: Translate): string {
   if (citation.kind === "case") {
@@ -104,7 +104,6 @@ export function AssistantMessage({
   }>;
 }) {
   const router = useRouter();
-  const routes = useWorkspaceRoutes();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
@@ -127,8 +126,12 @@ export function AssistantMessage({
   const createdReviews = useMemo(
     () =>
       events.filter(
-        (event): event is Extract<AssistantEvent, { type: "tabular_review_created" }> =>
-          event.type === "tabular_review_created",
+        (
+          event,
+        ): event is Extract<
+          AssistantEvent,
+          { type: "tabular_review_created" }
+        > => event.type === "tabular_review_created",
       ),
     [events],
   );
@@ -226,60 +229,28 @@ export function AssistantMessage({
       )}
 
       {createdDrafts.map((draft) => (
-        <div
+        <AssistantArtifactCard
           key={`${draft.draft_id}-${draft.version_id}`}
-          className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-3"
-          data-testid={`assistant-draft-result-${draft.draft_id}`}
-        >
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-gray-900">
-              {draft.title}
-            </p>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {t("assistant.events.draftCreated", { title: draft.title })}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => router.push(draft.route)}
-            className="flex shrink-0 items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 transition-colors hover:bg-blue-50"
-          >
-            <FilePenLine className="h-3.5 w-3.5" />
-            {t("assistant.openDraft")}
-          </button>
-        </div>
+          artifact={{
+            kind: "draft",
+            id: draft.draft_id,
+            title: draft.title,
+            route: draft.route,
+          }}
+        />
       ))}
 
       {createdReviews.map((review) => (
-        <div
+        <AssistantArtifactCard
           key={review.review_id}
-          className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3"
-          data-testid={`assistant-review-result-${review.review_id}`}
-        >
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-gray-900">{review.title}</p>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {t("assistant.artifacts.reviewDescription", {
-                count: review.document_count,
-              })}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() =>
-              router.push(
-                studioHandoff
-                  ? routes.tabularReviewHref(studioHandoff.projectId, review.review_id)
-                  : review.route,
-              )
-            }
-            className="flex shrink-0 items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition-colors hover:bg-emerald-50"
-          >
-            <Check className="h-3.5 w-3.5" />
-            {t("assistant.artifacts.openReview")}
-          </button>
-          <p className="sr-only">{t("assistant.artifacts.reviewXlsxHint")}</p>
-        </div>
+          artifact={{
+            kind: "review",
+            id: review.review_id,
+            title: review.title,
+            route: review.route,
+            documentCount: review.document_count,
+          }}
+        />
       ))}
 
       {citationSourceFailure && (

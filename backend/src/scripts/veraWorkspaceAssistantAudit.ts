@@ -1058,7 +1058,7 @@ async function run() {
     );
 
     const currentMigration = database.runMigrations(WORKSPACE_MIGRATIONS);
-    assert.equal(currentMigration.currentVersion, 24);
+    assert.equal(currentMigration.currentVersion, 25);
     markProfileReady(database, profileId);
 
     const projects = new ProjectsRepository(database);
@@ -1740,11 +1740,16 @@ async function run() {
     );
     assert.deepEqual(publishedEventTypes, [
       "content_delta",
+      "task_plan",
+      "task_step_update",
       "tool_call_start",
       "doc_read_start",
       "doc_read",
       "doc_read",
+      "task_step_update",
       "content_delta",
+      "task_step_update",
+      "task_step_update",
       "content_done",
       "complete",
     ]);
@@ -1789,17 +1794,17 @@ async function run() {
       ...Array.from({ length: 5 }, (_, index) => ({
         id: `budget-search-${index + 1}`,
         name: "search_legal_sources" as const,
-        input: {},
+        input: { audit_call: index + 1 },
       })),
       ...Array.from({ length: 2 }, (_, index) => ({
         id: `budget-draft-${index + 1}`,
         name: "create_draft" as const,
-        input: {},
+        input: { audit_call: index + 1 },
       })),
       ...Array.from({ length: 3 }, (_, index) => ({
         id: `budget-workflow-${index + 1}`,
         name: "run_workflow" as const,
-        input: {},
+        input: { audit_call: index + 1 },
       })),
     ];
     const expectedBudgetLimits = new Map([
@@ -1832,6 +1837,8 @@ async function run() {
       assert.equal(claim?.attempt, input.expectedAttempt);
 
       const underlyingExecutions = new Map<string, number>();
+      const budgetDraftId = randomUUID();
+      const budgetDraftVersionId = randomUUID();
       let modelTurns = 0;
       const budgetRuntime = new AssistantRuntimeService(
         chats,
@@ -1926,6 +1933,18 @@ async function run() {
                   tool: call.name,
                   attempt: context.attempt,
                 }),
+                events:
+                  call.name === "create_draft"
+                    ? [
+                        {
+                          type: "draft_created" as const,
+                          draft_id: budgetDraftId,
+                          version_id: budgetDraftVersionId,
+                          title: "Budget audit Draft",
+                          route: `/projects/${budgetAuditProject}/documents/${budgetDraftId}/studio`,
+                        },
+                      ]
+                    : undefined,
               };
             },
           },
@@ -1976,6 +1995,580 @@ async function run() {
         );
       },
     });
+
+    const loopGuardTool = {
+      name: "list_documents" as const,
+      description: "Return an audit-only document list.",
+      inputSchema: { type: "object", additionalProperties: true },
+    };
+    const executeLoopGuardAudit = async (input: {
+      title: string;
+      worker: string;
+      claimAt: string;
+      expectedError: RegExp;
+      turns: (turn: number) => {
+        content: string;
+        toolCalls: Array<{
+          id: string;
+          name: "list_documents";
+          input: Record<string, unknown>;
+        }>;
+        sources: [];
+      };
+      toolResult: (call: number) => string;
+      expectedExecutions: number;
+    }) => {
+      const chat = service.create({
+        projectId: budgetAuditProject,
+        modelProfileId: profileId,
+        title: input.title,
+      });
+      const generation = service.requestGeneration({
+        chatId: chat.id,
+        prompt: "Run the bounded audit tools and then report.",
+      });
+      const claim = jobs.claimNextQueued(
+        input.claimAt,
+        input.worker,
+        "2026-07-14T08:20:00.000Z",
+      );
+      assert.equal(claim?.id, generation.jobId);
+      let turns = 0;
+      let executions = 0;
+      const runtime = new AssistantRuntimeService(
+        chats,
+        jobs,
+        {
+          async registeredCapabilities() {
+            return {
+              adapterId: `${input.worker}-model`,
+              streaming: true,
+              toolCalling: true,
+            };
+          },
+          async runTurn() {
+            turns += 1;
+            return input.turns(turns);
+          },
+        },
+        {
+          clock: () => new Date(input.claimAt),
+          tools: {
+            async registeredTools() {
+              return {
+                adapterId: `${input.worker}-tools`,
+                tools: [loopGuardTool],
+              };
+            },
+            async execute() {
+              executions += 1;
+              return { content: input.toolResult(executions) };
+            },
+          },
+        },
+      );
+      await assert.rejects(
+        runtime.execute({
+          jobId: generation.jobId,
+          leaseOwner: input.worker,
+          attempt: claim!.attempt,
+          signal: new AbortController().signal,
+        }),
+        input.expectedError,
+      );
+      assert.equal(executions, input.expectedExecutions);
+      assert.equal(jobs.getJob(generation.jobId)?.status, "failed");
+      const durableTypes = database
+        .prepare(
+          `SELECT event_type FROM assistant_generation_events
+            WHERE job_id=? ORDER BY sequence`,
+        )
+        .all(generation.jobId)
+        .map((row) => String(row.event_type));
+      assert.ok(durableTypes.includes("task_plan"));
+      assert.ok(durableTypes.includes("task_step_update"));
+    };
+
+    await executeLoopGuardAudit({
+      title: "Consecutive failure guard audit",
+      worker: "consecutive-failure-worker",
+      claimAt: "2026-07-14T08:03:00.000Z",
+      expectedError: /three consecutive tool failures/,
+      turns: (turn) => {
+        assert.equal(turn, 1);
+        return {
+          content: "",
+          toolCalls: Array.from({ length: 3 }, (_, index) => ({
+            id: `failure-${index}`,
+            name: "list_documents" as const,
+            input: { attempt: index },
+          })),
+          sources: [],
+        };
+      },
+      toolResult: () => JSON.stringify({ error: "audit_failure" }),
+      expectedExecutions: 3,
+    });
+
+    await executeLoopGuardAudit({
+      title: "Identical no-progress guard audit",
+      worker: "identical-loop-worker",
+      claimAt: "2026-07-14T08:03:10.000Z",
+      expectedError: /identical tool request without progress/,
+      turns: (turn) => {
+        assert.equal(turn, 1);
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "identical-1",
+              name: "list_documents" as const,
+              input: { alpha: 1, beta: 2 },
+            },
+            {
+              id: "identical-2",
+              name: "list_documents" as const,
+              input: { beta: 2, alpha: 1 },
+            },
+            {
+              id: "identical-3",
+              name: "list_documents" as const,
+              input: { alpha: 1, beta: 2 },
+            },
+          ],
+          sources: [],
+        };
+      },
+      toolResult: () => JSON.stringify({ documents: [] }),
+      expectedExecutions: 3,
+    });
+
+    await executeLoopGuardAudit({
+      title: "Total tool-call guard audit",
+      worker: "total-tool-call-worker",
+      claimAt: "2026-07-14T08:03:20.000Z",
+      expectedError: /total tool-call limit/,
+      turns: (turn) => ({
+        content: "",
+        toolCalls: Array.from({ length: turn <= 2 ? 16 : 1 }, (_, index) => ({
+          id: `total-${turn}-${index}`,
+          name: "list_documents" as const,
+          input: { call: (turn - 1) * 16 + index },
+        })),
+        sources: [],
+      }),
+      toolResult: (call) => JSON.stringify({ call, documents: [] }),
+      expectedExecutions: 32,
+    });
+
+    const recoveryDraftTool = {
+      name: "create_draft" as const,
+      description: "Create the requested audit Draft and Word artifact.",
+      inputSchema: { type: "object", additionalProperties: true },
+    };
+    const recoverySuccessChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Missing deliverable recovery success audit",
+    });
+    const recoverySuccessGeneration = service.requestGeneration({
+      chatId: recoverySuccessChat.id,
+      prompt: "Draft and export a Word document for this Matter.",
+    });
+    const recoverySuccessClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:25.000Z",
+      "deliverable-recovery-success-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(recoverySuccessClaim?.id, recoverySuccessGeneration.jobId);
+    const recoveredDraftId = randomUUID();
+    const recoveredDraftVersionId = randomUUID();
+    let recoverySuccessTurns = 0;
+    let recoverySuccessExecutions = 0;
+    const recoverySuccessRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "deliverable-recovery-success-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ messages, onTextDelta }) {
+          recoverySuccessTurns += 1;
+          if (recoverySuccessTurns === 1) {
+            await onTextDelta("The requested Word document is complete.");
+            return {
+              content: "The requested Word document is complete.",
+              toolCalls: [],
+              sources: [],
+            };
+          }
+          const recoveryPrompts = messages.filter(
+            (message) =>
+              message.role === "user" &&
+              message.content.startsWith("Delivery recovery:"),
+          );
+          assert.equal(recoveryPrompts.length, 1);
+          assert.match(recoveryPrompts[0]!.content, /draft/);
+          assert.match(recoveryPrompts[0]!.content, /docx/);
+          assert.match(recoveryPrompts[0]!.content, /create_draft/);
+          if (recoverySuccessTurns === 2) {
+            assert.equal(messages.at(-2)?.role, "assistant");
+            assert.equal(
+              messages.at(-2)?.content,
+              "The requested Word document is complete.",
+            );
+            return {
+              content: "",
+              toolCalls: [
+                {
+                  id: "deliverable-recovery-create-draft",
+                  name: "create_draft",
+                  input: { title: "Recovered audit Draft" },
+                },
+              ],
+              sources: [],
+            };
+          }
+          assert.equal(recoverySuccessTurns, 3);
+          await onTextDelta("The Word document was created successfully.");
+          return {
+            content: "The Word document was created successfully.",
+            toolCalls: [],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:25.000Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "deliverable-recovery-success-tools",
+              tools: [recoveryDraftTool],
+            };
+          },
+          async execute({ call }) {
+            recoverySuccessExecutions += 1;
+            assert.equal(call.name, "create_draft");
+            return {
+              content: JSON.stringify({ ok: true, draft_id: recoveredDraftId }),
+              events: [
+                {
+                  type: "draft_created" as const,
+                  draft_id: recoveredDraftId,
+                  version_id: recoveredDraftVersionId,
+                  title: "Recovered audit Draft",
+                  route: `/projects/${budgetAuditProject}/documents/${recoveredDraftId}/studio`,
+                },
+              ],
+            };
+          },
+        },
+      },
+    );
+    await recoverySuccessRuntime.execute({
+      jobId: recoverySuccessGeneration.jobId,
+      leaseOwner: "deliverable-recovery-success-worker",
+      attempt: recoverySuccessClaim!.attempt,
+      signal: new AbortController().signal,
+    });
+    assert.equal(recoverySuccessTurns, 3);
+    assert.equal(recoverySuccessExecutions, 1);
+    assert.equal(
+      jobs.getJob(recoverySuccessGeneration.jobId)?.status,
+      "complete",
+    );
+    assert.equal(
+      database
+        .prepare("SELECT content FROM chat_messages WHERE id=?")
+        .get(recoverySuccessGeneration.outputMessageId)?.content,
+      "The Word document was created successfully.",
+    );
+    assert.equal(
+      database
+        .prepare(
+          `SELECT group_concat(json_extract(event_json,'$.text'),'') AS content
+             FROM assistant_generation_events
+            WHERE job_id=? AND event_type='content_delta'`,
+        )
+        .get(recoverySuccessGeneration.jobId)?.content,
+      "The Word document was created successfully.",
+      "the rejected final claim is never emitted as durable content",
+    );
+
+    const recoveryFailureChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Single missing deliverable recovery failure audit",
+    });
+    const recoveryFailureGeneration = service.requestGeneration({
+      chatId: recoveryFailureChat.id,
+      prompt: "Draft and export a Word document for this Matter.",
+    });
+    const recoveryFailureClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:27.000Z",
+      "deliverable-recovery-failure-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(recoveryFailureClaim?.id, recoveryFailureGeneration.jobId);
+    let recoveryFailureTurns = 0;
+    const recoveryFailureRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "deliverable-recovery-failure-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ messages, onTextDelta }) {
+          recoveryFailureTurns += 1;
+          const content =
+            recoveryFailureTurns === 1
+              ? "The requested Word document is complete."
+              : "The requested Word document is definitely complete.";
+          if (recoveryFailureTurns === 2) {
+            assert.equal(
+              messages.filter(
+                (message) =>
+                  message.role === "user" &&
+                  message.content.startsWith("Delivery recovery:"),
+              ).length,
+              1,
+            );
+          }
+          await onTextDelta(content);
+          return { content, toolCalls: [], sources: [] };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:27.000Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "deliverable-recovery-failure-tools",
+              tools: [recoveryDraftTool],
+            };
+          },
+          async execute() {
+            throw new Error("A recovery tool was not requested.");
+          },
+        },
+      },
+    );
+    await assert.rejects(
+      recoveryFailureRuntime.execute({
+        jobId: recoveryFailureGeneration.jobId,
+        leaseOwner: "deliverable-recovery-failure-worker",
+        attempt: recoveryFailureClaim!.attempt,
+        signal: new AbortController().signal,
+      }),
+      /requested deliverables: draft, docx/,
+    );
+    assert.equal(recoveryFailureTurns, 2, "delivery recovery runs only once");
+    assert.equal(
+      jobs.getJob(recoveryFailureGeneration.jobId)?.status,
+      "failed",
+    );
+    assert.equal(
+      database
+        .prepare("SELECT content FROM chat_messages WHERE id=?")
+        .get(recoveryFailureGeneration.outputMessageId)?.content,
+      "",
+    );
+
+    const ordinaryAnswerChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Ordinary answer recovery isolation audit",
+    });
+    const ordinaryAnswerGeneration = service.requestGeneration({
+      chatId: ordinaryAnswerChat.id,
+      prompt: "How does this Assistant answer ordinary questions?",
+    });
+    const ordinaryAnswerClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:29.000Z",
+      "ordinary-answer-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(ordinaryAnswerClaim?.id, ordinaryAnswerGeneration.jobId);
+    let ordinaryAnswerTurns = 0;
+    const ordinaryAnswerRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "ordinary-answer-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ messages, onTextDelta }) {
+          ordinaryAnswerTurns += 1;
+          assert.equal(
+            messages.some(
+              (message) =>
+                message.role === "user" &&
+                message.content.startsWith("Delivery recovery:"),
+            ),
+            false,
+          );
+          await onTextDelta("This is an ordinary answer.");
+          return {
+            content: "This is an ordinary answer.",
+            toolCalls: [],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:29.000Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "ordinary-answer-tools",
+              tools: [recoveryDraftTool],
+            };
+          },
+          async execute() {
+            throw new Error(
+              "Ordinary answers must not execute recovery tools.",
+            );
+          },
+        },
+      },
+    );
+    await ordinaryAnswerRuntime.execute({
+      jobId: ordinaryAnswerGeneration.jobId,
+      leaseOwner: "ordinary-answer-worker",
+      attempt: ordinaryAnswerClaim!.attempt,
+      signal: new AbortController().signal,
+    });
+    assert.equal(ordinaryAnswerTurns, 1);
+    assert.equal(
+      jobs.getJob(ordinaryAnswerGeneration.jobId)?.status,
+      "complete",
+    );
+
+    const missingDeliverableChat = service.create({
+      projectId: budgetAuditProject,
+      modelProfileId: profileId,
+      title: "Missing deliverable completion audit",
+    });
+    const missingDeliverableGeneration = service.requestGeneration({
+      chatId: missingDeliverableChat.id,
+      prompt: "Generate and export an Excel workbook for this Matter.",
+    });
+    const missingDeliverableClaim = jobs.claimNextQueued(
+      "2026-07-14T08:03:30.000Z",
+      "missing-deliverable-worker",
+      "2026-07-14T08:20:00.000Z",
+    );
+    assert.equal(
+      missingDeliverableClaim?.id,
+      missingDeliverableGeneration.jobId,
+    );
+    let missingDeliverableTurns = 0;
+    const missingDeliverableRuntime = new AssistantRuntimeService(
+      chats,
+      jobs,
+      {
+        async registeredCapabilities() {
+          return {
+            adapterId: "missing-deliverable-model",
+            streaming: true,
+            toolCalling: true,
+          };
+        },
+        async runTurn({ onTextDelta }) {
+          assert.equal(missingDeliverableTurns, 0);
+          missingDeliverableTurns += 1;
+          await onTextDelta("The requested workbook is complete.");
+          return {
+            content: "The requested workbook is complete.",
+            toolCalls: [],
+            sources: [],
+          };
+        },
+      },
+      {
+        clock: () => new Date("2026-07-14T08:03:30.000Z"),
+        tools: {
+          async registeredTools() {
+            return {
+              adapterId: "missing-deliverable-tools",
+              tools: [loopGuardTool],
+            };
+          },
+          async execute() {
+            throw new Error("The missing-deliverable tool must not execute.");
+          },
+        },
+      },
+    );
+    await assert.rejects(
+      missingDeliverableRuntime.execute({
+        jobId: missingDeliverableGeneration.jobId,
+        leaseOwner: "missing-deliverable-worker",
+        attempt: missingDeliverableClaim!.attempt,
+        signal: new AbortController().signal,
+      }),
+      /requested deliverables: xlsx/,
+    );
+    assert.equal(
+      missingDeliverableTurns,
+      1,
+      "no appropriate registered tool fails without a recovery turn",
+    );
+    assert.equal(
+      database
+        .prepare("SELECT content FROM chat_messages WHERE id=?")
+        .get(missingDeliverableGeneration.outputMessageId)?.content,
+      "",
+    );
+    const missingPlanEvents = database
+      .prepare(
+        `SELECT event_json FROM assistant_generation_events
+          WHERE job_id=? AND event_type='task_plan' ORDER BY sequence`,
+      )
+      .all(missingDeliverableGeneration.jobId)
+      .map((row) =>
+        MikeAssistantStreamEventSchema.parse(
+          JSON.parse(String(row.event_json)),
+        ),
+      );
+    assert.equal(missingPlanEvents.length, 1);
+    assert.deepEqual(
+      missingPlanEvents[0]?.type === "task_plan"
+        ? missingPlanEvents[0].deliverables
+        : null,
+      [
+        {
+          kind: "xlsx",
+          label: "Excel workbook",
+          status: "pending",
+        },
+      ],
+    );
+    assert.equal(
+      database
+        .prepare(
+          `SELECT json_extract(event_json,'$.status') AS status
+             FROM assistant_generation_events
+            WHERE job_id=? AND event_type='task_step_update'
+              AND json_extract(event_json,'$.step_id')='finalize'
+            ORDER BY sequence DESC LIMIT 1`,
+        )
+        .get(missingDeliverableGeneration.jobId)?.status,
+      "failed",
+    );
 
     const unsupportedCitations = [
       {
@@ -3191,7 +3784,7 @@ async function run() {
     migrations: WORKSPACE_MIGRATIONS,
   });
   try {
-    assert.equal(reopened.migration?.currentVersion, 24);
+    assert.equal(reopened.migration?.currentVersion, 25);
     assert.equal(
       reopened
         .prepare("SELECT value FROM assistant_legacy_sentinel WHERE id=1")

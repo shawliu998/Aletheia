@@ -26,7 +26,8 @@ const CITATIONS_OPEN = "<CITATIONS>";
 const CITATIONS_CLOSE = "</CITATIONS>";
 const MAX_CITATION_JSON_CHARS = 100_000;
 const MAX_TOOL_ARGUMENT_CHARS = 100_000;
-const MAX_TOOL_CALLS = 16;
+const MAX_REGISTERED_TOOLS = 32;
+const MAX_TOOL_CALLS_PER_TURN = 16;
 const MAX_PROVIDER_EVENT_TEXT_CHARS = 200_000;
 const MAX_PROVIDER_REASONING_CHARS = 200_000;
 const MAX_PROVIDER_TOKEN_COUNT = 2_147_483_647;
@@ -450,7 +451,7 @@ export class WorkspaceAssistantModelAdapter implements AssistantModelPort {
 
     if (
       allowedToolNames.size !== input.tools.length ||
-      allowedToolNames.size > MAX_TOOL_CALLS
+      allowedToolNames.size > MAX_REGISTERED_TOOLS
     ) {
       throw new AssistantProviderError("assistant_output_invalid", false);
     }
@@ -537,7 +538,7 @@ export class WorkspaceAssistantModelAdapter implements AssistantModelPort {
             typeof event.name !== "string" ||
             !allowedToolNames.has(event.name as AssistantToolName) ||
             toolCalls.has(event.id) ||
-            toolCalls.size >= MAX_TOOL_CALLS ||
+            toolCalls.size >= MAX_TOOL_CALLS_PER_TURN ||
             sawOpen
           ) {
             throw new AssistantProviderError("assistant_output_invalid", false);

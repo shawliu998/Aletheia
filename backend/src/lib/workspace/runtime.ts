@@ -196,6 +196,7 @@ import { WorkspaceAssistantDraftToolModule } from "./services/assistantDraftTool
 import { WorkspaceAssistantWorkflowToolModule } from "./services/assistantWorkflowTools";
 import { WorkspaceAssistantActionLedger } from "./services/assistantActionLedger";
 import { WorkspaceAssistantContractReviewToolModule } from "./services/assistantContractReviewTools";
+import { WorkspaceAssistantGeneralLegalToolModule } from "./services/assistantGeneralLegalTools";
 import { WorkspaceChatsRuntimePort } from "./services/assistantChatsPort";
 import { ChatsService } from "./services/chats";
 import {
@@ -311,6 +312,16 @@ export type WorkspaceRuntimeDependencies = {
 
 function defaultDataDir() {
   return process.env.ALETHEIA_DATA_DIR ?? path.join(process.cwd(), ".aletheia");
+}
+
+function deterministicRuntimeUuid(material: string) {
+  const bytes = Buffer.from(
+    createHash("sha256").update(material, "utf8").digest().subarray(0, 16),
+  );
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function requireLocal(context: WorkspaceV1Context) {
@@ -813,6 +824,113 @@ export class WorkspaceRuntime
               };
             },
             () => this.tabularGenerationEnabled,
+          ),
+          new WorkspaceAssistantGeneralLegalToolModule(
+            () => this.tabularService,
+            {
+              available: () => this.tabularGenerationEnabled,
+              assertCurrentDocuments: (projectId, documents) => {
+                for (const document of documents) {
+                  const row = this.database
+                    .prepare(
+                      `SELECT document.project_id,document.current_version_id,
+                              document.deleted_at,version.deleted_at AS version_deleted_at
+                         FROM documents document
+                         JOIN document_versions version
+                           ON version.id=? AND version.document_id=document.id
+                        WHERE document.id=?`,
+                    )
+                    .get(document.versionId, document.documentId);
+                  if (
+                    !row ||
+                    row.project_id !== projectId ||
+                    row.current_version_id !== document.versionId ||
+                    row.deleted_at !== null ||
+                    row.version_deleted_at !== null
+                  ) {
+                    throw new WorkspaceApiError(
+                      409,
+                      "PRECONDITION_FAILED",
+                      "An attached document is outside this Matter or no longer current.",
+                    );
+                  }
+                }
+              },
+              createDraft: async (context, input) => {
+                if (!context.projectId) {
+                  throw new WorkspaceApiError(
+                    409,
+                    "PRECONDITION_FAILED",
+                    "A Matter is required to create a legal memo.",
+                  );
+                }
+                try {
+                  const existing = await this.documentStudioService.getDocument(
+                    context.projectId,
+                    input.documentId,
+                    input.versionId,
+                  );
+                  if (
+                    existing.document.title !== input.title ||
+                    existing.version.id !== input.versionId ||
+                    existing.content !== input.content
+                  ) {
+                    throw new WorkspaceApiError(
+                      409,
+                      "CONFLICT",
+                      "The existing Assistant Draft does not match this operation.",
+                    );
+                  }
+                  return {
+                    documentId: existing.document.id,
+                    versionId: existing.version.id,
+                    title: existing.document.title,
+                  };
+                } catch (error) {
+                  if (
+                    !(error instanceof WorkspaceApiError) ||
+                    error.status !== 404
+                  ) {
+                    throw error;
+                  }
+                }
+                const generation = chatsRepository.generationStatus(
+                  context.jobId,
+                );
+                if (
+                  generation.chatId !== context.chatId ||
+                  generation.activeAttempt !== context.attempt
+                ) {
+                  throw new WorkspaceApiError(
+                    409,
+                    "CONFLICT",
+                    "Assistant Draft generation ownership changed.",
+                  );
+                }
+                const created = await this.documentStudioService.createDraft({
+                  projectId: context.projectId,
+                  title: input.title,
+                  content: input.content,
+                  source: "assistant_edit",
+                  documentType: input.documentType,
+                  originType: "assistant",
+                  originRef: generation.outputMessageId,
+                  writeIdentity: {
+                    documentId: input.documentId,
+                    versionId: input.versionId,
+                    jobId: deterministicRuntimeUuid(
+                      `vera-general-legal-draft-parse-job\0${input.operationId}`,
+                    ),
+                    operationId: input.operationId,
+                  },
+                });
+                return {
+                  documentId: created.document.id,
+                  versionId: created.version.id,
+                  title: created.document.title,
+                };
+              },
+            },
           ),
           ...(dependencies.assistantToolModules ?? []),
         ]);

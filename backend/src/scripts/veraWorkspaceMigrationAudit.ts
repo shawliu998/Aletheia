@@ -35,6 +35,7 @@ import {
   LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION,
   TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION,
   ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION,
+  ASSISTANT_TASK_EVENTS_V25_MIGRATION,
   type WorkspaceDatabaseAdapter,
   type WorkspaceMigration,
 } from "../lib/workspace/migrations";
@@ -90,6 +91,10 @@ const DEFAULT_V1_TO_V24 = [
   LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION,
   TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION,
   ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION,
+] as const;
+const DEFAULT_V1_TO_V25 = [
+  ...DEFAULT_V1_TO_V24,
+  ASSISTANT_TASK_EVENTS_V25_MIGRATION,
 ] as const;
 const V9_PREFIX = DEFAULT_V1_TO_V10.slice(0, -1);
 
@@ -559,10 +564,13 @@ try {
   process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
   assert.deepEqual(
     WORKSPACE_MIGRATIONS.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-    "the default registry is a contiguous v1-v24 chain",
+    [
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22, 23, 24, 25,
+    ],
+    "the default registry is a contiguous v1-v25 chain",
   );
-  assert.deepEqual(WORKSPACE_MIGRATIONS, DEFAULT_V1_TO_V24);
+  assert.deepEqual(WORKSPACE_MIGRATIONS, DEFAULT_V1_TO_V25);
 
   const upgradePath = path.join(root, "upgrade.db");
   const v1Database = createUnmigratedDatabase("upgrade.db");
@@ -1435,11 +1443,11 @@ try {
 
     const upgraded = new WorkspaceDatabase(databasePath);
     try {
-      assert.equal(upgraded.migration?.currentVersion, 24);
+      assert.equal(upgraded.migration?.currentVersion, 25);
       assert.deepEqual(
         upgraded.migration?.applied.map((record) => record.version),
         Array.from(
-          { length: 24 - prefixVersion },
+          { length: 25 - prefixVersion },
           (_, index) => prefixVersion + index + 1,
         ),
       );
@@ -1502,9 +1510,9 @@ try {
         fts5: true,
         sqlcipherEncrypted: false,
       });
-      assertMigrationRecords(upgraded, DEFAULT_V1_TO_V24);
+      assertMigrationRecords(upgraded, DEFAULT_V1_TO_V25);
       const rerun = upgraded.runMigrations();
-      assert.equal(rerun.currentVersion, 24);
+      assert.equal(rerun.currentVersion, 25);
       assert.deepEqual(rerun.applied, []);
       if (prefixVersion === 6) {
         const driftedV8: WorkspaceMigration = {
@@ -1527,16 +1535,16 @@ try {
             ]),
           /checksum drift/i,
         );
-        assertMigrationRecords(upgraded, DEFAULT_V1_TO_V24);
+        assertMigrationRecords(upgraded, DEFAULT_V1_TO_V25);
       }
     } finally {
       upgraded.close();
     }
     const reopened = new WorkspaceDatabase(databasePath);
     try {
-      assert.equal(reopened.migration?.currentVersion, 24);
+      assert.equal(reopened.migration?.currentVersion, 25);
       assert.deepEqual(reopened.migration?.applied, []);
-      assertMigrationRecords(reopened, DEFAULT_V1_TO_V24);
+      assertMigrationRecords(reopened, DEFAULT_V1_TO_V25);
       assert.equal(
         reopened
           .prepare("SELECT payload FROM aletheia_phase1_sentinel WHERE id = 1")
@@ -1548,15 +1556,57 @@ try {
     }
   }
 
+  const v24TaskEventUpgradePath = path.join(root, "v24-task-events.db");
+  const v24TaskEventBootstrap = new WorkspaceDatabase(v24TaskEventUpgradePath, {
+    migrations: LEGACY_V1_TO_V6,
+  });
+  seedRuntimeValidPrefixFixture(v24TaskEventBootstrap);
+  v24TaskEventBootstrap.close();
+  const v24TaskEventDatabase = new WorkspaceDatabase(v24TaskEventUpgradePath, {
+    migrations: DEFAULT_V1_TO_V24,
+  });
+  const v24EventCount = Number(
+    v24TaskEventDatabase
+      .prepare("SELECT count(*) AS count FROM assistant_generation_events")
+      .get()?.count ?? -1,
+  );
+  assert.equal(v24TaskEventDatabase.migration?.currentVersion, 24);
+  v24TaskEventDatabase.close();
+  const v25TaskEventDatabase = new WorkspaceDatabase(v24TaskEventUpgradePath);
+  try {
+    assert.equal(v25TaskEventDatabase.migration?.currentVersion, 25);
+    assert.deepEqual(
+      v25TaskEventDatabase.migration?.applied.map((record) => record.version),
+      [25],
+    );
+    assert.equal(
+      Number(
+        v25TaskEventDatabase
+          .prepare("SELECT count(*) AS count FROM assistant_generation_events")
+          .get()?.count ?? -1,
+      ),
+      v24EventCount,
+    );
+    const v25EventSql = tableSql(
+      v25TaskEventDatabase,
+      "assistant_generation_events",
+    );
+    assert.match(v25EventSql, /'task_plan'/);
+    assert.match(v25EventSql, /'task_step_update'/);
+    assertMigrationRecords(v25TaskEventDatabase, DEFAULT_V1_TO_V25);
+  } finally {
+    v25TaskEventDatabase.close();
+  }
+
   const newInstall = createUnmigratedDatabase("new-install.db");
   try {
     const migration = runWorkspaceMigrations(newInstall, WORKSPACE_MIGRATIONS);
-    assert.equal(migration.currentVersion, 24);
+    assert.equal(migration.currentVersion, 25);
     assert.deepEqual(
       migration.applied.map((record) => record.version),
       [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24,
+        21, 22, 23, 24, 25,
       ],
     );
     assert.ok(schemaNames(newInstall, "table").has("workspace_blob_records"));
@@ -1650,7 +1700,7 @@ try {
       0,
       "v18 never seeds a provider profile or local credential metadata",
     );
-    assertMigrationRecords(newInstall, DEFAULT_V1_TO_V24);
+    assertMigrationRecords(newInstall, DEFAULT_V1_TO_V25);
   } finally {
     newInstall.close();
   }
@@ -1871,7 +1921,7 @@ try {
   );
   const encryptedGateUpgrade = new WorkspaceDatabase(plaintextGatePath);
   try {
-    assert.equal(encryptedGateUpgrade.migration?.currentVersion, 24);
+    assert.equal(encryptedGateUpgrade.migration?.currentVersion, 25);
     assert.equal(
       encryptedGateUpgrade.migration?.capabilities.sqlcipherEncrypted,
       true,
@@ -1903,7 +1953,7 @@ try {
         .get()?.payload,
       "legacy-data-must-survive",
     );
-    assertMigrationRecords(encryptedGateUpgrade, DEFAULT_V1_TO_V24);
+    assertMigrationRecords(encryptedGateUpgrade, DEFAULT_V1_TO_V25);
   } finally {
     encryptedGateUpgrade.close();
   }
@@ -1951,12 +2001,12 @@ try {
       encryptedDatabase.migration?.capabilities.sqlcipherEncrypted,
       true,
     );
-    assert.equal(encryptedDatabase.migration?.currentVersion, 24);
+    assert.equal(encryptedDatabase.migration?.currentVersion, 25);
     assert.equal(
       encryptedDatabase
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      24,
+      25,
     );
   } finally {
     encryptedDatabase.close();
@@ -1983,12 +2033,12 @@ try {
       true,
       "the wrapper-owned migration entrypoint preserves exact SQLCipher attestation",
     );
-    assert.equal(encryptedManualRun.currentVersion, 24);
+    assert.equal(encryptedManualRun.currentVersion, 25);
     assert.equal(
       encryptedManualDatabase
         .prepare("SELECT count(*) AS count FROM workspace_schema_migrations")
         .get()?.count,
-      24,
+      25,
     );
   } finally {
     encryptedManualDatabase.close();
@@ -2002,13 +2052,13 @@ try {
     JSON.stringify(
       {
         ok: true,
-        suite: "vera-workspace-migration-audit-v24",
-        current_version: 24,
+        suite: "vera-workspace-migration-audit-v25",
+        current_version: 25,
         encrypted_driver: encryptedStatus!.encrypted,
         checks: [
           "legacy opaque and incomplete-matrix fixtures remain explicit v1-v6",
-          "runtime-valid v1, v2, v3, and v6 prefixes upgrade through default v24",
-          "clean default v24 install",
+          "runtime-valid v1, v2, v3, and v6 prefixes upgrade through default v25",
+          "clean default v25 install",
           "v9 connection readiness schema applies on SQLite and SQLCipher",
           "v10 immutable Assistant durable event outbox applies on SQLite and SQLCipher",
           "v11 immutable Project source snapshots and citation anchors",
@@ -2025,6 +2075,7 @@ try {
           "v22 Matter/job-owned legal research replay and Assistant authority source bindings",
           "v23 immutable Tabular Review evidence handoffs to Studio contract-review Drafts",
           "v24 strict durable Assistant contract-review action and UI event expansion",
+          "v25 lossless durable Assistant task-plan and step-update event expansion",
           "ordered SHA-256 checksums and idempotent rerun",
           "failed migration DDL and record roll back atomically",
           "legacy Aletheia sentinel table and row preserved",
@@ -2042,7 +2093,7 @@ try {
           "cross-project, ownership, cycle, type, and cell triggers",
           "SQLite and SQLCipher integrity checks",
           "plaintext destructive migration fails byte-exact before SQLCipher",
-          "offline SQLCipher migration enables trusted default v7-v24 upgrade",
+          "offline SQLCipher migration enables trusted default v7-v25 upgrade",
           "encrypted v6 missing matrix fails transactionally before v7 markers",
           "encrypted v6 opaque tabular IDs fail the frozen validator transactionally",
         ],

@@ -176,6 +176,36 @@ export type AssistantEvent =
       route: string;
       document_count: number;
     }
+  /**
+   * A small, durable execution plan. The runtime owns actual task completion;
+   * this is deliberately display-only and never lets the model claim an
+   * artifact exists.
+   */
+  | {
+      type: "task_plan";
+      plan_id: string;
+      goal: string;
+      steps: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "in_progress" | "completed" | "failed";
+      }>;
+      deliverables?: Array<{
+        /** `tabular_review` is accepted for pre-v1 runtime events. */
+        kind: "tabular_review" | "review" | "xlsx" | "draft" | "docx";
+        label: string;
+        status: "pending" | "completed";
+        artifact_id?: string;
+        route?: string;
+      }>;
+    }
+  | {
+      type: "task_step_update";
+      plan_id: string;
+      step_id: string;
+      status: "in_progress" | "completed" | "failed";
+      detail?: string;
+    }
   | {
       type: "doc_edited";
       filename: string;
@@ -356,11 +386,7 @@ export type LegalAuthorityCitationAnnotation = {
   ref: number;
   title: string;
   source_type:
-    | "statute"
-    | "regulation"
-    | "judicial_interpretation"
-    | "case"
-    | "guidance";
+    "statute" | "regulation" | "judicial_interpretation" | "case" | "guidance";
   locator: {
     article?: string;
     section?: string;

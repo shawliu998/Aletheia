@@ -175,7 +175,7 @@ async function run() {
   try {
     process.env.ALETHEIA_DATABASE_ENCRYPTION = "metadata_plaintext";
     database = new WorkspaceDatabase(path.join(root, "workspace.sqlite"));
-    assert.equal(database.migration?.currentVersion, 24);
+    assert.equal(database.migration?.currentVersion, 25);
 
     const projects = new ProjectsRepository(database);
     projects.create({
@@ -901,12 +901,8 @@ async function run() {
       }),
     );
     assert.deepEqual(
-      (
-        await studio.getDocument(
-          PROJECT_ID,
-          String(legalDraftResult.draftId),
-        )
-      ).version.citationAnchorIds,
+      (await studio.getDocument(PROJECT_ID, String(legalDraftResult.draftId)))
+        .version.citationAnchorIds,
       [legalAnchor.id],
       "only a legal authority anchor verified in this job attempt may bind to the Draft",
     );

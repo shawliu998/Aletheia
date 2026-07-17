@@ -22,6 +22,7 @@ import { DOCUMENT_STUDIO_TEMPLATES_V21_MIGRATION } from "./v21DocumentStudioTemp
 import { LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION } from "./v22LegalResearchPersistence";
 import { TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION } from "./v23TabularReviewStudioHandoffs";
 import { ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION } from "./v24AssistantContractReview";
+import { ASSISTANT_TASK_EVENTS_V25_MIGRATION } from "./v25AssistantTaskEvents";
 
 export {
   detectWorkspaceDatabaseCapabilities,
@@ -61,6 +62,7 @@ export { DOCUMENT_STUDIO_TEMPLATES_V21_MIGRATION } from "./v21DocumentStudioTemp
 export { LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION } from "./v22LegalResearchPersistence";
 export { TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION } from "./v23TabularReviewStudioHandoffs";
 export { ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION } from "./v24AssistantContractReview";
+export { ASSISTANT_TASK_EVENTS_V25_MIGRATION } from "./v25AssistantTaskEvents";
 
 export const WORKSPACE_MIGRATIONS = [
   INITIAL_WORKSPACE_MIGRATION,
@@ -87,4 +89,5 @@ export const WORKSPACE_MIGRATIONS = [
   LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION,
   TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION,
   ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION,
+  ASSISTANT_TASK_EVENTS_V25_MIGRATION,
 ] as const;
