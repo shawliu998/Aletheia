@@ -2,14 +2,11 @@
 
 Date: 2026-07-16
 
-Status: active implementation plan
+Status: Vera General Legal Agent Preview
 
-Baseline: `shawliu998/Vera` `main` at
-`5611699e46552a20bf42ce84396a8e65aa139d16`
+Baseline branch: `shawliu998/Vera` `main`
 
-Feature branch: `feat/local-legal-work-agent`
-
-Workspace schema: v22
+Workspace schema: v25
 
 ## 1. Product objective
 
@@ -29,6 +26,22 @@ Matter -> documents/OCR -> Assistant task -> local document tools
 This work does not introduce a second database, document system, job runtime,
 model gateway, editor, active Legacy product, or renderer-side provider client.
 
+## Current Assistant productization slice
+
+The Matter Assistant exposes four starters: contract review, custom extraction,
+case timeline, and legal memo. Custom extraction uses a local editable field
+set of 1–15 fields, seeded with six defaults; both custom extraction and case
+timeline resolve to the canonical durable Tabular Review extraction path rather
+than a second table or artifact type. The runtime's durable task plan is shown
+in chat. When it creates a Review or Draft, its result card can directly
+download XLSX or the event-pinned DOCX version in the browser and opens the
+object through the active Matter/Project route adapter.
+
+This is not a real-model smoke claim. It still requires explicitly selected
+current documents and a ready model; extraction and Draft output remain
+reviewable AI aids, not legal conclusions or approvals. The production legal
+provider activation gate remains closed.
+
 ## 2. Audited current baseline
 
 | Capability                 | Current code-backed state                                                                                                                                                                                                                                                                                 |
@@ -47,7 +60,7 @@ model gateway, editor, active Legacy product, or renderer-side provider client.
 | Document Studio            | Blank/Assistant/Workflow drafts, canonical Markdown/TipTap projection, CAS save, immutable versions, restore-as-new-version, citations, bounded AI suggestions, accept/reject/stale checks, and DOCX import/export are wired.                                                                             |
 | Matter Drafts              | Schema v20 stores typed Draft origin metadata in the existing Studio create transaction. The Matter Drafts workbench lists real versions, current citations and pending suggestions, and reuses existing create/open/export/delete paths. Legacy Drafts remain unmodified and project as general/unknown. |
 | Legal document templates   | Schema v21 stores eight immutable built-in templates plus Project-local editable copies and bounded DraftPlans. The Matter Drafts workbench previews real section plans and creates the canonical existing Studio Draft; no second editor or document store is introduced.                                |
-| Legal research persistence | Schema v22 owns bounded Matter/job/attempt research sessions, exact replay metadata, captured-read links, and Assistant authority-message bindings. It stores no credential, URL, provider payload, or unbounded source text.                                                                              |
+| Legal research persistence | Schema v22 owns bounded Matter/job/attempt research sessions, exact replay metadata, captured-read links, and Assistant authority-message bindings. It stores no credential, URL, provider payload, or unbounded source text.                                                                             |
 | Backup and restore         | Encrypted backup, restore preflight, restore, failure recovery, and fail-closed desktop startup are wired.                                                                                                                                                                                                |
 | Packaged restart           | Current packaged E2E proves Matter/Profile/Policy/model/chat/document/source persistence and separately proves OCR -> snapshot/anchor -> Studio -> DOCX -> restart. It does not yet prove the new legal-research-to-Draft vertical.                                                                       |
 

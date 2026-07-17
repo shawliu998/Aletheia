@@ -17,13 +17,17 @@ Assistant / Matters / Workflows / Review / Settings
 Current core:
 Mike-derived local workspace + Vera encrypted desktop runtime
 
+Current branch:
+main
+
+Current schema:
+v25
+
+Current milestone:
+Vera General Legal Agent Preview
+
 Legacy:
 default-disabled compatibility and reusable implementation source only
-
-Next milestone:
-Agent Tool Expansion
-+ One Authorized Legal Research Provider
-+ Agent-to-Draft End-to-End Vertical
 ```
 
 The active technical owner remains `projects.id`; a Matter is a Project with
@@ -32,9 +36,8 @@ Documents, Assistant, Review, Workflows, Drafts, and Settings. Review exposes
 only already-wired capabilities; the product does not create empty review
 systems to fill navigation.
 
-The merged `main` baseline is `5611699e`; the active
-`feat/local-legal-work-agent` implementation is additive through Workspace
-schema v22. It includes one Electron lifecycle, one loopback Next.js renderer, one
+The active product baseline is `main` on Workspace schema v25. It includes one
+Electron lifecycle, one loopback Next.js renderer, one
 loopback Express backend, one SQLCipher Workspace database, one encrypted blob
 store, one durable job runtime, one model gateway, Source Snapshots/Citation
 Anchors, and one Document Studio. OpenAI, DeepSeek, Anthropic, Gemini, and
@@ -60,6 +63,17 @@ DraftPlan previews, and Project-scoped template copy/edit/create APIs. A
 deterministic boundary audit proves that legal-authority citations still fail
 closed at the document-only Assistant source model; it does not claim the full
 legal-research-to-Draft vertical or a live Provider is complete.
+
+The Assistant now presents four Matter-ready starters: contract review, custom
+extraction, case timeline, and legal memo. Custom extraction opens a local
+field editor with 1–15 fields (six evidence-oriented defaults); custom and
+timeline requests use the canonical durable Tabular Review extraction path.
+The durable task plan is visible in the chat, and completed Review/Draft cards
+can directly download XLSX/DOCX from the browser while retaining the current
+Matter or Project canonical open route. These are bounded local extraction and
+drafting aids: they require selected current documents and a ready model, do
+not make legal conclusions or approvals, and do not establish a live-model
+smoke or provider acceptance.
 
 The executable plan for the next vertical is
 [docs/local_legal_work_agent_vertical.md](docs/local_legal_work_agent_vertical.md).

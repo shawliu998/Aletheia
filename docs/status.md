@@ -5,10 +5,8 @@ tests take precedence over historical programme text below.
 
 ## Current product — local general legal workspace
 
-Status on 2026-07-17: Matter convergence is merged to `main` at
-`5611699e46552a20bf42ce84396a8e65aa139d16`; the active feature branch now uses
-Workspace schema v24. The active
-implementation branch for the next vertical is `feat/local-legal-work-agent`.
+Status on 2026-07-17: the product baseline is `main`, Workspace schema v25,
+at the **Vera General Legal Agent Preview** milestone.
 
 ```text
 Current product:
@@ -20,13 +18,17 @@ Assistant / Matters / Workflows / Review / Settings
 Current core:
 Mike-derived local workspace + Vera encrypted desktop runtime
 
+Current branch:
+main
+
+Current schema:
+v25
+
+Current milestone:
+Vera General Legal Agent Preview
+
 Legacy:
 default-disabled compatibility and reusable implementation source only
-
-Next milestone:
-Agent Tool Expansion
-+ One Authorized Legal Research Provider
-+ Agent-to-Draft End-to-End Vertical
 ```
 
 The active product is a single-user, local-first macOS workspace. Electron
@@ -45,6 +47,13 @@ Implemented and wired in source:
   document citations;
 - Matter Assistant contract-review orchestration over explicit current
   attachments, with durable Tabular Review progress and Studio result cards;
+- four Matter-ready Assistant starters: contract review, custom extraction,
+  case timeline, and legal memo; custom extraction has a local 1–15 field
+  editor with six defaults, while custom/timeline both resolve to the canonical
+  durable Tabular Review extraction path;
+- durable Assistant task plans are visible in chat; completed Review and Draft
+  cards directly download XLSX/DOCX in the browser and open through the active
+  Matter/Project route adapter;
 - OpenAI, DeepSeek, Anthropic, Gemini, and bounded OpenAI-compatible profiles;
 - Workflow and Tabular durable execution using the same local Job Runtime;
 - Document Studio CAS save, immutable versions, restore, exact suggestions,
@@ -122,6 +131,11 @@ verified model, run the existing durable Tabular jobs, inspect persisted
 flags/sources, and export through the existing path. These outputs are
 AI-generated extraction drafts requiring lawyer review; they are not approved
 legal conclusions, a risk-scoring rubric, or a unified Review Center.
+
+The starter and direct-download surface is a local UI/productization slice, not
+proof of a real-model smoke. It requires selected current documents and a ready
+model; extraction output and Drafts remain reviewable AI aids, do not imply
+approval, and browser download is the currently wired delivery path.
 
 No production legal provider is claimed ready. The active Workspace now owns a
 v18 YuanDian Provider Hub, Keychain-only credential operations, authenticated
