@@ -10,6 +10,9 @@ import type {
   AssistantModelToolCall,
   AssistantToolContext,
   AssistantToolDefinition,
+  AssistantToolExecutionResult,
+  AssistantToolLifecycleInput,
+  AssistantToolLifecycleResult,
 } from "./assistantRuntime";
 import type { WorkspaceAssistantActionLedger } from "./assistantActionLedger";
 import type { AssistantToolModule } from "./assistantToolRegistry";
@@ -95,6 +98,7 @@ type GenerationState = {
   context: AssistantToolContext;
   emittedReviewIds: Set<string>;
   emittedDraftIds: Set<string>;
+  settledReviewIds: Set<string>;
   cancellation: null | Readonly<{
     reviewId: string;
     signal: AbortSignal;
@@ -134,7 +138,9 @@ function throwIfAborted(signal: AbortSignal) {
 }
 
 function deterministicUuid(material: string) {
-  const bytes = Buffer.from(createHash("sha256").update(material).digest().subarray(0, 16));
+  const bytes = Buffer.from(
+    createHash("sha256").update(material).digest().subarray(0, 16),
+  );
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
@@ -158,7 +164,9 @@ function attachedSnapshots(context: AssistantToolContext) {
       "Attach between 2 and 50 current Matter documents for contract review.",
     );
   }
-  if (new Set(documents.map((item) => item.documentId)).size !== documents.length) {
+  if (
+    new Set(documents.map((item) => item.documentId)).size !== documents.length
+  ) {
     throw new AssistantContractReviewToolError(
       "Attached contract review documents must be unique.",
     );
@@ -166,7 +174,10 @@ function attachedSnapshots(context: AssistantToolContext) {
   return documents;
 }
 
-function actionBinding(context: AssistantToolContext, preset: ContractReviewPreset) {
+function actionBinding(
+  context: AssistantToolContext,
+  preset: ContractReviewPreset,
+) {
   if (!context.projectId) throw new AssistantContractReviewToolError();
   const documents = attachedSnapshots(context);
   const input = {
@@ -177,9 +188,7 @@ function actionBinding(context: AssistantToolContext, preset: ContractReviewPres
     modelProfileId: context.modelProfileId,
     documents,
   } as const;
-  const reviewId = deterministicUuid(
-    JSON.stringify([context.jobId, input]),
-  );
+  const reviewId = deterministicUuid(JSON.stringify([context.jobId, input]));
   return {
     projectId: context.projectId,
     documents,
@@ -200,8 +209,26 @@ function terminal(status: TabularReviewDetail["review"]["status"]) {
 
 function safeError(error: TabularReviewDetail["cells"][number]["error"]) {
   return error
-    ? { code: error.code, message: error.message.slice(0, 1_000), retryable: error.retryable }
+    ? {
+        code: error.code,
+        message: error.message.slice(0, 1_000),
+        retryable: error.retryable,
+      }
     : null;
+}
+
+function asynchronousResult(result: AssistantToolExecutionResult) {
+  try {
+    const value = JSON.parse(result.content) as Record<string, unknown>;
+    if (typeof value.asynchronous !== "boolean") {
+      throw new Error("missing asynchronous state");
+    }
+    return value.asynchronous;
+  } catch (error) {
+    throw new AssistantContractReviewToolError(
+      "Contract review returned an invalid lifecycle result.",
+    );
+  }
 }
 
 /**
@@ -209,9 +236,7 @@ function safeError(error: TabularReviewDetail["cells"][number]["error"]) {
  * presets, while the server owns document scope, ids, cell jobs, replay, and
  * the v23 evidence-to-Studio handoff.
  */
-export class WorkspaceAssistantContractReviewToolModule
-  implements AssistantToolModule
-{
+export class WorkspaceAssistantContractReviewToolModule implements AssistantToolModule {
   readonly id = ASSISTANT_CONTRACT_REVIEW_TOOL_MODULE_ID;
   readonly adapterId = ASSISTANT_CONTRACT_REVIEW_TOOL_ADAPTER_ID;
   private readonly generations = new Map<string, GenerationState>();
@@ -219,7 +244,10 @@ export class WorkspaceAssistantContractReviewToolModule
   private readonly maxWaitMs: number;
   private readonly initialPollMs: number;
   private readonly maxPollMs: number;
-  private readonly delay: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  private readonly delay: (
+    milliseconds: number,
+    signal: AbortSignal,
+  ) => Promise<void>;
 
   constructor(
     private readonly database: WorkspaceDatabaseAdapter,
@@ -252,7 +280,9 @@ export class WorkspaceAssistantContractReviewToolModule
       !Number.isSafeInteger(this.maxPollMs) ||
       this.maxPollMs < this.initialPollMs
     ) {
-      throw new Error("Assistant contract-review polling configuration is invalid.");
+      throw new Error(
+        "Assistant contract-review polling configuration is invalid.",
+      );
     }
     this.delay =
       options.delay ??
@@ -293,6 +323,7 @@ export class WorkspaceAssistantContractReviewToolModule
       context,
       emittedReviewIds: new Set(),
       emittedDraftIds: new Set(),
+      settledReviewIds: new Set(),
       cancellation: null,
     });
     while (this.generations.size > MAX_TRACKED_GENERATIONS) {
@@ -302,7 +333,9 @@ export class WorkspaceAssistantContractReviewToolModule
       this.generations.delete(key);
     }
     while (this.highestAttempts.size > MAX_TRACKED_GENERATIONS) {
-      const key = this.highestAttempts.keys().next().value as string | undefined;
+      const key = this.highestAttempts.keys().next().value as
+        | string
+        | undefined;
       if (!key) break;
       this.highestAttempts.delete(key);
     }
@@ -363,7 +396,8 @@ export class WorkspaceAssistantContractReviewToolModule
     const upstreamId =
       detail.review.workflowId === null
         ? null
-        : this.workflows.getMikeBuiltinMapping(detail.review.workflowId)?.upstreamId ?? null;
+        : (this.workflows.getMikeBuiltinMapping(detail.review.workflowId)
+            ?.upstreamId ?? null);
     if (
       detail.review.id !== binding.reviewId ||
       detail.review.projectId !== binding.projectId ||
@@ -378,7 +412,10 @@ export class WorkspaceAssistantContractReviewToolModule
     }
     this.assertCurrentDocuments(binding.projectId, binding.documents);
     const expectedVersions = new Map(
-      binding.documents.map((document) => [document.documentId, document.versionId]),
+      binding.documents.map((document) => [
+        document.documentId,
+        document.versionId,
+      ]),
     );
     for (const cell of detail.cells) {
       if (!cell.jobId) {
@@ -397,7 +434,10 @@ export class WorkspaceAssistantContractReviewToolModule
         .get(cell.jobId);
       let payload: Record<string, unknown>;
       try {
-        payload = JSON.parse(String(job?.payload_json)) as Record<string, unknown>;
+        payload = JSON.parse(String(job?.payload_json)) as Record<
+          string,
+          unknown
+        >;
       } catch {
         throw new AssistantContractReviewToolError(
           "Contract review cell job lineage is invalid.",
@@ -446,13 +486,31 @@ export class WorkspaceAssistantContractReviewToolModule
     let detail = this.tabular().get(reviewId);
     const startedAt = Date.now();
     let pollMs = this.initialPollMs;
-    while (!terminal(detail.review.status) && Date.now() - startedAt < this.maxWaitMs) {
+    while (
+      !terminal(detail.review.status) &&
+      Date.now() - startedAt < this.maxWaitMs
+    ) {
       throwIfAborted(signal);
       const remaining = this.maxWaitMs - (Date.now() - startedAt);
       if (remaining <= 0) break;
       await this.delay(Math.min(pollMs, remaining), signal);
       detail = this.tabular().get(reviewId);
       pollMs = Math.min(this.maxPollMs, pollMs * 2);
+    }
+    return detail;
+  }
+
+  private async waitForSettlementTerminal(
+    reviewId: string,
+    signal: AbortSignal,
+  ) {
+    let detail = this.tabular().get(reviewId);
+    while (!terminal(detail.review.status)) {
+      throwIfAborted(signal);
+      detail = await this.waitForTerminal(reviewId, signal);
+      if (!terminal(detail.review.status) && this.maxWaitMs === 0) {
+        await this.delay(this.initialPollMs, signal);
+      }
     }
     return detail;
   }
@@ -466,7 +524,12 @@ export class WorkspaceAssistantContractReviewToolModule
   ) {
     this.assertReviewBinding(detail, context, preset);
     const events = this.reviewEvent(state, detail);
-    const counts = { total: detail.cells.length, complete: 0, failed: 0, cancelled: 0 };
+    const counts = {
+      total: detail.cells.length,
+      complete: 0,
+      failed: 0,
+      cancelled: 0,
+    };
     for (const cell of detail.cells) {
       if (cell.status === "complete") counts.complete += 1;
       if (cell.status === "failed") counts.failed += 1;
@@ -500,7 +563,10 @@ export class WorkspaceAssistantContractReviewToolModule
         progress: counts,
         error:
           detail.review.status === "failed"
-            ? safeError(detail.cells.find((cell) => cell.status === "failed")?.error ?? null)
+            ? safeError(
+                detail.cells.find((cell) => cell.status === "failed")?.error ??
+                  null,
+              )
             : null,
       },
       memo:
@@ -517,6 +583,9 @@ export class WorkspaceAssistantContractReviewToolModule
         ? "Use the returned Review and Studio routes; binary XLSX/DOCX exports are intentionally not placed in model context."
         : "Call get_contract_review later with this review_id. Do not create another review.",
     };
+    if (terminal(detail.review.status)) {
+      state.settledReviewIds.add(detail.review.id);
+    }
     return { content: JSON.stringify(payload), events };
   }
 
@@ -640,16 +709,27 @@ export class WorkspaceAssistantContractReviewToolModule
       resourceType: "tabular_review",
       resourceId: binding.reviewId,
     });
-    return this.withCascadeCancellation(state, binding.reviewId, signal, async () => {
-      if (!terminal(detail.review.status)) {
-        detail = this.tabular().runReview(binding.reviewId).review;
-        detail = await this.waitForTerminal(binding.reviewId, signal);
-      }
-      return {
-        value: await this.result(detail, context, input.preset, state, signal),
-        terminal: terminal(detail.review.status),
-      };
-    });
+    return this.withCascadeCancellation(
+      state,
+      binding.reviewId,
+      signal,
+      async () => {
+        if (!terminal(detail.review.status)) {
+          detail = this.tabular().runReview(binding.reviewId).review;
+          detail = await this.waitForTerminal(binding.reviewId, signal);
+        }
+        return {
+          value: await this.result(
+            detail,
+            context,
+            input.preset,
+            state,
+            signal,
+          ),
+          terminal: terminal(detail.review.status),
+        };
+      },
+    );
   }
 
   private async getReview(
@@ -688,13 +768,134 @@ export class WorkspaceAssistantContractReviewToolModule
       );
     }
     this.assertCurrentDocuments(binding.projectId, binding.documents);
-    return this.withCascadeCancellation(state, input.review_id, signal, async () => {
-      const detail = await this.waitForTerminal(input.review_id, signal);
+    return this.withCascadeCancellation(
+      state,
+      input.review_id,
+      signal,
+      async () => {
+        const detail = await this.waitForTerminal(input.review_id, signal);
+        return {
+          value: await this.result(detail, context, preset!, state, signal),
+          terminal: terminal(detail.review.status),
+        };
+      },
+    );
+  }
+
+  private presetForReview(
+    context: AssistantToolContext,
+    reviewId: string,
+  ): ContractReviewPreset {
+    for (const preset of Object.keys(PRESETS) as ContractReviewPreset[]) {
+      if (actionBinding(context, preset).reviewId === reviewId) return preset;
+    }
+    throw new AssistantContractReviewToolError(
+      "Contract review id is not owned by this Assistant generation.",
+    );
+  }
+
+  private async settleReview(
+    context: AssistantToolContext,
+    preset: ContractReviewPreset,
+    state: GenerationState,
+    signal: AbortSignal,
+  ) {
+    const binding = actionBinding(context, preset);
+    const action = this.actions.get(context.jobId, binding.actionKey);
+    if (
+      !action ||
+      action.status !== "complete" ||
+      action.actionType !== "run_contract_review" ||
+      action.projectId !== context.projectId ||
+      action.resourceType !== "tabular_review" ||
+      action.resourceId !== binding.reviewId
+    ) {
+      throw new AssistantContractReviewToolError(
+        "Contract review lifecycle action is incomplete or invalid.",
+      );
+    }
+    this.assertCurrentDocuments(binding.projectId, binding.documents);
+    return this.withCascadeCancellation(
+      state,
+      binding.reviewId,
+      signal,
+      async () => {
+        const detail = await this.waitForSettlementTerminal(
+          binding.reviewId,
+          signal,
+        );
+        return {
+          value: await this.result(detail, context, preset, state, signal),
+          terminal: true,
+        };
+      },
+    );
+  }
+
+  async settleLifecycle(
+    input: AssistantToolLifecycleInput,
+  ): Promise<AssistantToolLifecycleResult | null> {
+    const state = this.generation(input.context);
+    if (input.phase === "after_execution") {
+      if (
+        input.call.name !== "run_contract_review" &&
+        input.call.name !== "get_contract_review"
+      ) {
+        throw new AssistantContractReviewToolError(
+          "Contract review lifecycle received an unrelated tool call.",
+        );
+      }
+      if (!asynchronousResult(input.result)) return null;
+      const preset =
+        input.call.name === "run_contract_review"
+          ? toolInput(RunInput, input.call.input).preset
+          : this.presetForReview(
+              input.context,
+              toolInput(GetInput, input.call.input).review_id,
+            );
+      const settled = await this.settleReview(
+        input.context,
+        preset,
+        state,
+        input.signal,
+      );
       return {
-        value: await this.result(detail, context, preset!, state, signal),
-        terminal: terminal(detail.review.status),
+        replacementContent: settled.content,
+        events: settled.events,
       };
-    });
+    }
+
+    const events: MikeAssistantStreamEvent[] = [];
+    const attachedDocumentIds = input.context.documents
+      .filter((document) => document.attached)
+      .map((document) => document.documentId);
+    if (
+      attachedDocumentIds.length < 2 ||
+      attachedDocumentIds.length > 50 ||
+      new Set(attachedDocumentIds).size !== attachedDocumentIds.length
+    ) {
+      // No action could have passed run_contract_review for this immutable
+      // generation snapshot, so there is no durable review to recover.
+      return null;
+    }
+    for (const preset of Object.keys(PRESETS) as ContractReviewPreset[]) {
+      const binding = actionBinding(input.context, preset);
+      if (state.settledReviewIds.has(binding.reviewId)) continue;
+      if (!this.actions.get(input.context.jobId, binding.actionKey)) continue;
+      // Re-enter run through the durable ledger so a crash after reservation,
+      // creation, or completion is recovered under the current fenced attempt.
+      const recovered = await this.run(input.context, { preset }, input.signal);
+      events.push(...(recovered.events ?? []));
+      if (!asynchronousResult(recovered)) continue;
+      const settled = await this.settleReview(
+        input.context,
+        preset,
+        state,
+        input.signal,
+      );
+      events.push(...(settled.events ?? []));
+    }
+    return events.length > 0 ? { events } : null;
   }
 
   execute(input: {

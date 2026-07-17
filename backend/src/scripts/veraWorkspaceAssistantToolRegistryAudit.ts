@@ -51,6 +51,7 @@ function module(input: {
   tools?: readonly AssistantToolDefinition[];
   assertModelUse?: AssistantToolModule["assertModelUse"];
   execute?: AssistantToolModule["execute"];
+  settleLifecycle?: AssistantToolModule["settleLifecycle"];
 }): AssistantToolModule {
   return {
     id: input.id,
@@ -62,6 +63,7 @@ function module(input: {
     async execute(execution) {
       return input.execute?.(execution) ?? { content: "ok" };
     },
+    settleLifecycle: input.settleLifecycle,
   };
 }
 
@@ -418,6 +420,86 @@ async function assertAbortAndErrorsPassThrough() {
   assert.equal(receivedSignal, liveSignal);
 }
 
+async function assertLifecycleRoutingAndFencing() {
+  const calls: string[] = [];
+  const signal = new AbortController().signal;
+  const first = module({
+    id: "lifecycle-first",
+    tools: [LIST_TOOL],
+    async settleLifecycle(input) {
+      calls.push(`first:${input.phase}:${input.signal === signal}`);
+      return input.phase === "after_execution"
+        ? { replacementContent: "settled", events: [] }
+        : null;
+    },
+  });
+  const second = module({
+    id: "lifecycle-second",
+    tools: [READ_TOOL],
+    async settleLifecycle(input) {
+      calls.push(`second:${input.phase}:${input.signal === signal}`);
+      return null;
+    },
+  });
+  const registry = new WorkspaceAssistantToolRegistry([first, second]);
+  const attemptOne = context("lifecycle-job", 1);
+  await registry.registeredTools(attemptOne);
+  assert.deepEqual(
+    await registry.settleLifecycle({
+      phase: "after_execution",
+      context: attemptOne,
+      call: call("list_documents"),
+      result: { content: "pending" },
+      signal,
+    }),
+    { replacementContent: "settled", events: [] },
+  );
+  assert.deepEqual(calls, ["first:after_execution:true"]);
+  assert.equal(
+    await registry.settleLifecycle({
+      phase: "before_final",
+      context: attemptOne,
+      signal,
+    }),
+    null,
+  );
+  assert.deepEqual(calls, [
+    "first:after_execution:true",
+    "first:before_final:true",
+    "second:before_final:true",
+  ]);
+
+  const attemptTwo = context("lifecycle-job", 2);
+  await registry.registeredTools(attemptTwo);
+  await assert.rejects(
+    registry.settleLifecycle({
+      phase: "before_final",
+      context: attemptOne,
+      signal,
+    }),
+    /registration is missing/i,
+  );
+
+  const invalid = new WorkspaceAssistantToolRegistry([
+    module({
+      id: "invalid-final-replacement",
+      async settleLifecycle() {
+        return { replacementContent: "not allowed" };
+      },
+    }),
+  ]);
+  const invalidContext = context("invalid-final-lifecycle");
+  await invalid.registeredTools(invalidContext);
+  await assert.rejects(
+    invalid.settleLifecycle({
+      phase: "before_final",
+      context: invalidContext,
+      signal,
+    }),
+    /cannot replace tool content/i,
+  );
+}
+
 async function assertModelPolicyAndBoundedEviction() {
   const asserted: string[] = [];
   const registry = new WorkspaceAssistantToolRegistry(
@@ -478,6 +560,7 @@ async function main() {
   await assertConcurrentOlderAttemptCannotReopenRoute();
   await assertCompletedNewerAttemptRejectsLateOlderRegistration();
   await assertAbortAndErrorsPassThrough();
+  await assertLifecycleRoutingAndFencing();
   await assertModelPolicyAndBoundedEviction();
   console.log("Vera Workspace Assistant Tool Registry audit passed.");
 }

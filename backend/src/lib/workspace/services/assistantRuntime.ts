@@ -310,6 +310,34 @@ export type AssistantToolContext = Readonly<{
   legalAuthorityEvidence?: readonly AssistantLegalAuthorityEvidence[];
 }>;
 
+export type AssistantToolExecutionResult = Readonly<{
+  content: string;
+  events?: readonly MikeAssistantStreamEvent[];
+  sourceContext?: readonly AssistantRetrievalChunk[];
+  legalAuthoritySourceContext?: readonly AssistantLegalAuthorityEvidence[];
+}>;
+
+export type AssistantToolLifecycleInput =
+  | Readonly<{
+      phase: "after_execution";
+      context: AssistantToolContext;
+      call: AssistantModelToolCall;
+      result: AssistantToolExecutionResult;
+      signal: AbortSignal;
+    }>
+  | Readonly<{
+      phase: "before_final";
+      context: AssistantToolContext;
+      signal: AbortSignal;
+    }>;
+
+export type AssistantToolLifecycleResult = Readonly<{
+  /** Replaces only the current tool result before the next model turn. */
+  replacementContent?: string;
+  /** Additional durable tool events produced while settlement completes. */
+  events?: readonly MikeAssistantStreamEvent[];
+}>;
+
 export interface AssistantToolPort {
   /** Revalidates snapshot payload-use policy immediately before model input. */
   assertModelUse?(context: AssistantToolContext): void | Promise<void>;
@@ -322,12 +350,16 @@ export interface AssistantToolPort {
     context: AssistantToolContext;
     call: AssistantModelToolCall;
     signal: AbortSignal;
-  }): Promise<{
-    content: string;
-    events?: readonly MikeAssistantStreamEvent[];
-    sourceContext?: readonly AssistantRetrievalChunk[];
-    legalAuthoritySourceContext?: readonly AssistantLegalAuthorityEvidence[];
-  }>;
+  }): Promise<AssistantToolExecutionResult>;
+
+  /**
+   * Settles module-owned durable work without asking the model to poll. The
+   * after-execution phase may replace the result sent to the next model turn;
+   * the final guard may only emit recovery events.
+   */
+  settleLifecycle?(
+    input: AssistantToolLifecycleInput,
+  ): Promise<AssistantToolLifecycleResult | null>;
 }
 
 export type AssistantLegalAuthoritySourceWrite = Readonly<{
@@ -948,6 +980,53 @@ export class AssistantRuntimeService {
       const toolCallsByName = new Map<AssistantToolName, number>();
       let finalTurn: AssistantModelTurn | null = null;
       let fullText = "";
+      const persistToolEvents = (
+        events: readonly MikeAssistantStreamEvent[] | undefined,
+      ) => {
+        if (events !== undefined && !Array.isArray(events)) {
+          throw new WorkspaceApiError(
+            502,
+            "JOB_FAILED",
+            "Assistant tool emitted invalid events.",
+          );
+        }
+        for (const event of events ?? []) {
+          const parsed = MikeAssistantStreamEventSchema.parse(event);
+          if (!TOOL_EVENT_TYPES.has(parsed.type)) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant tool emitted a non-tool event.",
+            );
+          }
+          if (
+            parsed.type === "draft_created" &&
+            (snapshot.payload.projectId === null ||
+              parsed.route !==
+                `/projects/${snapshot.payload.projectId}/documents/${parsed.draft_id}/studio`)
+          ) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant Draft event is outside the current Matter.",
+            );
+          }
+          if (
+            parsed.type === "tabular_review_created" &&
+            (snapshot.payload.projectId === null ||
+              parsed.route !==
+                `/projects/${snapshot.payload.projectId}/tabular-reviews/${parsed.review_id}`)
+          ) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant Tabular Review event is outside the current Matter.",
+            );
+          }
+          assertMikeSafePayload(parsed);
+          persistEvent(parsed);
+        }
+      };
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
         throwIfAborted(input.signal);
@@ -1102,6 +1181,32 @@ export class AssistantRuntimeService {
               "Assistant must use registered document tools before answering from snapshots.",
             );
           }
+          const finalSettlement = await this.options.tools.settleLifecycle?.({
+            phase: "before_final",
+            context: {
+              ...toolContext,
+              evidence: [...evidenceByChunk.values()],
+              legalAuthorityEvidence: [
+                ...legalAuthorityEvidenceByAnchor.values(),
+              ],
+            },
+            signal: input.signal,
+          });
+          throwIfAborted(input.signal);
+          this.assertClaim(snapshot, input);
+          if (
+            finalSettlement !== undefined &&
+            finalSettlement !== null &&
+            (typeof finalSettlement !== "object" ||
+              finalSettlement.replacementContent !== undefined)
+          ) {
+            throw new WorkspaceApiError(
+              502,
+              "JOB_FAILED",
+              "Assistant final lifecycle settlement is invalid.",
+            );
+          }
+          persistToolEvents(finalSettlement?.events);
           finalTurn = turn;
           break;
         }
@@ -1151,28 +1256,30 @@ export class AssistantRuntimeService {
           );
           const usedForName = toolCallsByName.get(call.name) ?? 0;
           const nameBudget = TOOL_CALL_BUDGETS[call.name];
-          const executed =
-            nameBudget !== undefined && usedForName >= nameBudget
-              ? {
-                  content: JSON.stringify({
-                    error: "tool_budget_exhausted",
-                    tool: call.name,
-                    limit: nameBudget,
-                    instruction:
-                      "Stop this activity, answer from evidence already read, and disclose the limitation.",
-                  }),
-                }
-              : await this.options.tools.execute({
-                  context: {
-                    ...toolContext,
-                    evidence: [...evidenceByChunk.values()],
-                    legalAuthorityEvidence: [
-                      ...legalAuthorityEvidenceByAnchor.values(),
-                    ],
-                  },
-                  call,
-                  signal: input.signal,
-                });
+          const executionContext: AssistantToolContext = {
+            ...toolContext,
+            evidence: [...evidenceByChunk.values()],
+            legalAuthorityEvidence: [
+              ...legalAuthorityEvidenceByAnchor.values(),
+            ],
+          };
+          const didExecute =
+            nameBudget === undefined || usedForName < nameBudget;
+          const executed: AssistantToolExecutionResult = didExecute
+            ? await this.options.tools.execute({
+                context: executionContext,
+                call,
+                signal: input.signal,
+              })
+            : {
+                content: JSON.stringify({
+                  error: "tool_budget_exhausted",
+                  tool: call.name,
+                  limit: nameBudget,
+                  instruction:
+                    "Stop this activity, answer from evidence already read, and disclose the limitation.",
+                }),
+              };
           if (nameBudget !== undefined && usedForName < nameBudget) {
             toolCallsByName.set(call.name, usedForName + 1);
           }
@@ -1198,42 +1305,7 @@ export class AssistantRuntimeService {
             );
           }
           assertMikeSafePayload(executed.content);
-          for (const event of executed.events ?? []) {
-            const parsed = MikeAssistantStreamEventSchema.parse(event);
-            if (!TOOL_EVENT_TYPES.has(parsed.type)) {
-              throw new WorkspaceApiError(
-                502,
-                "JOB_FAILED",
-                "Assistant tool emitted a non-tool event.",
-              );
-            }
-            if (
-              parsed.type === "draft_created" &&
-              (snapshot.payload.projectId === null ||
-                parsed.route !==
-                  `/projects/${snapshot.payload.projectId}/documents/${parsed.draft_id}/studio`)
-            ) {
-              throw new WorkspaceApiError(
-                502,
-                "JOB_FAILED",
-                "Assistant Draft event is outside the current Matter.",
-              );
-            }
-            if (
-              parsed.type === "tabular_review_created" &&
-              (snapshot.payload.projectId === null ||
-                parsed.route !==
-                  `/projects/${snapshot.payload.projectId}/tabular-reviews/${parsed.review_id}`)
-            ) {
-              throw new WorkspaceApiError(
-                502,
-                "JOB_FAILED",
-                "Assistant Tabular Review event is outside the current Matter.",
-              );
-            }
-            assertMikeSafePayload(parsed);
-            persistEvent(parsed);
-          }
+          persistToolEvents(executed.events);
           const sourceContext = validateSourceContext(
             executed.sourceContext,
             snapshot,
@@ -1275,6 +1347,58 @@ export class AssistantRuntimeService {
             toolCallId: call.id,
             content: executed.content,
           });
+          if (didExecute && this.options.tools.settleLifecycle) {
+            const settlement = await this.options.tools.settleLifecycle({
+              phase: "after_execution",
+              context: executionContext,
+              call,
+              result: executed,
+              signal: input.signal,
+            });
+            throwIfAborted(input.signal);
+            this.assertClaim(snapshot, input);
+            if (
+              settlement !== null &&
+              (typeof settlement !== "object" ||
+                (settlement.replacementContent !== undefined &&
+                  typeof settlement.replacementContent !== "string"))
+            ) {
+              throw new WorkspaceApiError(
+                502,
+                "JOB_FAILED",
+                "Assistant tool lifecycle settlement is invalid.",
+              );
+            }
+            if (settlement?.replacementContent !== undefined) {
+              const replacement = settlement.replacementContent;
+              if (replacement.length > MAX_TOOL_RESULT_CHARS) {
+                throw new WorkspaceApiError(
+                  502,
+                  "JOB_FAILED",
+                  "Assistant settled tool result is too large.",
+                );
+              }
+              const settledTotal =
+                totalToolResultChars -
+                executed.content.length +
+                replacement.length;
+              if (settledTotal > MAX_ALL_TOOL_RESULTS_CHARS) {
+                throw new WorkspaceApiError(
+                  502,
+                  "JOB_FAILED",
+                  "Assistant settled tool results exceeded the aggregate limit.",
+                );
+              }
+              assertMikeSafePayload(replacement);
+              totalToolResultChars = settledTotal;
+              messages[messages.length - 1] = {
+                role: "tool",
+                toolCallId: call.id,
+                content: replacement,
+              };
+            }
+            persistToolEvents(settlement?.events);
+          }
         }
       }
 

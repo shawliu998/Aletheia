@@ -13,7 +13,6 @@ const {
 } = require("../../frontend/node_modules/playwright");
 
 const desktopDir = path.resolve(__dirname, "..");
-const repositoryDir = path.resolve(desktopDir, "..");
 const appPath =
   process.env.ALETHEIA_PACKAGED_APP_PATH ??
   path.join(desktopDir, "dist", `mac-${process.arch}`, "Vera.app");
@@ -28,17 +27,21 @@ const backendPort = checkedPort(
 );
 const frontendUrl = `http://127.0.0.1:${frontendPort}/assistant`;
 const backendBaseUrl = `http://127.0.0.1:${backendPort}`;
-const evidencePath = path.join(
-  repositoryDir,
-  "docs",
-  "evidence",
-  "vera-gate1-matter-packaged-restart.png",
-);
+let evidencePath = null;
 
 const DOCUMENT_ONE =
   "VERA-E2E-ALPHA：甲方应在三十日内支付全部服务费。甲方名称为晨星科技。";
 const DOCUMENT_TWO =
   "VERA-E2E-BETA：乙方有权在重大违约后解除协议。乙方名称为远山律师事务所。";
+const DOCUMENT_THREE =
+  "VERA-FLAGSHIP-GAMMA: Gamma Services Ltd may terminate for material breach. This Agreement is governed by English law.";
+const FLAGSHIP_DOCUMENTS = Object.freeze([
+  "alpha-contract.txt",
+  "beta-contract.txt",
+  "gamma-contract.txt",
+]);
+const FLAGSHIP_PROMPT =
+  "请审查我选择的合同，比较控制权变更、责任上限、自动续期和适用法条款；生成一份比较表，并起草一份风险备忘录。";
 const DOCUMENT_ONE_PAYMENT_QUOTE = "甲方应在三十日内支付全部服务费";
 const DOCUMENT_ONE_PARTY_QUOTE = "甲方名称为晨星科技";
 const DOCUMENT_TWO_TERMINATION_QUOTE = "乙方有权在重大违约后解除协议";
@@ -467,7 +470,7 @@ function sendTextCompletion(response, text) {
   response.end("data: [DONE]\n\n");
 }
 
-function sendFetchDocumentsCall(response) {
+function sendFetchDocumentsCall(response, docIds = ["doc-0", "doc-1"]) {
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-store",
@@ -484,7 +487,39 @@ function sendFetchDocumentsCall(response) {
             type: "function",
             function: {
               name: "fetch_documents",
-              arguments: JSON.stringify({ doc_ids: ["doc-0", "doc-1"] }),
+              arguments: JSON.stringify({ doc_ids: docIds }),
+            },
+          },
+        ],
+      },
+      "tool_calls",
+    ),
+  );
+  writeSseRecord(response, {
+    choices: [],
+    usage: { prompt_tokens: 24, completion_tokens: 8 },
+  });
+  response.end("data: [DONE]\n\n");
+}
+
+function sendContractReviewCall(response) {
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-store",
+    connection: "close",
+  });
+  writeSseRecord(
+    response,
+    completionChunk(
+      {
+        tool_calls: [
+          {
+            index: 0,
+            id: "vera-e2e-run-contract-review",
+            type: "function",
+            function: {
+              name: "run_contract_review",
+              arguments: JSON.stringify({ preset: "commercial_agreement" }),
             },
           },
         ],
@@ -583,15 +618,68 @@ function tabularAnswer(request, calls) {
   });
 }
 
+function flagshipTabularAnswer(request, calls) {
+  const userContent = request.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n");
+  const documentKey = userContent.includes("VERA-E2E-ALPHA")
+    ? "alpha"
+    : userContent.includes("VERA-E2E-BETA")
+      ? "beta"
+      : userContent.includes("VERA-FLAGSHIP-GAMMA")
+        ? "gamma"
+        : null;
+  assert.ok(documentKey, "Flagship cell omitted its authoritative document.");
+  const column = /Column title: ([^\n]+)/.exec(userContent)?.[1]?.trim();
+  assert.ok(column, "Flagship cell omitted its preset column title.");
+  const key = `${documentKey}:${column}`;
+  assert.equal(
+    calls.flagshipTabularCells.has(key),
+    false,
+    `Duplicate flagship Tabular cell ${key}.`,
+  );
+  calls.flagshipTabularCells.add(key);
+  const quote =
+    documentKey === "alpha"
+      ? DOCUMENT_ONE_PAYMENT_QUOTE
+      : documentKey === "beta"
+        ? DOCUMENT_TWO_TERMINATION_QUOTE
+        : "This Agreement is governed by English law";
+  assert.ok(userContent.includes(quote), "Flagship cell quote must be exact evidence.");
+  const valueSchema = request.response_format.json_schema?.schema?.properties?.value;
+  const value =
+    valueSchema?.type === "boolean"
+      ? false
+      : valueSchema?.type === "number"
+        ? 0
+        : Array.isArray(valueSchema?.enum)
+          ? valueSchema.enum[0]
+          : `${documentKey} ${column}: captured from the agreement.`;
+  return JSON.stringify({
+    value,
+    reasoning: "The value is limited to exact reviewed agreement text.",
+    flag: "grey",
+    quotes: [quote],
+  });
+}
+
 async function createMockProvider(secret) {
   const failures = [];
+  const control = { holdFlagshipTabular: false };
+  const heldReleases = new Set();
   const calls = {
     probes: 0,
     assistantTurns: 0,
     assistantToolCalls: 0,
+    contractAssistantTurns: 0,
+    contractToolCalls: 0,
     workflowTurns: 0,
     tabularTurns: 0,
     tabularCells: new Set(),
+    flagshipTabularCells: new Set(),
+    flagshipTabularTurns: 0,
+    heldFlagshipTabularTurns: 0,
   };
   const server = http.createServer((request, response) => {
     void (async () => {
@@ -626,11 +714,34 @@ async function createMockProvider(secret) {
       if (body.response_format?.type === "json_schema") {
         calls.tabularTurns += 1;
         assert.equal(body.tools, undefined);
-        assert.equal(
-          body.response_format.json_schema?.schema?.properties?.value?.type,
-          "string",
+        const userContent = body.messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content)
+          .join("\n");
+        const requestedColumn =
+          /Column title: ([^\n]+)/.exec(userContent)?.[1]?.trim() ?? "";
+        const flagship = !["当事方", "核心条款"].includes(requestedColumn);
+        if (flagship) calls.flagshipTabularTurns += 1;
+        if (flagship && control.holdFlagshipTabular) {
+          calls.heldFlagshipTabularTurns += 1;
+          await new Promise((resolve) => {
+            const release = () => {
+              heldReleases.delete(release);
+              resolve();
+            };
+            heldReleases.add(release);
+            request.once("aborted", release);
+            response.once("close", release);
+            setTimeout(release, 30_000);
+          });
+          if (request.aborted || response.destroyed) return;
+        }
+        sendTextCompletion(
+          response,
+          flagship
+            ? flagshipTabularAnswer(body, calls)
+            : tabularAnswer(body, calls),
         );
-        sendTextCompletion(response, tabularAnswer(body, calls));
         return;
       }
 
@@ -640,12 +751,47 @@ async function createMockProvider(secret) {
           body.tools.some((tool) => tool?.function?.name === "fetch_documents"),
           "Assistant must register fetch_documents.",
         );
-        const hasToolResult = body.messages.some(
+        const contractReview = body.messages.some(
+          (message) =>
+            typeof message?.content === "string" &&
+            message.content.includes(FLAGSHIP_PROMPT),
+        );
+        const toolResults = body.messages.filter(
           (message) =>
             typeof message?.content === "string" &&
             message.content.startsWith("[Tool result]\n"),
         );
-        if (!hasToolResult) {
+        if (contractReview) calls.contractAssistantTurns += 1;
+        if (contractReview && toolResults.length === 0) {
+          calls.assistantToolCalls += 1;
+          calls.contractToolCalls += 1;
+          assert.ok(
+            body.tools.some(
+              (tool) => tool?.function?.name === "run_contract_review",
+            ),
+            "Matter Assistant must register run_contract_review.",
+          );
+          const system = body.messages.find((message) => message.role === "system");
+          assert.match(system?.content ?? "", /doc-0/);
+          assert.match(system?.content ?? "", /doc-1/);
+          assert.match(system?.content ?? "", /doc-2/);
+          sendFetchDocumentsCall(response, ["doc-0", "doc-1", "doc-2"]);
+        } else if (contractReview && toolResults.length === 1) {
+          calls.assistantToolCalls += 1;
+          calls.contractToolCalls += 1;
+          const result = JSON.parse(
+            toolResults[0].content.slice("[Tool result]\n".length),
+          );
+          assert.equal(result.documents.length, 3);
+          sendContractReviewCall(response);
+        } else if (contractReview) {
+          const result = JSON.parse(
+            toolResults.at(-1).content.slice("[Tool result]\n".length),
+          );
+          assert.equal(result.review.status, "complete");
+          assert.ok(result.memo?.draft_id, "Completed review must create a Studio memo.");
+          sendTextCompletion(response, "合同审阅与风险备忘录已完成。");
+        } else if (toolResults.length === 0) {
           calls.assistantToolCalls += 1;
           const system = body.messages.find((message) => message.role === "system");
           assert.match(system?.content ?? "", /doc-0/);
@@ -687,9 +833,17 @@ async function createMockProvider(secret) {
     port: address.port,
     calls,
     failures,
+    setHoldFlagshipTabular(value) {
+      control.holdFlagshipTabular = value === true;
+      if (!control.holdFlagshipTabular) {
+        for (const release of [...heldReleases]) release();
+      }
+    },
     async close() {
       if (closed) return;
       closed = true;
+      control.holdFlagshipTabular = false;
+      for (const release of [...heldReleases]) release();
       const closing = new Promise((resolve) => server.close(resolve));
       server.closeIdleConnections?.();
       server.closeAllConnections?.();
@@ -1022,6 +1176,113 @@ async function assertTabularRenderer(page, projectId, reviewId) {
   await page.keyboard.press("Escape");
 }
 
+async function startFlagshipContractReviewInUi(page, projectId) {
+  await navigateAndAssertVisibleText(page, `/matters/${projectId}/assistant`, [
+    "新建对话",
+  ]);
+  const emptyChatNavigation = page.waitForURL(
+    (url) =>
+      url.pathname.startsWith(`/matters/${projectId}/assistant/chat/`),
+    { timeout: 90_000 },
+  );
+  await page.getByRole("button", { name: /新建对话|New chat/ }).click();
+  await emptyChatNavigation;
+  await page.getByRole("button", { name: /审查一批合同|Review contracts/ }).waitFor({
+    state: "visible",
+    timeout: 90_000,
+  });
+  await page.getByRole("button", { name: /审查一批合同|Review contracts/ }).click();
+  const textarea = page.locator("textarea");
+  await textarea.waitFor({ state: "visible", timeout: 90_000 });
+  assert.equal(await textarea.inputValue(), FLAGSHIP_PROMPT);
+  await page.getByRole("button", { name: /添加文档|Add documents/ }).click();
+  for (const filename of FLAGSHIP_DOCUMENTS) {
+    const checkbox = page.locator("label", { hasText: filename }).locator('input[type="checkbox"]');
+    await checkbox.check();
+  }
+  await page
+    .getByRole("button", { name: /添加.*3|Add \(3\)/ })
+    .click();
+  for (const filename of FLAGSHIP_DOCUMENTS) {
+    await page.getByText(filename, { exact: true }).last().waitFor({
+      state: "visible",
+      timeout: 30_000,
+    });
+  }
+  const chatNavigation = page.waitForURL(
+    (url) =>
+      url.pathname.startsWith(`/matters/${projectId}/assistant/chat/`),
+    { timeout: 90_000 },
+  );
+  await page.getByRole("button", { name: /发送|Send/ }).click();
+  await chatNavigation;
+  const chatId = new URL(page.url()).pathname.split("/").at(-1);
+  assert.match(chatId ?? "", /^[0-9a-f-]{36}$/i);
+  return chatId;
+}
+
+async function assertUiDownload(page, responseMatch, click, extension, mime) {
+  await page.evaluate(() => {
+    window.__veraPackagedE2eDownloads = [];
+    window.__veraPackagedE2eDownloadBlobs = [];
+    if (window.__veraPackagedE2eDownloadCaptureInstalled) return;
+    window.__veraPackagedE2eDownloadCaptureInstalled = true;
+    const originalCreateObjectUrl = URL.createObjectURL;
+    URL.createObjectURL = function veraPackagedE2eCreateObjectUrl(value) {
+      const href = originalCreateObjectUrl.call(URL, value);
+      if (value instanceof Blob) {
+        const capture = {
+          href,
+          mime: value.type,
+          size: value.size,
+          signature: null,
+        };
+        window.__veraPackagedE2eDownloadBlobs.push(capture);
+        void value
+          .slice(0, 4)
+          .arrayBuffer()
+          .then((buffer) => {
+            capture.signature = [...new Uint8Array(buffer)]
+              .map((byte) => byte.toString(16).padStart(2, "0"))
+              .join("");
+          });
+      }
+      return href;
+    };
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function veraPackagedE2eClick() {
+      window.__veraPackagedE2eDownloads.push({
+        filename: this.download,
+        href: this.href,
+      });
+      return originalClick.call(this);
+    };
+  });
+  const [response] = await Promise.all([
+    page.waitForResponse(responseMatch, { timeout: 90_000 }),
+    click(),
+  ]);
+  assert.match(response.headers()["content-type"] ?? "", mime);
+  assert.match(response.headers()["content-disposition"] ?? "", extension);
+  await page.waitForFunction(
+    () =>
+      window.__veraPackagedE2eDownloads.length > 0 &&
+      window.__veraPackagedE2eDownloadBlobs.at(-1)?.signature !== null,
+    null,
+    { timeout: 30_000 },
+  );
+  const captured = await page.evaluate(() => ({
+    download: window.__veraPackagedE2eDownloads.at(-1),
+    blob: window.__veraPackagedE2eDownloadBlobs.at(-1),
+  }));
+  assert.match(captured.download.filename, extension);
+  assert.match(captured.download.href, /^blob:/);
+  assert.equal(captured.download.href, captured.blob.href);
+  assert.ok(captured.blob.size > 4);
+  assert.match(captured.blob.mime, mime);
+  assert.equal(captured.blob.signature, "504b0304");
+}
+
 async function assertModelRenderer(page) {
   await navigateAndAssertVisibleText(page, "/settings/models", [
     "Vera packaged E2E model",
@@ -1128,11 +1389,11 @@ async function main() {
   if (process.platform !== "darwin") throw new Error("This audit requires macOS.");
   fs.accessSync(executablePath, fs.constants.X_OK);
   await assertPortsFree();
-  fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
-  fs.rmSync(evidencePath, { force: true });
-
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "vera-packaged-workspace-e2e-"));
   fs.chmodSync(root, 0o700);
+  evidencePath = process.env.VERA_PACKAGED_E2E_EVIDENCE_PATH ?? path.join(root, "evidence.png");
+  fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+  fs.rmSync(evidencePath, { force: true });
   const userDataDir = path.join(root, "user-data");
   fs.mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
   const applicationMasterKey = crypto.randomBytes(32);
@@ -1150,8 +1411,14 @@ async function main() {
   let gate1MatterId = null;
   let gate1MatterChatId = null;
   let gate1MatterDocumentIds = [];
+  let gate1MatterAssistantDocumentIds = [];
   let gate1MatterSourceIds = [];
   let gate1MatterChatBeforeRestart = null;
+  let flagshipReviewId = null;
+  let flagshipMemoDocumentId = null;
+  let flagshipReviewBeforeRestart = null;
+  let flagshipMemoBeforeRestart = null;
+  let cancelledFlagshipReviewId = null;
   let gate1MatterSourcesBeforeRestart = null;
   let gate1MatterBeforeRestart = null;
   let gate1MatterPolicyBeforeRestart = null;
@@ -1548,10 +1815,18 @@ async function main() {
       "beta-contract.txt",
       DOCUMENT_TWO,
     );
+    const matterThirdUpload = await uploadTextDocument(
+      token,
+      gate1MatterId,
+      "gamma-contract.txt",
+      DOCUMENT_THREE,
+    );
     gate1MatterDocumentIds = [
       matterFirstUpload.document.id,
       matterSecondUpload.document.id,
+      matterThirdUpload.document.id,
     ];
+    gate1MatterAssistantDocumentIds = gate1MatterDocumentIds.slice(0, 2);
     await pollUntil("Matter documents", async () => {
       const documents = await apiJson(
         token,
@@ -1603,13 +1878,13 @@ async function main() {
           ],
           model_profile_id: modelProfileId,
           attached_documents: [
-            {
-              filename: "alpha-contract.txt",
-              document_id: gate1MatterDocumentIds[0],
-            },
-            {
-              filename: "beta-contract.txt",
-              document_id: gate1MatterDocumentIds[1],
+          {
+            filename: "alpha-contract.txt",
+            document_id: gate1MatterAssistantDocumentIds[0],
+          },
+          {
+            filename: "beta-contract.txt",
+            document_id: gate1MatterAssistantDocumentIds[1],
             },
           ],
         },
@@ -1645,7 +1920,7 @@ async function main() {
     assert.equal(assistantMessageText(matterAssistantMessage), ASSISTANT_VISIBLE_ANSWER);
     assert.deepEqual(
       matterAssistantMessage.citations.map((citation) => citation.document_id).sort(),
-      [...gate1MatterDocumentIds].sort(),
+      [...gate1MatterAssistantDocumentIds].sort(),
     );
     assert.deepEqual(
       matterAssistantMessage.citations.map((citation) => citation.quote),
@@ -1668,7 +1943,7 @@ async function main() {
       gate1MatterBeforeRestart,
       gate1MatterId,
       {
-        document_count: 2,
+        document_count: 3,
         chat_count: 1,
         tabular_review_count: 0,
         workflow_count: 0,
@@ -1680,7 +1955,7 @@ async function main() {
       project.id,
       gate1MatterId,
       {
-        document_count: 2,
+        document_count: 3,
         chat_count: 1,
         tabular_review_count: 0,
         workflow_count: 0,
@@ -1696,16 +1971,179 @@ async function main() {
       "matter",
     );
 
+    const flagshipChatId = await startFlagshipContractReviewInUi(
+      packaged.page,
+      gate1MatterId,
+    );
+    const reviewCard = packaged.page.locator('[data-testid^="assistant-review-result-"]');
+    const draftCard = packaged.page.locator('[data-testid^="assistant-draft-result-"]');
+    await reviewCard.waitFor({ state: "visible", timeout: POLL_TIMEOUT_MS });
+    await draftCard.waitFor({ state: "visible", timeout: POLL_TIMEOUT_MS });
+    flagshipReviewId = (await reviewCard.getAttribute("data-testid"))?.replace(
+      "assistant-review-result-",
+      "",
+    );
+    flagshipMemoDocumentId = (await draftCard.getAttribute("data-testid"))?.replace(
+      "assistant-draft-result-",
+      "",
+    );
+    assert.match(flagshipReviewId ?? "", /^[0-9a-f-]{36}$/i);
+    assert.match(flagshipMemoDocumentId ?? "", /^[0-9a-f-]{36}$/i);
+    const flagshipReview = await apiJson(
+      token,
+      `/tabular-review/${flagshipReviewId}`,
+    );
+    assert.equal(flagshipReview.review.status, "complete");
+    assert.equal(flagshipReview.review.document_ids.length, 3);
+    assert.equal(flagshipReview.cells.length, 54);
+    assert.ok(flagshipReview.cells.every((cell) => cell.status === "done"));
+    assert.ok(flagshipReview.cells.every((cell) => cell.sources.length >= 1));
+    flagshipReviewBeforeRestart = flagshipReview;
+    flagshipMemoBeforeRestart = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/studio/documents/${flagshipMemoDocumentId}`,
+    );
+
+    await reviewCard.getByRole("button", { name: /打开 Review|Open Review/ }).click();
+    await packaged.page.waitForURL(
+      (url) => url.pathname === `/matters/${gate1MatterId}/review/${flagshipReviewId}`,
+      { timeout: 90_000 },
+    );
+    const actions = packaged.page.getByRole("button", {
+      name: /表格审阅操作|Tabular review actions/,
+    });
+    await actions.click();
+    await assertUiDownload(
+      packaged.page,
+      (response) =>
+        response.url().includes(`/tabular-review/${flagshipReviewId}/export.xlsx`) &&
+        response.status() === 200,
+      () => packaged.page.getByRole("menuitem", { name: /导出 XLSX|Export XLSX/ }).click(),
+      /\.xlsx$/i,
+      /spreadsheetml\.sheet/,
+    );
+
+    await navigateAndAssertVisibleText(
+      packaged.page,
+      `/matters/${gate1MatterId}/assistant/chat/${flagshipChatId}`,
+      ["合同审阅与风险备忘录已完成。"],
+    );
+    await packaged.page
+      .locator(`[data-testid="assistant-draft-result-${flagshipMemoDocumentId}"]`)
+      .getByRole("button", { name: /打开文稿|Open Draft/ })
+      .click();
+    await packaged.page.waitForURL(
+      (url) => url.pathname.includes(`/documents/${flagshipMemoDocumentId}/studio`),
+      { timeout: 90_000 },
+    );
+    await assertUiDownload(
+      packaged.page,
+      (response) =>
+        response.url().includes(
+          `/projects/${gate1MatterId}/studio/documents/${flagshipMemoDocumentId}/export-docx`,
+        ) && response.status() === 200,
+      () => packaged.page.getByRole("button", { name: /导出 DOCX|Export DOCX/ }).click(),
+      /\.docx$/i,
+      /wordprocessingml\.document/,
+    );
+
+    const documentsBeforeCancelledReview = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/documents?limit=100`,
+    );
+    assert.equal(documentsBeforeCancelledReview.length, 4);
+    const documentIdsBeforeCancelledReview = documentsBeforeCancelledReview.map(
+      (document) => document.id,
+    ).sort();
+    const reviewsBeforeCancelledReview = await apiJson(
+      token,
+      `/tabular-review?project_id=${gate1MatterId}`,
+    );
+    const reviewIdsBeforeCancelledReview = new Set(
+      reviewsBeforeCancelledReview.map((review) => review.id),
+    );
+    mock.setHoldFlagshipTabular(true);
+    const cancelledChatId = await startFlagshipContractReviewInUi(
+      packaged.page,
+      gate1MatterId,
+    );
+    await pollUntil("Cancelled contract review reaches an in-flight cell", () =>
+      mock.calls.heldFlagshipTabularTurns > 0 ? true : undefined,
+    );
+    await packaged.page
+      .getByRole("button", { name: /停止生成|Stop generating/ })
+      .click();
+    const cancelledJob = await pollUntil("Cancelled contract review job", async () => {
+      const jobs = await apiJson(
+        token,
+        `/assistant/jobs?chat_id=${cancelledChatId}&limit=20`,
+      );
+      const job = jobs.items?.[0];
+      if (!job?.terminal) return undefined;
+      assert.equal(job.status, "cancelled");
+      return job;
+    });
+    assert.equal(cancelledJob.cancel_requested, true);
+    mock.setHoldFlagshipTabular(false);
+    const cancelledReview = await pollUntil("Cancelled contract Review", async () => {
+      const reviews = await apiJson(
+        token,
+        `/tabular-review?project_id=${gate1MatterId}`,
+      );
+      const review = reviews.find(
+        (item) => !reviewIdsBeforeCancelledReview.has(item.id),
+      );
+      if (!review || review.status !== "cancelled") return undefined;
+      return apiJson(token, `/tabular-review/${review.id}`);
+    });
+    cancelledFlagshipReviewId = cancelledReview.review.id;
+    assert.equal(cancelledReview.review.status, "cancelled");
+    const documentsAfterCancelledReview = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/documents?limit=100`,
+    );
+    assert.deepEqual(
+      documentsAfterCancelledReview.map((document) => document.id).sort(),
+      documentIdsBeforeCancelledReview,
+      "Cancelled contract review must not create a memo document.",
+    );
+    gate1MatterBeforeRestart = await apiJson(token, `/matters/${gate1MatterId}`);
+    assertGate1MatterProjection(gate1MatterBeforeRestart, gate1MatterId, {
+      document_count: 4,
+      chat_count: 3,
+      tabular_review_count: 2,
+      workflow_count: 0,
+    });
+    const flagshipMatterList = await apiJson(token, "/matters?limit=100");
+    assert.deepEqual(
+      assertMatterListPage(
+        flagshipMatterList,
+        project.id,
+        gate1MatterId,
+        {
+          document_count: 4,
+          chat_count: 3,
+          tabular_review_count: 2,
+          workflow_count: 0,
+        },
+      ).matter,
+      gate1MatterBeforeRestart,
+    );
+
     assert.deepEqual(mock.failures, []);
     assert.equal(mock.calls.probes, 1);
-    assert.equal(mock.calls.assistantTurns, 4);
-    assert.equal(mock.calls.assistantToolCalls, 2);
+    assert.equal(mock.calls.assistantTurns - mock.calls.contractAssistantTurns, 4);
+    assert.equal(mock.calls.contractToolCalls, 4);
+    assert.ok(mock.calls.contractAssistantTurns >= 5);
+    assert.equal(mock.calls.assistantToolCalls - mock.calls.contractToolCalls, 2);
     assert.equal(mock.calls.workflowTurns, 1);
-    assert.equal(mock.calls.tabularTurns, 4);
+    assert.equal(mock.calls.tabularTurns - mock.calls.flagshipTabularTurns, 4);
     assert.deepEqual(
       [...mock.calls.tabularCells].sort(),
       ["alpha:clause", "alpha:party", "beta:clause", "beta:party"],
     );
+    assert.equal(mock.calls.flagshipTabularCells.size, 54);
+    assert.ok(mock.calls.heldFlagshipTabularTurns > 0);
     mockSummary = mock.calls;
     await mock.close();
     mock = null;
@@ -1772,9 +2210,9 @@ async function main() {
       `/matters/${gate1MatterId}`,
     );
     assertGate1MatterProjection(persistedGate1Matter, gate1MatterId, {
-      document_count: 2,
-      chat_count: 1,
-      tabular_review_count: 0,
+      document_count: 4,
+      chat_count: 3,
+      tabular_review_count: 2,
       workflow_count: 0,
     });
     assert.deepEqual(
@@ -1788,9 +2226,9 @@ async function main() {
       project.id,
       gate1MatterId,
       {
-        document_count: 2,
-        chat_count: 1,
-        tabular_review_count: 0,
+        document_count: 4,
+        chat_count: 3,
+        tabular_review_count: 2,
         workflow_count: 0,
       },
     );
@@ -1805,9 +2243,16 @@ async function main() {
       token,
       `/projects/${gate1MatterId}`,
     );
-    assert.deepEqual(
-      persistedMatterProject.documents.map((document) => document.id).sort(),
-      [...gate1MatterDocumentIds].sort(),
+    assert.equal(persistedMatterProject.documents.length, 4);
+    assert.ok(
+      gate1MatterDocumentIds.every((documentId) =>
+        persistedMatterProject.documents.some((document) => document.id === documentId),
+      ),
+    );
+    assert.ok(
+      persistedMatterProject.documents.some(
+        (document) => document.id === flagshipMemoDocumentId,
+      ),
     );
     assert.ok(
       persistedMatterProject.documents.every(
@@ -1831,7 +2276,7 @@ async function main() {
       persistedMatterAssistant.citations
         .map((citation) => citation.document_id)
         .sort(),
-      [...gate1MatterDocumentIds].sort(),
+      [...gate1MatterAssistantDocumentIds].sort(),
     );
     assert.deepEqual(
       persistedMatterAssistant.citations.map((citation) => citation.quote),
@@ -1867,10 +2312,64 @@ async function main() {
       assert.equal(content.document.document_id, gate1MatterDocumentIds[index]);
       assert.ok(
         content.chunks.some((chunk) =>
-          chunk.text.includes(index === 0 ? "VERA-E2E-ALPHA" : "VERA-E2E-BETA"),
+          chunk.text.includes(
+            index === 0
+              ? "VERA-E2E-ALPHA"
+              : index === 1
+                ? "VERA-E2E-BETA"
+                : "VERA-FLAGSHIP-GAMMA",
+          ),
         ),
       );
     }
+
+    const persistedFlagshipReview = await apiJson(
+      token,
+      `/tabular-review/${flagshipReviewId}`,
+    );
+    assert.deepEqual(persistedFlagshipReview, flagshipReviewBeforeRestart);
+    const persistedFlagshipMemo = await apiJson(
+      token,
+      `/projects/${gate1MatterId}/studio/documents/${flagshipMemoDocumentId}`,
+    );
+    assert.deepEqual(persistedFlagshipMemo, flagshipMemoBeforeRestart);
+    const persistedCancelledFlagshipReview = await apiJson(
+      token,
+      `/tabular-review/${cancelledFlagshipReviewId}`,
+    );
+    assert.equal(persistedCancelledFlagshipReview.review.status, "cancelled");
+    const persistedFlagshipXlsx = await apiBytes(
+      token,
+      `/tabular-review/${flagshipReviewId}/export.xlsx`,
+    );
+    assert.match(
+      persistedFlagshipXlsx.response.headers.get("content-type") ?? "",
+      /spreadsheetml\.sheet/,
+    );
+    assert.match(
+      persistedFlagshipXlsx.response.headers.get("content-disposition") ?? "",
+      /\.xlsx/i,
+    );
+    assert.equal(
+      persistedFlagshipXlsx.bytes.subarray(0, 4).toString("hex"),
+      "504b0304",
+    );
+    const persistedFlagshipDocx = await apiBytes(
+      token,
+      `/projects/${gate1MatterId}/studio/documents/${flagshipMemoDocumentId}/export-docx`,
+    );
+    assert.match(
+      persistedFlagshipDocx.response.headers.get("content-type") ?? "",
+      /wordprocessingml\.document/,
+    );
+    assert.match(
+      persistedFlagshipDocx.response.headers.get("content-disposition") ?? "",
+      /\.docx/i,
+    );
+    assert.equal(
+      persistedFlagshipDocx.bytes.subarray(0, 4).toString("hex"),
+      "504b0304",
+    );
 
     await assertAssistantRenderer(
       packaged.page,
@@ -1894,6 +2393,7 @@ async function main() {
     assert.equal(visibleText.includes(providerSecret), false);
     assert.equal(visibleText.includes(DOCUMENT_ONE), false);
     assert.equal(visibleText.includes(DOCUMENT_TWO), false);
+    assert.equal(visibleText.includes(DOCUMENT_THREE), false);
     await packaged.page.screenshot({ path: evidencePath, fullPage: false });
     assert.ok(fs.statSync(evidencePath).size > 10_000);
 
@@ -1912,8 +2412,10 @@ async function main() {
       `${JSON.stringify(
         {
           ok: true,
-          suite: "vera-packaged-workspace-e2e-gate1-v3",
-          evidence: "docs/evidence/vera-gate1-matter-packaged-restart.png",
+          suite: "vera-packaged-workspace-e2e-gate1-v4-contract-review",
+          evidence: process.env.VERA_PACKAGED_E2E_EVIDENCE_PATH
+            ? "explicitly-configured"
+            : "temporary-validated-and-cleaned",
           isolated_workspace_database_bytes: packaged.workspaceDatabaseBytes,
           provider_calls: {
             connection_probes: mockSummary.probes,
@@ -1921,6 +2423,7 @@ async function main() {
             assistant_document_tool_calls: mockSummary.assistantToolCalls,
             workflow_turns: mockSummary.workflowTurns,
             tabular_turns: mockSummary.tabularTurns,
+            flagship_tabular_cells: mockSummary.flagshipTabularCells.size,
           },
           matter_health: GATE1_MATTER_HEALTH,
           matter: {
@@ -1945,6 +2448,13 @@ async function main() {
             },
             source_snapshot_ids: [...gate1MatterSourceIds],
             assistant_chat_id: gate1MatterChatId,
+            flagship_contract_review: {
+              review_id: flagshipReviewId,
+              memo_document_id: flagshipMemoDocumentId,
+              cancelled_review_id: cancelledFlagshipReviewId,
+              documents: 3,
+              cells_complete: 54,
+            },
             counts: {
               documents: persistedGate1Matter.project.document_count,
               chats: persistedGate1Matter.project.chat_count,
@@ -1968,6 +2478,11 @@ async function main() {
             "strict six-field Matter capabilities with Review Center unavailable and existing Tabular compatibility available",
             "Matter Overview and exact Documents Assistant Review Workflows Drafts Settings navigation under Matter routes",
             "Matter Assistant reaches the provider for tool and final turns and persists exact citations",
+            "Matter Assistant starter selects exactly three ready documents in the packaged UI and calls fetch_documents followed by run_contract_review",
+            "built-in Commercial Agreement Review completes all 54 cells and renders durable Review and Draft cards",
+            "packaged UI captures and validates XLSX and DOCX downloads by filename MIME and ZIP signature",
+            "second in-flight Assistant contract review is stopped from the packaged UI, leaving a cancelled Review and no new Studio memo",
+            "durable flagship Review and Studio memo persist unchanged across offline restart",
             "Matter-owned document source snapshots retain exact local content across restart",
             "same SQLCipher data and blob keys across an offline second launch",
             "private non-plaintext SQLCipher database inside the isolated profile",
@@ -1994,7 +2509,7 @@ async function main() {
     fs.rmSync(root, { recursive: true, force: true });
     applicationMasterKey.fill(0);
     databaseKey.fill(0);
-    if (!completed) fs.rmSync(evidencePath, { force: true });
+    if (evidencePath && !completed) fs.rmSync(evidencePath, { force: true });
   }
 }
 

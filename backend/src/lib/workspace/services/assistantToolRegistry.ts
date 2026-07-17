@@ -2,6 +2,8 @@ import type {
   AssistantModelToolCall,
   AssistantToolContext,
   AssistantToolDefinition,
+  AssistantToolLifecycleInput,
+  AssistantToolLifecycleResult,
   AssistantToolPort,
 } from "./assistantRuntime";
 import {
@@ -32,6 +34,9 @@ export interface AssistantToolModule {
     context: AssistantToolContext,
   ): Promise<readonly AssistantToolDefinition[]>;
   execute(input: AssistantToolExecution): Promise<AssistantToolExecutionResult>;
+  settleLifecycle?(
+    input: AssistantToolLifecycleInput,
+  ): Promise<AssistantToolLifecycleResult | null>;
 }
 
 export class AssistantToolRegistryError extends Error {
@@ -281,6 +286,37 @@ export class WorkspaceAssistantToolRegistry implements AssistantToolPort {
     }
     // Deliberately forward the original object, including AbortSignal identity.
     return module.execute(input);
+  }
+
+  async settleLifecycle(input: AssistantToolLifecycleInput) {
+    const route = this.registrations.get(executionKey(input.context));
+    if (!route) {
+      throw new AssistantToolRegistryError(
+        "Assistant tool registration is missing for this job attempt.",
+      );
+    }
+    if (input.phase === "after_execution") {
+      const module = route.tools.get(input.call.name);
+      if (!module) {
+        throw new AssistantToolRegistryError(
+          "Assistant tool is not registered for this job attempt.",
+        );
+      }
+      return (await module.settleLifecycle?.(input)) ?? null;
+    }
+
+    const events = [];
+    for (const module of route.modules) {
+      const result = await module.settleLifecycle?.(input);
+      if (!result) continue;
+      if (result.replacementContent !== undefined) {
+        throw new AssistantToolRegistryError(
+          "Assistant final lifecycle guard cannot replace tool content.",
+        );
+      }
+      events.push(...(result.events ?? []));
+    }
+    return events.length > 0 ? { events } : null;
   }
 }
 

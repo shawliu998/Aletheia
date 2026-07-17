@@ -1504,6 +1504,8 @@ async function run() {
     let modelCalls = 0;
     let capabilityChecks = 0;
     let eventFailures = 0;
+    let afterExecutionSettlements = 0;
+    let beforeFinalSettlements = 0;
     let capturedSystemPrompt = "";
     const publishedEventTypes: string[] = [];
     const evidenceChunk = currentResults[0];
@@ -1590,6 +1592,7 @@ async function run() {
         );
         assert.equal(messages.at(-1)?.role, "tool");
         assert.match(messages.at(-1)?.content ?? "", /Delaware/);
+        assert.match(messages.at(-1)?.content ?? "", /"settled":true/);
         await onTextDelta("Delaware governs [1][2].");
         return {
           content: "Delaware governs [1][2].",
@@ -1652,6 +1655,29 @@ async function run() {
           sourceContext: [evidenceChunk],
         };
       },
+      async settleLifecycle(input) {
+        assert.equal(input.signal.aborted, false);
+        if (input.phase === "before_final") {
+          beforeFinalSettlements += 1;
+          return null;
+        }
+        afterExecutionSettlements += 1;
+        assert.equal(input.call.name, "read_document");
+        const result = JSON.parse(input.result.content) as Record<
+          string,
+          unknown
+        >;
+        return {
+          replacementContent: JSON.stringify({ ...result, settled: true }),
+          events: [
+            {
+              type: "doc_read",
+              filename: evidenceChunk.filename,
+              document_id: evidenceChunk.documentId,
+            },
+          ],
+        };
+      },
     };
     const runtime = new AssistantRuntimeService(chats, jobs, model, {
       clock: () => new Date("2026-07-14T08:02:00.000Z"),
@@ -1678,6 +1704,8 @@ async function run() {
       signal: new AbortController().signal,
     });
     assert.equal(modelCalls, 2);
+    assert.equal(afterExecutionSettlements, 1);
+    assert.equal(beforeFinalSettlements, 1);
     assert.equal(capabilityChecks, 1);
     assert.match(capturedSystemPrompt, /^You are Vera,/);
     assert.doesNotMatch(capturedSystemPrompt, /^You are Mike,/);
@@ -1714,6 +1742,7 @@ async function run() {
       "content_delta",
       "tool_call_start",
       "doc_read_start",
+      "doc_read",
       "doc_read",
       "content_delta",
       "content_done",
