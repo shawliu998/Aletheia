@@ -2625,6 +2625,15 @@ async function run() {
         [...testCase.expected],
         testCase.prompt,
       );
+      const restoredPlanEvents = service
+        .detail(chat.id)
+        .messages.flatMap((message) => message.events)
+        .filter((event) => event.type === "task_plan");
+      assert.equal(
+        restoredPlanEvents.length > 0,
+        testCase.expected.length > 0,
+        `${testCase.prompt} durable chat detail plan projection`,
+      );
     }
 
     const missingDeliverableChat = service.create({

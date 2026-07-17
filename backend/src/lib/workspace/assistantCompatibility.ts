@@ -432,9 +432,60 @@ const MikeServerMessageSchema = z
               document_count: z.number().int().min(2).max(50),
             })
             .strict(),
+          z
+            .object({
+              type: z.literal("task_plan"),
+              plan_id: Id,
+              goal: z.string().trim().min(1).max(500),
+              steps: z
+                .array(
+                  z
+                    .object({
+                      id: z.string().trim().min(1).max(64),
+                      title: z.string().trim().min(1).max(240),
+                      status: z.enum([
+                        "pending",
+                        "in_progress",
+                        "completed",
+                        "failed",
+                      ]),
+                    })
+                    .strict(),
+                )
+                .min(1)
+                .max(12),
+              deliverables: z
+                .array(
+                  z
+                    .object({
+                      kind: z.enum(["review", "xlsx", "draft", "docx"]),
+                      label: z.string().trim().min(1).max(240),
+                      status: z.enum(["pending", "completed"]),
+                      artifact_id: Id.optional(),
+                      route: z
+                        .string()
+                        .regex(/^\/projects\/[0-9a-f-]{36}\//)
+                        .max(1_000)
+                        .optional(),
+                    })
+                    .strict(),
+                )
+                .max(8)
+                .default([]),
+            })
+            .strict(),
+          z
+            .object({
+              type: z.literal("task_step_update"),
+              plan_id: Id,
+              step_id: z.string().trim().min(1).max(64),
+              status: z.enum(["in_progress", "completed", "failed"]),
+              detail: z.string().trim().min(1).max(500).optional(),
+            })
+            .strict(),
         ]),
       )
-      .max(10)
+      .max(100)
       .optional(),
     created_at: z.string().datetime(),
   })
@@ -744,7 +795,13 @@ export function toMikeChatDetail(input: {
     legalAuthoritySources?: readonly AssistantLegalAuthoritySourceV22[];
     events?: readonly Extract<
       MikeAssistantStreamEvent,
-      { type: "draft_created" | "tabular_review_created" }
+      {
+        type:
+          | "draft_created"
+          | "tabular_review_created"
+          | "task_plan"
+          | "task_step_update";
+      }
     >[];
   })[];
 }) {

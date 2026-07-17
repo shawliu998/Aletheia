@@ -1287,7 +1287,13 @@ export class ChatsRepository {
     if (!this.hasV10AssistantEventSchema()) {
       return [] as Extract<
         MikeAssistantStreamEvent,
-        { type: "draft_created" | "tabular_review_created" }
+        {
+          type:
+            | "draft_created"
+            | "tabular_review_created"
+            | "task_plan"
+            | "task_step_update";
+        }
       >[];
     }
     const rows = this.database
@@ -1305,7 +1311,12 @@ export class ChatsRepository {
               WHEN job.status='queued' THEN job.attempt+1
               ELSE max(job.attempt,1)
             END
-            AND event.event_type IN ('draft_created','tabular_review_created')
+            AND event.event_type IN (
+              'draft_created',
+              'tabular_review_created',
+              'task_plan',
+              'task_step_update'
+            )
            JOIN chats chat
              ON chat.id=snapshot.chat_id
             AND chat.scope='project'
@@ -1327,10 +1338,11 @@ export class ChatsRepository {
           WHERE snapshot.output_message_id=?
             AND (
               (event.event_type='draft_created' AND document.id IS NOT NULL AND version.id IS NOT NULL) OR
-              (event.event_type='tabular_review_created' AND review.id IS NOT NULL)
+              (event.event_type='tabular_review_created' AND review.id IS NOT NULL) OR
+              event.event_type IN ('task_plan','task_step_update')
             )
           ORDER BY event.sequence
-          LIMIT 10`,
+          LIMIT 100`,
       )
       .all(messageId);
     return rows.map((row) => {
@@ -1348,9 +1360,14 @@ export class ChatsRepository {
       }
       if (
         event.type !== "draft_created" &&
-        event.type !== "tabular_review_created"
+        event.type !== "tabular_review_created" &&
+        event.type !== "task_plan" &&
+        event.type !== "task_step_update"
       ) {
         corrupt("Unsupported persisted Assistant durable UI event.");
+      }
+      if (event.type === "task_plan" || event.type === "task_step_update") {
+        return event;
       }
       const projectId = requiredString(
         row.project_id,
