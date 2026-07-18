@@ -1,12 +1,12 @@
 # Vera Legal Workspace Roadmap
 
-Date: 2026-07-17
+Date: 2026-07-18
 
 Status: canonical forward plan
 
-Current merged `main`: `39144bb3e0e535053bd29669b8368299173c18c3`
+Current merged baseline: `main`
 
-Current Workspace schema: v25
+Current Workspace schema: v26
 
 ## 1. Product truth source
 
@@ -46,7 +46,7 @@ The following capability families are merged and available in the active
 Workspace runtime:
 
 - one Electron-managed loopback Next.js/Express lifecycle;
-- one SQLCipher Workspace database with additive migrations through v25;
+- one SQLCipher Workspace database with additive migrations through v26;
 - encrypted local Blob storage and isolated Keychain credential handling;
 - Project-owned Matter Profile, explicit workspace classification, capability
   projections, continuous Matter shell, and unified inference policy;
@@ -250,7 +250,7 @@ Legora feature parity.
 
 ## 4. Migration order
 
-Migrations v1-v24 are published and immutable; v25 is the current additive
+Migrations v1-v25 are published and immutable; v26 is the current additive
 migration. The Tool Registry needed no migration. v18 owns Provider
 configuration, v19 owns the Assistant action
 ledger, v20 owns Draft type/origin metadata, v21 owns the local template
@@ -258,7 +258,12 @@ catalogue plus bounded DraftPlans, v22 owns bounded durable legal-research
 replay/read/message-source bindings, and v23 owns immutable Tabular Review to
 Studio Draft evidence handoffs. v24 owns durable contract-review orchestration.
 v25 strictly extends the existing Assistant event enum for durable task-plan and
-task-step-update events without adding another state table:
+task-step-update events without adding another state table. v26 losslessly
+extends the v19/v24 Assistant action ledger with a bounded
+`run_custom_extraction -> tabular_review` binding. A recovered attempt must
+revalidate the persisted Review projection under its current fenced claim
+before resuming the same Review or creating its memo; an unbound same-Matter
+Review is rejected:
 
 ```text
 legal_research_sessions

@@ -21,7 +21,24 @@ const getInfoEnd = main.indexOf(
 );
 assert.ok(getInfoStart >= 0 && getInfoEnd > getInfoStart);
 const getInfoHandler = main.slice(getInfoStart, getInfoEnd);
+const forkUtilityStart = main.indexOf("function forkUtility");
+const forkUtilityEnd = main.indexOf(
+  "\nasync function waitForCredentialPortReady",
+  forkUtilityStart,
+);
+assert.ok(forkUtilityStart >= 0 && forkUtilityEnd > forkUtilityStart);
+const forkUtility = main.slice(forkUtilityStart, forkUtilityEnd);
+const utilityOutputFrameStart = main.indexOf(
+  "const MAX_UTILITY_OUTPUT_BYTES",
+);
 const runUtilityOnceStart = main.indexOf("function runUtilityOnce");
+assert.ok(
+  utilityOutputFrameStart >= 0 && runUtilityOnceStart > utilityOutputFrameStart,
+);
+const utilityOutputFrame = main.slice(
+  utilityOutputFrameStart,
+  runUtilityOnceStart,
+);
 const runUtilityOnceEnd = main.indexOf(
   "\nfunction assertPackagedResources",
   runUtilityOnceStart,
@@ -73,9 +90,24 @@ assert.doesNotMatch(
   "the renderer bridge type must not advertise local filesystem paths",
 );
 assert.match(
+  forkUtility,
+  /utilityProcess\.fork\([\s\S]*?execArgv: \[\],[\s\S]*?env: \{[\s\S]*?selectedProcessEnvironment\(CHILD_RUNTIME_ENV_KEYS\)/u,
+  "long-lived utility services must not inherit inspector or host exec arguments",
+);
+assert.match(
+  utilityOutputFrame,
+  /const MAX_UTILITY_OUTPUT_BYTES = 32_768;[\s\S]*?Buffer\.byteLength\(output\) > MAX_UTILITY_OUTPUT_BYTES[\s\S]*?output\.indexOf\("\\n"\)[\s\S]*?newline === output\.length - 1/u,
+  "one-shot utility output must be one bounded newline-terminated frame",
+);
+assert.match(
+  utilityOutputFrame,
+  /async function waitForUtilityOutputFrame\([\s\S]*?timeoutMs = 10_000[\s\S]*?if \(outputFailed\(\)\) return false;[\s\S]*?if \(hasCompleteUtilityOutputFrame\(readOutput\(\)\)\) return true;[\s\S]*?await wait\(10\);[\s\S]*?return false;/u,
+  "one-shot utility frame recovery must observe late pipe data and fail on error or timeout",
+);
+assert.match(
   runUtilityOnce,
-  /child\.once\("exit", async \(code\) => \{[\s\S]*?await Promise\.all\(\[[\s\S]*?waitForUtilityStreamDrain\(stdoutStream\),[\s\S]*?waitForUtilityStreamDrain\(stderrStream\),[\s\S]*?\]\);[\s\S]*?if \(code === 0\)/u,
-  "one-shot utility output must drain after exit before callers parse it",
+  /utilityProcess\.fork\([\s\S]*?execArgv: \[\],[\s\S]*?stdoutStream\?\.on\("error", markStdoutStreamFailed\);[\s\S]*?stderrStream\?\.on\("error", markStderrStreamFailed\);[\s\S]*?stdoutBytes \+= chunk\.length;[\s\S]*?child\.once\("exit", async \(code\) => \{[\s\S]*?code === 0[\s\S]*?await waitForUtilityOutputFrame\([\s\S]*?stdoutStreamFailed[\s\S]*?stderrStreamFailed[\s\S]*?stdoutBytes > MAX_UTILITY_OUTPUT_BYTES[\s\S]*?!outputComplete[\s\S]*?reject\(new Error\(`\$\{label\} returned an incomplete output frame\.`\)\);[\s\S]*?if \(code === 0\)/u,
+  "one-shot utility output must track errors and require a complete bounded frame before success",
 );
 
 console.log("vera workspace packaged bridge audit passed");

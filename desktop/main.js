@@ -761,6 +761,7 @@ function forkUtility(label, modulePath, args, options) {
   }
   const child = utilityProcess.fork(modulePath, args, {
     cwd: options.cwd,
+    execArgv: [],
     env: {
       ...selectedProcessEnvironment(CHILD_RUNTIME_ENV_KEYS),
       ...options.env,
@@ -895,33 +896,35 @@ async function connectCredentialWorkerToBackend(credentialWorker, backend) {
   }
 }
 
-function waitForUtilityStreamDrain(stream, timeoutMs = 1_000) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      stream?.off("end", finish);
-      stream?.off("close", finish);
-      stream?.off("error", finish);
-      resolve();
-    };
-    const timeout = setTimeout(finish, timeoutMs);
-    if (!stream || stream.readableEnded || stream.destroyed) {
-      setImmediate(finish);
-      return;
-    }
-    stream.once("end", finish);
-    stream.once("close", finish);
-    stream.once("error", finish);
-  });
+const MAX_UTILITY_OUTPUT_BYTES = 32_768;
+
+function hasCompleteUtilityOutputFrame(output) {
+  if (!output || Buffer.byteLength(output) > MAX_UTILITY_OUTPUT_BYTES) {
+    return false;
+  }
+  const newline = output.indexOf("\n");
+  return newline === output.length - 1;
+}
+
+async function waitForUtilityOutputFrame(
+  readOutput,
+  outputFailed,
+  timeoutMs = 10_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (outputFailed()) return false;
+    if (hasCompleteUtilityOutputFrame(readOutput())) return true;
+    await wait(10);
+  }
+  return false;
 }
 
 function runUtilityOnce(label, modulePath, options) {
   return new Promise((resolve, reject) => {
     const child = utilityProcess.fork(modulePath, options.args ?? [], {
       cwd: options.cwd,
+      execArgv: [],
       env: {
         ...selectedProcessEnvironment(CHILD_RUNTIME_ENV_KEYS),
         ...options.env,
@@ -932,25 +935,57 @@ function runUtilityOnce(label, modulePath, options) {
     children.add(child);
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
     const stdoutStream = child.stdout;
     const stderrStream = child.stderr;
+    let stdoutStreamFailed = false;
+    let stderrStreamFailed = false;
+    const markStdoutStreamFailed = () => {
+      stdoutStreamFailed = true;
+    };
+    const markStderrStreamFailed = () => {
+      stderrStreamFailed = true;
+    };
+    stdoutStream?.on("error", markStdoutStreamFailed);
+    stderrStream?.on("error", markStderrStreamFailed);
     const timeout = setTimeout(() => {
       child.kill();
       reject(new Error(`${label} timed out.`));
     }, options.timeoutMs ?? 120_000);
     stdoutStream?.on("data", (chunk) => {
-      stdout = `${stdout}${chunk.toString()}`.slice(-32_768);
+      stdoutBytes += chunk.length;
+      stdout = `${stdout}${chunk.toString()}`.slice(
+        -MAX_UTILITY_OUTPUT_BYTES,
+      );
     });
     stderrStream?.on("data", (chunk) => {
-      stderr = `${stderr}${chunk.toString()}`.slice(-32_768);
+      stderr = `${stderr}${chunk.toString()}`.slice(
+        -MAX_UTILITY_OUTPUT_BYTES,
+      );
     });
     child.once("exit", async (code) => {
       clearTimeout(timeout);
-      await Promise.all([
-        waitForUtilityStreamDrain(stdoutStream),
-        waitForUtilityStreamDrain(stderrStream),
-      ]);
+      const outputComplete =
+        code === 0
+          ? await waitForUtilityOutputFrame(
+              () => stdout,
+              () => stdoutStreamFailed,
+            )
+          : false;
+      stdoutStream?.off("error", markStdoutStreamFailed);
+      stderrStream?.off("error", markStderrStreamFailed);
       children.delete(child);
+      if (
+        code === 0 &&
+        (stdoutStreamFailed ||
+          stderrStreamFailed ||
+          stdoutBytes > MAX_UTILITY_OUTPUT_BYTES ||
+          !outputComplete)
+      ) {
+        desktopLog("error", label, "utility_output_incomplete", { code });
+        reject(new Error(`${label} returned an incomplete output frame.`));
+        return;
+      }
       if (code === 0) {
         desktopLog("info", label, "utility_complete", {
           output_bytes: Buffer.byteLength(stdout),

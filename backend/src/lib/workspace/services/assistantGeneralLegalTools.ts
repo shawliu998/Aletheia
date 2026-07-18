@@ -14,6 +14,10 @@ import type {
   AssistantToolLifecycleInput,
   AssistantToolLifecycleResult,
 } from "./assistantRuntime";
+import type {
+  AssistantActionLedgerRecord,
+  WorkspaceAssistantActionLedger,
+} from "./assistantActionLedger";
 import type { AssistantToolModule } from "./assistantToolRegistry";
 
 export const ASSISTANT_GENERAL_LEGAL_TOOL_MODULE_ID =
@@ -168,6 +172,10 @@ export type GeneralLegalTabularDraftInput = Readonly<{
 }>;
 
 export type AssistantGeneralLegalToolsOptions = Readonly<{
+  actions: Pick<
+    WorkspaceAssistantActionLedger,
+    "reserve" | "complete" | "get" | "list"
+  >;
   assertCurrentDocuments: (
     projectId: string,
     documents: readonly DocumentSnapshot[],
@@ -472,6 +480,32 @@ function reviewBinding(
   };
 }
 
+function extractionAction(binding: ReviewBinding) {
+  const input = {
+    schema: "vera-assistant-general-extraction-action-v1",
+    kind: binding.kind,
+    reviewId: binding.reviewId,
+    projectId: binding.projectId,
+    modelProfileId: binding.modelProfileId,
+    title: binding.title,
+    documents: binding.documents,
+    // Tabular Review persistence intentionally records the canonical output
+    // type, not the user-facing date/text format.  Keep this projection
+    // exactly reconstructible after a restart so reserve() rechecks the
+    // immutable ledger input hash against durable Review state.
+    columns: binding.columns.map((column) => ({
+      key: column.key,
+      name: column.name,
+      instruction: column.instruction,
+      outputType: column.outputType,
+    })),
+  } as const;
+  return {
+    actionKey: `custom-extraction:${binding.reviewId}`,
+    input,
+  };
+}
+
 function hasTimelineColumnSnapshot(detail: TabularReviewDetail) {
   const persisted = [...detail.columns]
     .sort((left, right) => left.ordinal - right.ordinal)
@@ -635,6 +669,112 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
     this.options.assertCurrentDocuments(binding.projectId, binding.documents);
   }
 
+  private assertCompletedExtractionAction(
+    action: AssistantActionLedgerRecord | null,
+    context: AssistantToolContext,
+    reviewId: string,
+  ) {
+    if (
+      !action ||
+      action.status !== "complete" ||
+      action.actionType !== "run_custom_extraction" ||
+      action.projectId !== context.projectId ||
+      action.resourceType !== "tabular_review" ||
+      action.resourceId !== reviewId
+    ) {
+      throw new AssistantGeneralLegalToolError(
+        "Extraction Review is not a completed action owned by this Assistant generation.",
+      );
+    }
+  }
+
+  private assertRecoveredBinding(
+    detail: TabularReviewDetail,
+    context: AssistantToolContext,
+  ) {
+    const documents = attachedDocuments(context);
+    if (
+      detail.review.projectId !== context.projectId ||
+      detail.review.workflowId !== null ||
+      detail.review.modelProfileId !== context.modelProfileId ||
+      !isDeepStrictEqual(
+        detail.review.documentIds,
+        documents.map((document) => document.documentId),
+      )
+    ) {
+      throw new AssistantGeneralLegalToolError(
+        "Recovered Extraction Review does not match the current Assistant Matter snapshot.",
+      );
+    }
+    this.options.assertCurrentDocuments(context.projectId!, documents);
+    return documents;
+  }
+
+  private recoveredReviewBinding(
+    detail: TabularReviewDetail,
+    context: AssistantToolContext,
+  ): ReviewBinding {
+    const documents = this.assertRecoveredBinding(detail, context);
+    return {
+      kind: hasTimelineColumnSnapshot(detail)
+        ? "timeline"
+        : "custom_extraction",
+      reviewId: detail.review.id,
+      projectId: context.projectId!,
+      modelProfileId: context.modelProfileId,
+      title: detail.review.title,
+      documents,
+      columns: [...detail.columns]
+        .sort((left, right) => left.ordinal - right.ordinal)
+        .map((column) => {
+          if (
+            column.outputType !== "text" &&
+            column.outputType !== "number" &&
+            column.outputType !== "boolean"
+          ) {
+            throw new AssistantGeneralLegalToolError(
+              "Recovered Extraction Review has an unsupported column type.",
+            );
+          }
+          return {
+            name: column.title,
+            instruction: column.prompt,
+            format: "text" as const,
+            key: column.key,
+            outputType: column.outputType,
+          };
+        }),
+    };
+  }
+
+  private reserveRecoveredExtraction(
+    context: AssistantToolContext,
+    detail: TabularReviewDetail,
+  ) {
+    const binding = this.recoveredReviewBinding(detail, context);
+    const action = extractionAction(binding);
+    // Do not reserve an action solely because a same-Matter Review happens to
+    // resemble an extraction.  The durable action must already exist for
+    // this exact generation before the current fenced attempt revalidates it.
+    const existing = this.options.actions.get(context.jobId, action.actionKey);
+    this.assertCompletedExtractionAction(existing, context, binding.reviewId);
+    const reservation = this.options.actions.reserve({
+      jobId: context.jobId,
+      attempt: context.attempt,
+      leaseOwner: context.leaseOwner,
+      projectId: binding.projectId,
+      actionKey: action.actionKey,
+      actionType: "run_custom_extraction",
+      input: action.input,
+    });
+    this.assertCompletedExtractionAction(
+      reservation.record,
+      context,
+      binding.reviewId,
+    );
+    return binding;
+  }
+
   private reviewEvent(state: GenerationState, binding: ReviewBinding) {
     if (state.emittedReviewIds.has(binding.reviewId)) return [];
     state.emittedReviewIds.add(binding.reviewId);
@@ -716,12 +856,30 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
   ) {
     const state = this.generation(context);
     const binding = reviewBinding(context, input);
+    const action = extractionAction(binding);
     this.options.assertCurrentDocuments(binding.projectId, binding.documents);
+    const reservation = this.options.actions.reserve({
+      jobId: context.jobId,
+      attempt: context.attempt,
+      leaseOwner: context.leaseOwner,
+      projectId: binding.projectId,
+      actionKey: action.actionKey,
+      actionType: "run_custom_extraction",
+      input: action.input,
+    });
+    if (reservation.record.status === "complete") {
+      this.assertCompletedExtractionAction(
+        reservation.record,
+        context,
+        binding.reviewId,
+      );
+    }
     let detail: TabularReviewDetail;
     try {
       detail = this.tabular().get(binding.reviewId);
       this.assertBinding(detail, binding);
-    } catch {
+    } catch (error) {
+      if (reservation.record.status === "complete") throw error;
       try {
         detail = this.tabular().createPresetReviewWithId(binding.reviewId, {
           projectId: binding.projectId,
@@ -736,11 +894,26 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
             outputType: column.outputType,
           })),
         });
-      } catch {
-        detail = this.tabular().get(binding.reviewId);
-        this.assertBinding(detail, binding);
+      } catch (createError) {
+        try {
+          detail = this.tabular().get(binding.reviewId);
+          this.assertBinding(detail, binding);
+        } catch {
+          throw createError;
+        }
       }
     }
+    this.options.actions.complete({
+      jobId: context.jobId,
+      attempt: context.attempt,
+      leaseOwner: context.leaseOwner,
+      projectId: binding.projectId,
+      actionKey: action.actionKey,
+      actionType: "run_custom_extraction",
+      input: action.input,
+      resourceType: "tabular_review",
+      resourceId: binding.reviewId,
+    });
     state.reviews.set(binding.reviewId, binding);
     state.calls.set(callId, binding);
     if (!terminal(detail.review.status))
@@ -821,22 +994,20 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
       );
     }
     const binding = state.reviews.get(input.review_id);
-    if (binding) this.assertBinding(detail, binding);
+    let kind: ReviewBinding["kind"];
+    if (binding) {
+      this.assertBinding(detail, binding);
+      kind = binding.kind;
+    } else {
+      kind = this.reserveRecoveredExtraction(context, detail).kind;
+    }
     if (detail.review.workflowId !== null) {
       throw new AssistantGeneralLegalToolError(
         "A memo can only be created from a completed Assistant custom extraction or timeline Review.",
       );
     }
-    const timeline =
-      binding?.kind === "custom_extraction"
-        ? false
-        : hasTimelineColumnSnapshot(detail);
-    if (!binding && !timeline) {
-      throw new AssistantGeneralLegalToolError(
-        "Cannot safely determine this Review's extraction preset. Re-run the custom extraction or timeline before creating a memo.",
-      );
-    }
-    if (binding?.kind === "timeline" && !timeline) {
+    const timeline = kind === "timeline";
+    if (timeline && !hasTimelineColumnSnapshot(detail)) {
       throw new AssistantGeneralLegalToolError(
         "The persisted Review columns no longer match the timeline preset.",
       );
@@ -846,7 +1017,17 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
       (timeline
         ? `${detail.review.title} — 案件事实摘要`
         : `${detail.review.title} Memo`);
-    const operationId = `assistant-review-memo:${deterministicUuid(JSON.stringify([context.jobId, input.review_id, title]))}`;
+    // A model may propose a different display title when replaying the same
+    // tool call.  The durable Studio identity belongs to the generation's
+    // Review handoff, not to that untrusted presentation field.
+    const operationId = `assistant-review-memo:${deterministicUuid(
+      JSON.stringify([
+        "vera-assistant-review-memo-v1",
+        context.jobId,
+        input.review_id,
+        timeline ? "case_fact_summary" : "custom_extraction_summary",
+      ]),
+    )}`;
     const result = await this.options.createDraftFromTabularReview(context, {
       reviewId: input.review_id,
       kind: timeline ? "case_fact_summary" : "custom_extraction_summary",
@@ -924,6 +1105,37 @@ export class WorkspaceAssistantGeneralLegalToolModule implements AssistantToolMo
       if (state.settledReviewIds.has(binding.reviewId)) continue;
       const detail = await this.waitForTerminal(binding.reviewId, input.signal);
       this.assertBinding(detail, binding);
+      state.cancellations.get(binding.reviewId)?.();
+      state.settledReviewIds.add(binding.reviewId);
+      events.push(...this.reviewEvent(state, binding));
+    }
+    // A process restart loses the in-memory review map.  Recover only
+    // resource ids durably completed by this exact Assistant generation;
+    // never infer ownership from an arbitrary custom review in the Matter.
+    for (const action of this.options.actions.list(
+      input.context.jobId,
+      "run_custom_extraction",
+    )) {
+      if (action.status !== "complete") continue;
+      if (!action.resourceId || state.settledReviewIds.has(action.resourceId)) {
+        continue;
+      }
+      let detail = this.tabular().get(action.resourceId);
+      const binding = this.reserveRecoveredExtraction(input.context, detail);
+      if (binding.reviewId !== action.resourceId) {
+        throw new AssistantGeneralLegalToolError(
+          "Recovered Extraction Review resource binding is invalid.",
+        );
+      }
+      throwIfAborted(input.signal);
+      if (!terminal(detail.review.status)) {
+        detail = this.tabular().runReview(binding.reviewId).review;
+        if (!terminal(detail.review.status)) {
+          this.retainCancellation(state, binding, input.signal);
+        }
+      }
+      detail = await this.waitForTerminal(binding.reviewId, input.signal);
+      this.assertRecoveredBinding(detail, input.context);
       state.cancellations.get(binding.reviewId)?.();
       state.settledReviewIds.add(binding.reviewId);
       events.push(...this.reviewEvent(state, binding));

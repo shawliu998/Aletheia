@@ -18,9 +18,7 @@ const executablePath = path.join(appPath, "Contents", "MacOS", "Vera");
 const frontendPort = Number(
   process.env.ALETHEIA_DESKTOP_FRONTEND_PORT ?? 43760,
 );
-const backendPort = Number(
-  process.env.ALETHEIA_DESKTOP_BACKEND_PORT ?? 43761,
-);
+const backendPort = Number(process.env.ALETHEIA_DESKTOP_BACKEND_PORT ?? 43761);
 const frontendUrl = `http://127.0.0.1:${frontendPort}/assistant`;
 const backendBaseUrl = `http://127.0.0.1:${backendPort}`;
 const backendHealthUrl = `${backendBaseUrl}/health`;
@@ -103,42 +101,9 @@ function readPendingRestoreRecord(recordPath, expectedTarget) {
   return record;
 }
 
-function captureLogCheckpoint(logPath) {
-  const info = assertOwnerOnlyRegularFile(logPath, "Desktop audit log");
-  return { device: info.dev, inode: info.ino, bytes: info.size };
-}
-
-function restoreUtilityCompleted(logPath, checkpoint) {
-  const info = assertOwnerOnlyRegularFile(logPath, "Desktop audit log");
-  if (
-    info.dev !== checkpoint.device ||
-    info.ino !== checkpoint.inode ||
-    info.size < checkpoint.bytes
-  ) {
-    throw new Error("Desktop audit log changed identity during restore.");
-  }
-  const appended = fs
-    .readFileSync(logPath)
-    .subarray(checkpoint.bytes)
-    .toString("utf8");
-  const completeBytes = appended.lastIndexOf("\n");
-  if (completeBytes < 0) return false;
-  return appended
-    .slice(0, completeBytes)
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line))
-    .some(
-      (record) =>
-        record?.component === "encrypted_restore" &&
-        record?.event === "utility_complete" &&
-        Number.isSafeInteger(record?.detail?.output_bytes) &&
-        record.detail.output_bytes > 0,
-    );
-}
-
 async function waitForCompletedRestoreSwap(args, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
+  let lastPhase = "pending record not written";
   while (Date.now() < deadline) {
     if (!lstatOrNull(args.pendingRestorePath)) {
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -150,16 +115,8 @@ async function waitForCompletedRestoreSwap(args, timeoutMs = 90_000) {
     );
     const targetInfo = lstatOrNull(record.target);
     const rollbackInfo = lstatOrNull(record.rollback);
-    const utilityComplete = restoreUtilityCompleted(
-      args.logPath,
-      args.logCheckpoint,
-    );
     if (!targetInfo || !rollbackInfo) {
-      if (utilityComplete) {
-        throw new Error(
-          "Restore utility exited before the workspace swap completed.",
-        );
-      }
+      lastPhase = `workspace swap incomplete (target=${Boolean(targetInfo)}, rollback=${Boolean(rollbackInfo)})`;
       await new Promise((resolve) => setTimeout(resolve, 25));
       continue;
     }
@@ -183,10 +140,15 @@ async function waitForCompletedRestoreSwap(args, timeoutMs = 90_000) {
     if (databaseInfo.isSymbolicLink() || !databaseInfo.isFile()) {
       throw new Error("Restored workspace database is unsafe or missing.");
     }
-    if (utilityComplete) return record;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The pending transaction record plus the validated target and rollback
+    // directories are the observable post-swap recovery state. The test
+    // process is deliberately exited immediately after this point, so its log
+    // is useful diagnostics but must not be a second completion signal.
+    return record;
   }
-  throw new Error("Timed out waiting for a completed post-swap restore.");
+  throw new Error(
+    `Timed out waiting for a completed post-swap restore: ${lastPhase}.`,
+  );
 }
 
 async function settlesWithin(promise, timeoutMs) {
@@ -298,7 +260,9 @@ async function main() {
     let page = await electronApp.firstWindow();
     await page.waitForURL(frontendUrl, { timeout: 180_000 });
     await waitForHealth();
-    let token = await page.evaluate(() => window.aletheiaDesktop.getAuthToken());
+    let token = await page.evaluate(() =>
+      window.aletheiaDesktop.getAuthToken(),
+    );
     let headers = { Authorization: `Bearer ${token}` };
     const createMatter = async (title) => {
       const response = await fetch(`${backendBaseUrl}/aletheia/matters`, {
@@ -317,7 +281,9 @@ async function main() {
         }),
       });
       if (response.status !== 201) {
-        throw new Error(`Matter creation failed (${response.status}): ${await response.text()}`);
+        throw new Error(
+          `Matter creation failed (${response.status}): ${await response.text()}`,
+        );
       }
       return response.json();
     };
@@ -335,7 +301,9 @@ async function main() {
       { method: "POST", headers, body: evidenceForm },
     );
     if (uploaded.status !== 201) {
-      throw new Error(`Document upload failed (${uploaded.status}): ${await uploaded.text()}`);
+      throw new Error(
+        `Document upload failed (${uploaded.status}): ${await uploaded.text()}`,
+      );
     }
     const preservedDocument = await uploaded.json();
     assert.equal(preservedDocument.parsed_status, "parsed");
@@ -376,7 +344,11 @@ async function main() {
       window.aletheiaDesktop.inspectEncryptedBackup(),
     );
     assert.equal(inspected.canceled, false);
-    assert.equal(inspected.ok, true);
+    assert.equal(
+      inspected.ok,
+      true,
+      `Created backup preflight failed: ${JSON.stringify(inspected)}`,
+    );
     assert.ok((inspected.files ?? 0) > 0);
     assert.ok((inspected.bytes ?? 0) > 0);
     assert.ok(inspected.checks?.length === 4);
@@ -402,13 +374,6 @@ async function main() {
       });
     });
     const pendingRestorePath = path.join(userDataDir, "pending-restore.json");
-    const desktopLogPath = path.join(
-      userDataDir,
-      "logs",
-      "vera",
-      "vera.log",
-    );
-    const restoreLogCheckpoint = captureLogCheckpoint(desktopLogPath);
     const localDataPath = path.join(userDataDir, "aletheia-data");
     const expectedRestoreTarget = path.join(
       fs.realpathSync(path.dirname(localDataPath)),
@@ -427,8 +392,6 @@ async function main() {
       expectedTarget: expectedRestoreTarget,
       postBackupMarker,
       markerContents: postBackupMarkerContents,
-      logPath: desktopLogPath,
-      logCheckpoint: restoreLogCheckpoint,
     });
     if (!processHasExited(interruptedProcess)) {
       interruptedProcess.kill("SIGKILL");
@@ -448,7 +411,10 @@ async function main() {
     await waitForHealth();
     token = await page.evaluate(() => window.aletheiaDesktop.getAuthToken());
     headers = { Authorization: `Bearer ${token}` };
-    assert.equal(fs.existsSync(path.join(userDataDir, "pending-restore.json")), false);
+    assert.equal(
+      fs.existsSync(path.join(userDataDir, "pending-restore.json")),
+      false,
+    );
     assert.equal(fs.existsSync(postBackupMarker), true);
     const recoveredMatterResponse = await fetch(
       `${backendBaseUrl}/aletheia/matters/${rolledBackMatter.id}`,

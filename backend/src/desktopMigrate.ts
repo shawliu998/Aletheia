@@ -44,18 +44,18 @@ if (existsSync(backupDir) && readdirSync(backupDir).length === 0) {
   rmdirSync(backupDir);
 }
 
-console.log(
-  JSON.stringify({
-    schema_version: "aletheia-desktop-migration-v1",
-    database:
-      database === null
-        ? { status: "not_present" }
-        : {
-            status: database.status,
-            applied: database.applied,
-            encrypted_bytes: statSync(databasePath).size,
-          },
-    files: files.counts,
-  }),
-);
-process.exit(0);
+const output = `${JSON.stringify({
+  schema_version: "aletheia-desktop-migration-v1",
+  database:
+    database === null
+      ? { status: "not_present" }
+      : {
+          status: database.status,
+          applied: database.applied,
+          encrypted_bytes: statSync(databasePath).size,
+        },
+  files: files.counts,
+})}\n`;
+process.stdout.write(output, (error) => {
+  process.exit(error ? 1 : 0);
+});

@@ -67,6 +67,7 @@ class AuditCredentialStore implements SynchronousCredentialStorePort {
 type ProviderControl = {
   assistantCalls: number;
   tabularCalls: number;
+  holdMemo: boolean;
   requests: Array<{ feature: string | null; authorization: string | null }>;
 };
 
@@ -177,6 +178,22 @@ function fakeOpenAiFetch(control: ProviderControl): typeof fetch {
           content.includes('"run_custom_extraction"'),
         )
       ) {
+        if (control.holdMemo) {
+          // Hold the memo round open so the runtime can stop with the Review
+          // already terminal but before create_memo_from_tabular_review runs.
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            const abort = () =>
+              reject(
+                new DOMException("The operation was aborted.", "AbortError"),
+              );
+            if (!signal || signal.aborted) {
+              abort();
+              return;
+            }
+            signal.addEventListener("abort", abort, { once: true });
+          });
+        }
         if (scenario === "timeline-memo" || scenario === "custom-memo") {
           return toolResponse(
             `${scenario}-draft`,
@@ -565,6 +582,7 @@ async function main() {
   const control: ProviderControl = {
     assistantCalls: 0,
     tabularCalls: 0,
+    holdMemo: false,
     requests: [],
   };
   const registry = new WorkspaceModelProviderRegistry(credentials, {
@@ -836,6 +854,201 @@ async function main() {
       "timeline fact summaries do not write the contract-only v23 handoff table",
     );
 
+    // P1 durability: the process restarts after the custom Review is terminal
+    // but before create_memo_from_tabular_review. The reclaimed attempt must
+    // rebuild the durable generation-to-review binding, create no second
+    // Review, and still produce exactly one custom_extraction_summary memo.
+    const reviewsBeforeRestart = Number(
+      database.prepare("SELECT count(*) AS count FROM tabular_reviews").get()
+        ?.count,
+    );
+    const draftsBeforeRestart = Number(
+      database
+        .prepare("SELECT count(*) AS count FROM documents WHERE project_id=?")
+        .get(fixture.projectId)?.count,
+    );
+    const assistantCallsBeforeHold = control.assistantCalls;
+    control.holdMemo = true;
+    const reclaimed = await requestAssistant({
+      ...fixture,
+      runtime,
+      title: "Reclaimed custom extraction memo",
+      prompt:
+        "[custom-memo] Extract the notice facts from the attached documents and create a memo from the completed Review.",
+    });
+    let boundReviewId: string | null = null;
+    await waitFor(() => {
+      if (control.assistantCalls !== assistantCallsBeforeHold + 3) return false;
+      const action = database!
+        .prepare(
+          `SELECT resource_id FROM assistant_action_ledger
+            WHERE job_id=? AND action_type='run_custom_extraction'
+              AND status='complete'`,
+        )
+        .get(reclaimed.jobId);
+      if (typeof action?.resource_id !== "string") return false;
+      const status = database!
+        .prepare("SELECT status FROM tabular_reviews WHERE id=?")
+        .get(action.resource_id)?.status;
+      if (status !== "complete") return false;
+      boundReviewId = action.resource_id;
+      return true;
+    }, "the terminal custom Review to be durably bound before the held memo call");
+    assert.ok(boundReviewId);
+
+    await runtime.stop();
+    runtime = null;
+    database = new WorkspaceDatabase(databasePath);
+    const reclaimedBlobs = new LocalWorkspaceBlobStore({
+      root: blobRoot,
+      codec: new IdentityCodec(),
+      allowUnencryptedCodec: true,
+    });
+    runtime = new WorkspaceRuntime({
+      database,
+      blobs: reclaimedBlobs,
+      dataDir,
+      credentialStore: credentials,
+      modelProviderRegistry: registry,
+    });
+    control.holdMemo = false;
+    await runtime.start();
+    const interruptedJob = database
+      .prepare("SELECT status,attempt FROM jobs WHERE id=?")
+      .get(reclaimed.jobId);
+    assert.equal(interruptedJob?.status, "interrupted");
+    assert.equal(
+      interruptedJob?.attempt,
+      1,
+      "the restart interrupts the generation after the terminal Review but before the memo",
+    );
+    runtime.jobs.retryJob(reclaimed.jobId);
+    const reclaimedChats = requireChats(runtime);
+    const reclaimedStatus = await waitForTerminalGeneration({
+      runtime,
+      context: fixture.context,
+      jobId: reclaimed.jobId,
+      label: "the reclaimed custom extraction memo",
+    });
+    const reclaimedReplay = await reclaimedChats.generationEvents(
+      fixture.context,
+      reclaimed.jobId,
+      { cursor: 0, limit: 100 },
+    );
+    if (reclaimedStatus !== "complete") {
+      const job = database
+        .prepare("SELECT error_code,error_json FROM jobs WHERE id=?")
+        .get(reclaimed.jobId);
+      assert.fail(
+        `Reclaimed extraction memo failed: ${JSON.stringify({ events: reclaimedReplay.events, job })}`,
+      );
+    }
+    assert.equal(
+      reclaimedReplay.attempt,
+      2,
+      "the reclaimed job resumes on a new fenced attempt",
+    );
+    assert.equal(
+      reclaimedReplay.events.filter(
+        (entry) => entry.event.type === "tabular_review_created",
+      ).length,
+      1,
+      "the reclaimed attempt emits exactly one Review event",
+    );
+    assert.equal(
+      reclaimedReplay.events.filter(
+        (entry) => entry.event.type === "draft_created",
+      ).length,
+      1,
+      "the reclaimed attempt emits exactly one memo Draft event",
+    );
+    const reclaimedArtifacts = eventIds(reclaimedReplay.events);
+    assert.equal(
+      reclaimedArtifacts.reviewId,
+      boundReviewId,
+      "the reclaimed attempt reuses the durably bound Review",
+    );
+    assert.ok(reclaimedArtifacts.draftId);
+    assert.equal(
+      Number(
+        database.prepare("SELECT count(*) AS count FROM tabular_reviews").get()
+          ?.count,
+      ),
+      reviewsBeforeRestart + 1,
+      "the reclaimed attempt must not create a second Review",
+    );
+    const reclaimedLedgerRows = database
+      .prepare(
+        `SELECT status,resource_type,resource_id FROM assistant_action_ledger
+          WHERE job_id=? AND action_type='run_custom_extraction'`,
+      )
+      .all(reclaimed.jobId);
+    assert.equal(reclaimedLedgerRows.length, 1);
+    assert.equal(reclaimedLedgerRows[0]?.status, "complete");
+    assert.equal(reclaimedLedgerRows[0]?.resource_type, "tabular_review");
+    assert.equal(
+      reclaimedLedgerRows[0]?.resource_id,
+      boundReviewId,
+      "one durable ledger action binds the generation to the Review",
+    );
+    const reclaimedJob = database
+      .prepare("SELECT status,attempt FROM jobs WHERE id=?")
+      .get(reclaimed.jobId);
+    assert.equal(reclaimedJob?.status, "complete");
+    assert.equal(reclaimedJob?.attempt, 2);
+    const reclaimedMemo = await runtime.getStudioDocument(
+      fixture.context,
+      fixture.projectId,
+      reclaimedArtifacts.draftId,
+    );
+    assert.match(
+      reclaimedMemo.content,
+      /\| Source document \| Notice date \| Notice fact \|/,
+    );
+    assert.match(reclaimedMemo.content, new RegExp(QUOTE));
+    assert.equal(
+      database
+        .prepare(
+          "SELECT document_type FROM document_studio_draft_metadata WHERE document_id=?",
+        )
+        .get(reclaimedArtifacts.draftId)?.document_type,
+      "general_legal_document",
+    );
+    const reclaimedDocx = await runtime.exportStudioDocumentDocx(
+      fixture.context,
+      fixture.projectId,
+      reclaimedArtifacts.draftId,
+    );
+    assert.match(reclaimedDocx.filename, /\.docx$/);
+    assert.equal(
+      reclaimedDocx.contentType,
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    assert.ok(
+      reclaimedDocx.bytes.length > 128,
+      "the reclaimed memo meets the real DOCX export precondition",
+    );
+    assert.equal(
+      Number(
+        database
+          .prepare("SELECT count(*) AS count FROM documents WHERE project_id=?")
+          .get(fixture.projectId)?.count,
+      ),
+      draftsBeforeRestart + 1,
+      "the reclaimed attempt must not create a second memo Draft",
+    );
+    assert.equal(
+      Number(
+        database
+          .prepare(
+            "SELECT count(*) AS count FROM tabular_review_studio_handoffs",
+          )
+          .get()?.count,
+      ),
+      0,
+      "the reclaimed custom extraction memo still avoids the contract-only v23 table",
+    );
+
     assert.equal(
       control.requests.every(
         (request) => request.authorization === `Bearer ${SECRET}`,
@@ -853,6 +1066,8 @@ async function main() {
             "the durable pump runs actual Tabular cell jobs and the persisted Review produces a real XLSX resource",
             "custom extraction summaries use the shared prepared Review-to-Studio path without writing the v23 contract-only table",
             "the timeline preset waits to completion before create_memo_from_tabular_review creates an evidence-based Studio Draft with a real DOCX export precondition",
+            "a restart after the terminal custom Review but before the memo reclaims the job on a fenced second attempt without a second Review",
+            "the reclaimed attempt rebuilds the durable ledger binding and produces exactly one custom_extraction_summary memo with a real DOCX export precondition",
           ],
         },
         null,

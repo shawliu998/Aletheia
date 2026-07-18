@@ -23,6 +23,7 @@ import { LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION } from "./v22LegalResearchPers
 import { TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION } from "./v23TabularReviewStudioHandoffs";
 import { ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION } from "./v24AssistantContractReview";
 import { ASSISTANT_TASK_EVENTS_V25_MIGRATION } from "./v25AssistantTaskEvents";
+import { ASSISTANT_CUSTOM_EXTRACTION_V26_MIGRATION } from "./v26AssistantCustomExtraction";
 
 export {
   detectWorkspaceDatabaseCapabilities,
@@ -63,6 +64,7 @@ export { LEGAL_RESEARCH_PERSISTENCE_V22_MIGRATION } from "./v22LegalResearchPers
 export { TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION } from "./v23TabularReviewStudioHandoffs";
 export { ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION } from "./v24AssistantContractReview";
 export { ASSISTANT_TASK_EVENTS_V25_MIGRATION } from "./v25AssistantTaskEvents";
+export { ASSISTANT_CUSTOM_EXTRACTION_V26_MIGRATION } from "./v26AssistantCustomExtraction";
 
 export const WORKSPACE_MIGRATIONS = [
   INITIAL_WORKSPACE_MIGRATION,
@@ -90,4 +92,5 @@ export const WORKSPACE_MIGRATIONS = [
   TABULAR_REVIEW_STUDIO_HANDOFFS_V23_MIGRATION,
   ASSISTANT_CONTRACT_REVIEW_V24_MIGRATION,
   ASSISTANT_TASK_EVENTS_V25_MIGRATION,
+  ASSISTANT_CUSTOM_EXTRACTION_V26_MIGRATION,
 ] as const;

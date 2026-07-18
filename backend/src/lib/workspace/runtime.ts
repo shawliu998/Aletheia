@@ -828,6 +828,7 @@ export class WorkspaceRuntime
           new WorkspaceAssistantGeneralLegalToolModule(
             () => this.tabularService,
             {
+              actions: assistantActions,
               available: () => this.tabularGenerationEnabled,
               assertCurrentDocuments: (projectId, documents) => {
                 for (const document of documents) {

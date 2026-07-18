@@ -5,7 +5,7 @@ tests take precedence over historical programme text below.
 
 ## Current product — local general legal workspace
 
-Status on 2026-07-17: the product baseline is `main`, Workspace schema v25,
+Status on 2026-07-18: the product baseline is `main`, Workspace schema v26,
 at the **Vera General Legal Agent Preview** milestone.
 
 ```text
@@ -22,7 +22,7 @@ Current branch:
 main
 
 Current schema:
-v25
+v26
 
 Current milestone:
 Vera General Legal Agent Preview
@@ -116,6 +116,14 @@ If an unusually long Review outlives the same Assistant generation's bounded
 tool loop, the Review remains durable and can use the existing manual Studio
 handoff; cross-generation background Memo finalization is not claimed in this
 slice.
+
+Schema v25 adds durable task-plan and task-step events to the existing
+Assistant outbox. Schema v26 adds a bounded custom-extraction action binding to
+the same action ledger. If the process restarts after creating or binding a
+custom/timeline Review, the new fenced attempt revalidates the exact persisted
+Matter, model, document-version and column projection before resuming that same
+Review. An unbound Review is rejected, and memo identity is independent of a
+model-proposed display title so retries cannot create a second Draft.
 
 The deterministic legal-work vertical uses the test-only Provider to verify
 search -> durable read -> cited Assistant answer -> cited Studio Draft -> user

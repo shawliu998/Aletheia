@@ -7,6 +7,7 @@ export const ASSISTANT_ACTION_BUDGETS = {
   suggest_draft_edit: 5,
   run_workflow: 2,
   run_contract_review: 1,
+  run_custom_extraction: 2,
 } as const;
 
 export type AssistantActionType = keyof typeof ASSISTANT_ACTION_BUDGETS;
@@ -83,6 +84,7 @@ const ACTION_RESOURCE_TYPES: Readonly<
   suggest_draft_edit: "draft_suggestion",
   run_workflow: "workflow_run",
   run_contract_review: "tabular_review",
+  run_custom_extraction: "tabular_review",
 };
 const MAX_CANONICAL_INPUT_CHARACTERS = 1_000_000;
 const MAX_ATTEMPTS = 100;
@@ -565,5 +567,26 @@ export class WorkspaceAssistantActionLedger {
       boundedText(jobId, "Assistant action job id", 200),
       boundedText(actionKey, "Assistant action key", 240),
     );
+  }
+
+  /**
+   * Returns durable actions for one Assistant generation.  Callers must still
+   * validate the immutable action/resource binding before using a result.
+   */
+  list(jobId: string, type: AssistantActionType) {
+    const normalizedJobId = boundedText(jobId, "Assistant action job id", 200);
+    const normalizedActionType = actionType(type);
+    return this.database
+      .prepare(
+        `SELECT job_id,action_key,action_type,project_id,input_sha256,status,
+                reserved_attempt,reserved_lease_owner,
+                completed_attempt,completed_lease_owner,resource_type,resource_id,
+                created_at,updated_at,completed_at
+           FROM assistant_action_ledger
+          WHERE job_id=? AND action_type=?
+          ORDER BY action_key ASC`,
+      )
+      .all(normalizedJobId, normalizedActionType)
+      .map(mapRow);
   }
 }

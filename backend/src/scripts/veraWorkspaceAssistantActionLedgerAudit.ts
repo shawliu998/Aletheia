@@ -216,7 +216,7 @@ function auditUpgrade(root: string) {
   }
   const upgraded = new WorkspaceDatabase(pathName);
   try {
-    assert.equal(upgraded.migration?.currentVersion, 25);
+    assert.equal(upgraded.migration?.currentVersion, 26);
     assert.deepEqual(
       {
         ...upgraded
@@ -325,13 +325,14 @@ function run() {
     );
     assert.deepEqual(
       WORKSPACE_MIGRATIONS.map((migration) => migration.version),
-      Array.from({ length: 25 }, (_, index) => index + 1),
+      Array.from({ length: 26 }, (_, index) => index + 1),
     );
     assert.deepEqual(ASSISTANT_ACTION_BUDGETS, {
       create_draft: 1,
       suggest_draft_edit: 5,
       run_workflow: 2,
       run_contract_review: 1,
+      run_custom_extraction: 2,
     });
     assert.equal(
       hashAssistantActionInput({ b: 2, a: [true, null] }),
@@ -341,7 +342,7 @@ function run() {
 
     auditUpgrade(root);
     database = new WorkspaceDatabase(path.join(root, "fresh.sqlite"));
-    assert.equal(database.migration?.currentVersion, 25);
+    assert.equal(database.migration?.currentVersion, 26);
     for (const name of [
       "assistant_action_ledger_v19_insert_guard",
       "assistant_action_ledger_v19_update_guard",
@@ -617,6 +618,43 @@ function run() {
       "ACTION_BUDGET_EXHAUSTED",
     );
 
+    const extractionInputs = Array.from({ length: 2 }, (_, index) =>
+      reserveInput(
+        fixture,
+        "run_custom_extraction",
+        `logical:custom-extraction:${index}`,
+        { reviewId: randomUUID(), ordinal: index },
+      ),
+    );
+    for (const input of extractionInputs) {
+      assert.equal(ledger.reserve(input).created, true);
+    }
+    assertLedgerError(
+      () =>
+        ledger.reserve(
+          reserveInput(
+            fixture,
+            "run_custom_extraction",
+            "logical:custom-extraction:overflow",
+            { reviewId: randomUUID(), ordinal: 2 },
+          ),
+        ),
+      "ACTION_BUDGET_EXHAUSTED",
+    );
+    const extractionReviewId = randomUUID();
+    const completedExtraction = ledger.complete({
+      ...extractionInputs[0]!,
+      resourceType: "tabular_review",
+      resourceId: extractionReviewId,
+    });
+    assert.equal(completedExtraction.record.resourceId, extractionReviewId);
+    assert.deepEqual(
+      ledger
+        .list(fixture.jobId, "run_custom_extraction")
+        .map((record) => record.actionKey),
+      extractionInputs.map((input) => input.actionKey),
+    );
+
     fixture.jobs.finishClaim({
       id: fixture.jobId,
       leaseOwner: FIRST_LEASE_OWNER,
@@ -754,14 +792,14 @@ function run() {
       JSON.stringify(
         {
           ok: true,
-          suite: "vera-workspace-assistant-action-ledger-v19",
+          suite: "vera-workspace-assistant-action-ledger-v26",
           checks: [
-            "fresh and v18 upgrade migrations preserve v10 events and install the v19 schema",
+            "fresh and v18 upgrade migrations preserve v10 events and install the v26 action schema",
             "draft_created is nonterminal while v10 foreign-key, index, terminal, and immutability constraints remain intact",
             "stable canonical input hashes make same-key retries idempotent",
             "input, type, Matter, and stale-attempt conflicts fail closed",
             "wrong owner, expired lease, and requested cancellation reject reserve and complete in both service and SQLite guards",
-            "per-job action budgets are durably bounded at create=1 suggest=5 workflow=2",
+            "per-job action budgets are durably bounded at create=1 suggest=5 workflow=2 custom-extraction=2",
             "retry reuses the original reservation while recording completion on the current attempt",
             "only reserved-to-complete is accepted and completed resources are immutable",
             "database triggers independently enforce current Matter, attempt, budget, and state invariants",

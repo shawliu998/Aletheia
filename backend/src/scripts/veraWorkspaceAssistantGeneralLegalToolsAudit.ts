@@ -34,6 +34,8 @@ function context(attempt = 1): AssistantToolContext {
 class FakeTabular {
   readonly reviews = new Map<string, any>();
   creates = 0;
+  runs = 0;
+  completeOnRun = false;
   get(id: string) {
     const review = this.reviews.get(id);
     if (!review) throw new Error("missing");
@@ -76,9 +78,14 @@ class FakeTabular {
     return review;
   }
   runReview(id: string) {
+    this.runs += 1;
     const review = this.get(id);
     review.review.status = "running";
     for (const cell of review.cells) cell.status = "running";
+    if (this.completeOnRun) {
+      review.review.status = "complete";
+      for (const cell of review.cells) cell.status = "complete";
+    }
     return { review };
   }
   cancelReview(id: string) {
@@ -109,9 +116,54 @@ async function main() {
   const tabular = new FakeTabular();
   const writes: any[] = [];
   const tabularWrites: any[] = [];
+  const actionRecords = new Map<string, any>();
+  const actions = {
+    reserve(input: any) {
+      const existing = actionRecords.get(input.actionKey);
+      if (existing) {
+        if (existing.input !== JSON.stringify(input.input)) {
+          throw new AssistantGeneralLegalToolError(
+            "recovery must reserve the same immutable extraction projection",
+          );
+        }
+        return { record: existing, created: false };
+      }
+      const record = {
+        jobId: input.jobId,
+        actionKey: input.actionKey,
+        actionType: input.actionType,
+        projectId: input.projectId,
+        status: "reserved",
+        resourceType: null,
+        resourceId: null,
+        input: JSON.stringify(input.input),
+      };
+      actionRecords.set(input.actionKey, record);
+      return { record, created: true };
+    },
+    complete(input: any) {
+      const record = actionRecords.get(input.actionKey);
+      Object.assign(record, {
+        status: "complete",
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+      });
+      return { record, completed: true };
+    },
+    get(_jobId: string, actionKey: string) {
+      return actionRecords.get(actionKey) ?? null;
+    },
+    list(_jobId: string, actionType: string) {
+      return [...actionRecords.values()].filter(
+        (record) => record.actionType === actionType,
+      );
+    },
+  };
+  const tabularDrafts = new Map<string, any>();
   const module = new WorkspaceAssistantGeneralLegalToolModule(
     () => tabular as any,
     {
+      actions: actions as any,
       maxWaitMs: 0,
       initialPollMs: 1,
       maxPollMs: 1,
@@ -132,12 +184,16 @@ async function main() {
         };
       },
       async createDraftFromTabularReview(_context, input) {
+        const existing = tabularDrafts.get(input.operationId);
+        if (existing) return existing;
         tabularWrites.push(input);
-        return {
+        const result = {
           documentId: input.documentId,
           versionId: input.versionId,
           title: input.title,
         };
+        tabularDrafts.set(input.operationId, result);
+        return result;
       },
     },
   );
@@ -285,18 +341,6 @@ async function main() {
     JSON.parse(lifecycle?.replacementContent ?? "{}").review.status,
     "complete",
   );
-  const memo = await call(
-    module,
-    context(),
-    "create_memo_from_tabular_review",
-    { review_id: customResult.review.review_id },
-  );
-  assert.equal(
-    JSON.parse(memo.content).memo.draft_id,
-    tabularWrites[0].documentId,
-  );
-  assert.equal(tabularWrites[0].reviewId, customResult.review.review_id);
-  assert.equal(tabularWrites[0].kind, "custom_extraction_summary");
   const completedTimeline = tabular.get(timelineId);
   completedTimeline.review.status = "complete";
   const timelineValues: Record<string, string> = {
@@ -338,23 +382,17 @@ async function main() {
   assert.match(timelineReduced.content, /## 核心时间线/);
   assert.match(timelineReduced.content, /Payment is due within seven days\./);
   assert.match(timelineReduced.content, /## 证据引用/);
-  const factSummary = await call(
-    module,
-    context(),
-    "create_memo_from_tabular_review",
-    { review_id: timelineId },
-    "timeline-memo",
-  );
-  assert.equal(
-    JSON.parse(factSummary.content).memo.draft_id,
-    tabularWrites[1].documentId,
-  );
-  assert.equal(tabularWrites[1].reviewId, timelineId);
-  assert.equal(tabularWrites[1].kind, "case_fact_summary");
-  assert.match(tabularWrites[1].title, /案件事实摘要/);
+  // Simulate the precise crash window after the Review action is committed
+  // but before runReview begins. The reclaimed attempt must start this same
+  // durable Review rather than merely waiting or creating another one.
+  completed.review.status = "draft";
+  for (const cell of completed.cells) cell.status = "empty";
+  const runsBeforeRecovery = tabular.runs;
+  tabular.completeOnRun = true;
   const restarted = new WorkspaceAssistantGeneralLegalToolModule(
     () => tabular as any,
     {
+      actions: actions as any,
       assertCurrentDocuments(projectId, docs) {
         assert.equal(projectId, PROJECT);
         assert.deepEqual(docs, [
@@ -366,36 +404,133 @@ async function main() {
         throw new Error("not reached");
       },
       async createDraftFromTabularReview(_context, input) {
+        const existing = tabularDrafts.get(input.operationId);
+        if (existing) return existing;
         tabularWrites.push(input);
-        return {
+        const result = {
           documentId: input.documentId,
           versionId: input.versionId,
           title: input.title,
         };
+        tabularDrafts.set(input.operationId, result);
+        return result;
       },
     },
   );
-  await restarted.registeredTools(context());
-  await call(
+  await restarted.registeredTools(context(2));
+  const recovered = await restarted.settleLifecycle({
+    phase: "before_final",
+    context: context(2),
+    signal: new AbortController().signal,
+  });
+  assert.equal(
+    recovered?.events?.filter(
+      (event) => event.type === "tabular_review_created",
+    ).length,
+    2,
+    "reclaimed attempt must recover both completed extraction bindings",
+  );
+  assert.equal(tabular.creates, 2, "recovery must not create another Review");
+  assert.equal(
+    tabular.runs,
+    runsBeforeRecovery + 1,
+    "recovery must start the persisted draft Review exactly once",
+  );
+  const recoveredCustom = await call(
     restarted,
-    context(),
+    context(2),
+    "create_memo_from_tabular_review",
+    { review_id: customResult.review.review_id },
+    "restarted-custom-memo",
+  );
+  assert.equal(
+    JSON.parse(recoveredCustom.content).memo.draft_id,
+    tabularWrites[0].documentId,
+  );
+  assert.equal(tabularWrites[0].reviewId, customResult.review.review_id);
+  assert.equal(tabularWrites[0].kind, "custom_extraction_summary");
+  const recoveredCustomReplay = await call(
+    restarted,
+    context(2),
+    "create_memo_from_tabular_review",
+    {
+      review_id: customResult.review.review_id,
+      title: "Model-proposed replacement title must not create another Draft",
+    },
+    "restarted-custom-memo-replay",
+  );
+  assert.equal(
+    JSON.parse(recoveredCustomReplay.content).memo.draft_id,
+    tabularWrites[0].documentId,
+  );
+  assert.equal(
+    tabularWrites.length,
+    1,
+    "restart must not create a second custom memo",
+  );
+  const recoveredTimeline = await call(
+    restarted,
+    context(2),
     "create_memo_from_tabular_review",
     { review_id: timelineId },
     "restarted-timeline-memo",
   );
-  assert.equal(tabularWrites[2].kind, "case_fact_summary");
-  assert.match(tabularWrites[2].title, /案件事实摘要/);
+  assert.equal(
+    JSON.parse(recoveredTimeline.content).memo.draft_id,
+    tabularWrites[1].documentId,
+  );
+  assert.equal(tabularWrites[1].reviewId, timelineId);
+  assert.equal(tabularWrites[1].kind, "case_fact_summary");
+  assert.match(tabularWrites[1].title, /案件事实摘要/);
+  assert.equal(
+    tabularWrites.length,
+    2,
+    "restart must replay the deterministic timeline memo write without a second Draft",
+  );
   tabular.get(timelineId).columns[0].key = "date_changed_1";
   await rejects(() =>
     call(
       restarted,
-      context(),
+      context(2),
       "create_memo_from_tabular_review",
       { review_id: timelineId },
       "ambiguous-timeline-memo",
     ),
   );
-  assert.equal(tabularWrites.length, 3);
+  assert.equal(tabularWrites.length, 2);
+  const unboundReviewId = "abababab-abab-4bab-8bab-abababababab";
+  const unbound = tabular.createPresetReviewWithId(unboundReviewId, {
+    projectId: PROJECT,
+    workflowId: null,
+    title: "Foreign custom extraction",
+    documentIds: [DOC, DOC_2],
+    modelProfileId: MODEL,
+    columns: [
+      {
+        key: "party_1",
+        title: "Party",
+        prompt: "Extract parties.",
+        outputType: "text",
+      },
+    ],
+  });
+  unbound.review.status = "complete";
+  for (const cell of unbound.cells) cell.status = "complete";
+  const actionsBeforeForeignMemo = actionRecords.size;
+  await rejects(() =>
+    call(
+      restarted,
+      context(2),
+      "create_memo_from_tabular_review",
+      { review_id: unboundReviewId },
+      "foreign-unbound-memo",
+    ),
+  );
+  assert.equal(
+    actionRecords.size,
+    actionsBeforeForeignMemo,
+    "an unbound same-Matter Review must not reserve a new action",
+  );
   const direct = await call(module, context(), "create_legal_memo", {
     title: "Legal note",
     documentType: "general_legal_document",
@@ -403,12 +538,13 @@ async function main() {
   });
   assert.equal(JSON.parse(direct.content).memo.title, "Legal note");
   assert.equal(writes.length, 1);
-  assert.equal(tabularWrites.length, 3);
+  assert.equal(tabularWrites.length, 2);
   await module.registeredTools(context(2));
   await rejects(() => module.registeredTools(context(1)));
   const foreign = new WorkspaceAssistantGeneralLegalToolModule(
     () => tabular as any,
     {
+      actions: actions as any,
       assertCurrentDocuments(projectId) {
         if (projectId === OTHER) throw new Error("foreign");
       },
@@ -430,7 +566,7 @@ async function main() {
     ),
   );
   console.log(
-    "veraWorkspaceAssistantGeneralLegalToolsAudit passed: custom and timeline extraction, deterministic replay, lifecycle settlement, durable timeline classification across restart, ambiguous snapshot rejection, generation fencing, completed-review memo origin, direct memo, and input rejection.",
+    "veraWorkspaceAssistantGeneralLegalToolsAudit passed: custom and timeline extraction, deterministic replay, reclaimed-action recovery before memo creation, no duplicate Review or Draft, immutable recovered projection checks, unbound same-Matter rejection, lifecycle settlement, generation fencing, direct memo, and input rejection.",
   );
 }
 void main();

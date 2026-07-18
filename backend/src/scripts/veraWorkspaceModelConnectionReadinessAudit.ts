@@ -189,10 +189,10 @@ function auditUpgradeAndConnectionRevisionSemantics() {
 
   const upgraded = new WorkspaceDatabase(databasePath);
   try {
-    assert.equal(upgraded.migration?.currentVersion, 25);
+    assert.equal(upgraded.migration?.currentVersion, 26);
     assert.deepEqual(
       upgraded.migration?.applied.map((entry) => entry.version),
-      [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
+      [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
     );
     assert.equal(
       columnNames(upgraded, "model_profiles").includes("connection_revision"),
@@ -377,12 +377,12 @@ function insertConnectionResult(
 function auditNewInstallAndStrictConstraints() {
   const database = new WorkspaceDatabase(path.join(root, "new-install.db"));
   try {
-    assert.equal(database.migration?.currentVersion, 25);
+    assert.equal(database.migration?.currentVersion, 26);
     assert.deepEqual(
       database.migration?.applied.map((entry) => entry.version),
       [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25,
+        21, 22, 23, 24, 25, 26,
       ],
     );
     assert.equal(
@@ -724,7 +724,7 @@ try {
     WORKSPACE_MIGRATIONS.map((migration) => migration.version),
     [
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-      22, 23, 24, 25,
+      22, 23, 24, 25, 26,
     ],
   );
   assert.deepEqual(
