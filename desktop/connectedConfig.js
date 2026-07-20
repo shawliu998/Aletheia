@@ -6,17 +6,17 @@ function normalizeConnectedAppUrl(rawValue, { allowLoopbackHttp = true } = {}) {
   const raw = String(rawValue ?? "").trim();
   if (!raw)
     throw new Error(
-      "VERA_APP_URL is required for the connected desktop client.",
+      "A Vera workspace address is required.",
     );
 
   let value;
   try {
     value = new URL(raw);
   } catch {
-    throw new Error("VERA_APP_URL must be a valid absolute URL.");
+    throw new Error("The workspace address must be a valid absolute URL.");
   }
   if (value.username || value.password) {
-    throw new Error("VERA_APP_URL must not contain credentials.");
+    throw new Error("The workspace address must not contain credentials.");
   }
   const secure = value.protocol === "https:";
   const localDevelopment =
@@ -25,7 +25,7 @@ function normalizeConnectedAppUrl(rawValue, { allowLoopbackHttp = true } = {}) {
     LOOPBACK_HOSTS.has(value.hostname);
   if (!secure && !localDevelopment) {
     throw new Error(
-      "VERA_APP_URL must use HTTPS; HTTP is allowed only on loopback during development.",
+      "The workspace address must use HTTPS. HTTP is allowed only on localhost during development.",
     );
   }
   value.hash = "";

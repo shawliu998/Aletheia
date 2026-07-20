@@ -10,6 +10,7 @@
     "start": "electron connectedMain.js",
     "test:connected-security": "node scripts/connectedDesktopAudit.js",
     "test:connected-smoke": "node scripts/connectedDesktopSmoke.js",
+    "test:connected-first-run": "node scripts/connectedFirstRunSmoke.js",
     "test:connected": "npm run test:connected-security && npm run test:connected-smoke",
     "signing:preflight": "node scripts/releaseSigningPreflight.js",
     "signing:readiness": "node scripts/macReleaseReadiness.js",
@@ -33,6 +34,10 @@
       "connectedMain.js",
       "connectedPreload.js",
       "connectedConfig.js",
+      "connectedConnectionStore.js",
+      "connectedSetup.html",
+      "connectedSetup.css",
+      "connectedSetup.js",
       "package.json",
       "build/icon.icns",
       "build/icon.png"

@@ -58,6 +58,7 @@ fi
 
 echo "==> Verifying packaged Vera.app"
 VERA_PACKAGED_APP_PATH="${PACKAGED_APP}" npm run test:connected-smoke --prefix "${DESKTOP_DIR}"
+VERA_PACKAGED_APP_PATH="${PACKAGED_APP}" npm run test:connected-first-run --prefix "${DESKTOP_DIR}"
 
 echo "==> Generating checksums"
 (cd "${DIST_DIR}" && shasum -a 256 \

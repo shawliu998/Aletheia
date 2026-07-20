@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; form-action 'none'; base-uri 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Vera</title>
+    <link rel="stylesheet" href="connectedSetup.css" />
+    <script src="connectedSetup.js" defer></script>
+  </head>
+  <body>
+    <main class="setup-shell" aria-labelledby="setup-title">
+      <div class="brand" aria-label="Vera">
+        <svg class="brand-mark" viewBox="0 0 28 22" aria-hidden="true">
+          <path d="M1 1h7.4l5.7 13.1L20 1h7L17.2 21h-6.4L1 1Z" />
+        </svg>
+        <span>Vera</span>
+      </div>
+
+      <section class="setup-content">
+        <h1 id="setup-title">Connect your workspace</h1>
+        <p class="introduction">
+          Enter the address provided by your Vera administrator. Vera will open
+          this workspace in its protected desktop window.
+        </p>
+
+        <form id="connection-form" novalidate>
+          <label for="workspace-url">Workspace address</label>
+          <input
+            id="workspace-url"
+            name="workspace-url"
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="https://vera.example.com"
+            aria-describedby="address-help connection-error"
+            required
+          />
+          <p id="address-help" class="field-help">
+            HTTPS is required. Localhost HTTP is available for development.
+          </p>
+          <p id="connection-error" class="error" role="alert" hidden></p>
+
+          <div class="actions">
+            <button id="connect-button" class="primary" type="submit">
+              Connect
+            </button>
+            <button id="cancel-button" class="secondary" type="button" hidden>
+              Back to Vera
+            </button>
+          </div>
+        </form>
+
+        <p class="privacy-note">
+          The workspace address is stored only in this Mac profile. Passwords,
+          API keys, and Matter data are not written to this configuration file.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

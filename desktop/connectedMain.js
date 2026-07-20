@@ -11,17 +11,26 @@ const {
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const {
   isExternalBrowserUrl,
   isSameConnectedOrigin,
   normalizeConnectedAppUrl,
 } = require("./connectedConfig");
+const {
+  readStoredConnection,
+  writeStoredConnection,
+} = require("./connectedConnectionStore");
 
 const PRODUCT_NAME = "Vera";
 const DEFAULT_DEVELOPMENT_URL = "http://localhost:3002/assistant";
+const SETUP_DOCUMENT_PATH = path.join(__dirname, "connectedSetup.html");
+const SETUP_DOCUMENT_URL = pathToFileURL(SETUP_DOCUMENT_PATH).toString();
 const TEST_AUTO_QUIT_MS = Number(process.env.VERA_TEST_AUTO_QUIT_MS ?? 0);
 let mainWindow = null;
 let applicationUrl = null;
+let connectionSource = null;
+let hasLoadedWorkspace = false;
 
 app.setName(PRODUCT_NAME);
 const explicitProfile = String(
@@ -40,39 +49,47 @@ if (explicitProfile) {
   app.setPath("sessionData", explicitProfile);
 }
 
-function configuredApplicationUrl() {
-  const configured = process.env.VERA_APP_URL;
-  const fallback = app.isPackaged ? "" : DEFAULT_DEVELOPMENT_URL;
-  return normalizeConnectedAppUrl(configured || fallback);
+function configuredApplicationConnection() {
+  const environmentUrl = String(process.env.VERA_APP_URL ?? "").trim();
+  if (environmentUrl) {
+    return {
+      url: normalizeConnectedAppUrl(environmentUrl),
+      source: "environment",
+    };
+  }
+  const storedUrl = readStoredConnection(app.getPath("userData"));
+  if (storedUrl) return { url: storedUrl, source: "profile" };
+  if (!app.isPackaged) {
+    return {
+      url: normalizeConnectedAppUrl(DEFAULT_DEVELOPMENT_URL),
+      source: "development-default",
+    };
+  }
+  return null;
 }
 
-function statusDocument(title, message) {
-  const escapedTitle = String(title).replace(
-    /[&<>"']/g,
-    (character) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[character],
+function isTrustedSetupSender(event) {
+  const senderUrl = event.sender.getURL();
+  return (
+    senderUrl === SETUP_DOCUMENT_URL ||
+    senderUrl.startsWith(`${SETUP_DOCUMENT_URL}?`)
   );
-  const escapedMessage = String(message).replace(
-    /[&<>"']/g,
-    (character) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[character],
-  );
-  return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
-<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapedTitle}</title><style>
-html,body{height:100%;margin:0;background:#f6f7f9;color:#171b25;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}body{display:grid;place-items:center}main{width:min(430px,calc(100vw - 64px));padding:28px;border:1px solid rgba(17,24,39,.08);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 55px rgba(15,23,42,.08)}h1{margin:0;font:400 29px/1.2 Georgia,serif}p{margin:13px 0 0;color:#667085;font-size:14px;line-height:1.65}.mark{width:28px;height:3px;margin-bottom:20px;border-radius:2px;background:#4169a8}
-</style></head><body><main><div class="mark"></div><h1>${escapedTitle}</h1><p>${escapedMessage}</p></main></body></html>`)}`;
+}
+
+async function showConnectionSetup(message = "") {
+  if (!mainWindow) return;
+  await mainWindow.loadFile(SETUP_DOCUMENT_PATH, {
+    ...(message ? { query: { error: message } } : {}),
+  });
+}
+
+async function openWorkspace(url, source) {
+  if (!mainWindow) return;
+  applicationUrl = url;
+  connectionSource = source;
+  hasLoadedWorkspace = false;
+  await mainWindow.loadURL(url.toString());
+  hasLoadedWorkspace = true;
 }
 
 async function openExternal(candidate) {
@@ -163,6 +180,11 @@ function installMenu() {
             label: PRODUCT_NAME,
             submenu: [
               { role: "about" },
+              {
+                label: "Connection Settings…",
+                enabled: !String(process.env.VERA_APP_URL ?? "").trim(),
+                click: () => void showConnectionSetup(),
+              },
               { type: "separator" },
               { role: "quit" },
             ],
@@ -193,7 +215,40 @@ ipcMain.handle("vera:get-desktop-info", () => ({
   connected: true,
   platform: process.platform,
   version: app.getVersion(),
+  currentAppUrl: applicationUrl?.toString() ?? null,
+  connectionSource,
+  canCancelConnectionSetup: hasLoadedWorkspace,
 }));
+
+ipcMain.handle("vera:configure-connection", async (event, rawAppUrl) => {
+  if (!isTrustedSetupSender(event)) {
+    throw new Error("Connection settings are available only from Vera setup.");
+  }
+  const url = writeStoredConnection(app.getPath("userData"), rawAppUrl);
+  setImmediate(() => {
+    void openWorkspace(url, "profile").catch((reason) => {
+      const message =
+        reason instanceof Error
+          ? `Vera could not open this workspace. ${reason.message}`
+          : "Vera could not open this workspace.";
+      void showConnectionSetup(message);
+    });
+  });
+  return { ok: true };
+});
+
+ipcMain.handle("vera:cancel-connection-setup", async (event) => {
+  if (!isTrustedSetupSender(event)) {
+    throw new Error("Connection settings are available only from Vera setup.");
+  }
+  if (!applicationUrl || !hasLoadedWorkspace) {
+    throw new Error("There is no active Vera workspace to return to.");
+  }
+  const url = applicationUrl;
+  const source = connectionSource;
+  setImmediate(() => void openWorkspace(url, source));
+  return { ok: true };
+});
 
 const lockAcquired = app.requestSingleInstanceLock();
 if (!lockAcquired) app.quit();
@@ -210,30 +265,29 @@ app.whenReady().then(async () => {
   installMenu();
   mainWindow = createWindow();
   try {
-    applicationUrl = configuredApplicationUrl();
-    await mainWindow.loadURL(applicationUrl.toString());
+    const configured = configuredApplicationConnection();
+    if (!configured) {
+      await showConnectionSetup();
+      return;
+    }
+    await openWorkspace(configured.url, configured.source);
   } catch (error) {
     const message =
       error instanceof Error
-        ? error.message
-        : "The Vera workspace could not be opened.";
-    await mainWindow.loadURL(
-      statusDocument("Vera connection required", message),
-    );
+        ? `Vera could not open this workspace. ${error.message}`
+        : "Vera could not open this workspace.";
+    await showConnectionSetup(message);
   }
 });
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     mainWindow = createWindow();
-    void mainWindow.loadURL(
-      applicationUrl
-        ? applicationUrl.toString()
-        : statusDocument(
-            "Vera connection required",
-            "Set VERA_APP_URL to the HTTPS address of your Vera workspace.",
-          ),
-    );
+    if (applicationUrl) {
+      void openWorkspace(applicationUrl, connectionSource);
+    } else {
+      void showConnectionSetup();
+    }
   }
 });
 

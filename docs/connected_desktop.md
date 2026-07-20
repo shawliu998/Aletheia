@@ -4,7 +4,13 @@ Vera Desktop 1.1 is a connected macOS client for the `1d72e005` Mike/Vera baseli
 
 ## Runtime contract
 
-Set `VERA_APP_URL` to the public HTTPS address of the deployed Vera web application:
+On first launch, a packaged Vera client asks for the public HTTPS address of
+the deployed Vera web application. The validated address is stored in
+`connection.json` inside that macOS profile with owner-only permissions. It
+contains no credential, token, API key, or Matter content.
+
+For managed launches and automated testing, `VERA_APP_URL` overrides the saved
+profile address:
 
 ```bash
 VERA_APP_URL=https://vera.example.com /Applications/Vera.app/Contents/MacOS/Vera
@@ -17,7 +23,11 @@ VERA_APP_URL=http://localhost:3002/assistant \
   ./desktop/dist/mac-arm64/Vera.app/Contents/MacOS/Vera
 ```
 
-Packaged builds deliberately have no default production URL. They show a bounded connection-required screen until the deployment supplies `VERA_APP_URL`. The URL must not contain credentials.
+Packaged builds deliberately have no default production URL. The first-run
+screen accepts only HTTPS, except for loopback HTTP during local development,
+and rejects URLs containing credentials. **Vera → Connection Settings…** lets
+the user replace a profile-managed address; the item is disabled when an
+administrator supplies the environment override.
 
 ## Security boundary
 
@@ -26,9 +36,16 @@ Packaged builds deliberately have no default production URL. They show a bounded
 - HTTPS and `mailto:` links outside that origin open in the system browser; other schemes are rejected.
 - Camera, microphone, geolocation, payment, USB, serial, and other ambient permissions are denied.
 - WebViews and drag-to-navigate are disabled.
-- The preload exposes only `{ connected, platform, version }`; it exposes no token, filesystem, shell, or network primitive.
+- The preload exposes desktop metadata plus two bounded setup actions for saving
+  a validated workspace address or returning to the active workspace. It
+  exposes no token, general filesystem, shell, or network primitive.
 - Downloads use a native Save dialog and remain user initiated.
 - Supabase sessions remain in Electron's Chromium profile. The desktop package does not contain service-role keys, model keys, API tokens, Matter files, or backend secrets.
+- The profile connection file is non-secret configuration, written atomically
+  with mode `0600`; unsafe files, symlinks, oversized input, invalid JSON, and
+  unsupported schema versions fail closed.
+- Only the packaged local setup document may invoke the bounded connection
+  update IPC. A loaded Vera web page cannot change the desktop destination.
 
 This connected client does not claim offline operation, SQLCipher storage, or a bundled local Express/Supabase runtime. Those belonged to the superseded local-first host and are not silently simulated.
 

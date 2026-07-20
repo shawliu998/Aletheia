@@ -12,7 +12,7 @@ const desktopRoot = path.resolve(__dirname, "..");
 const packagedApp = process.env.VERA_PACKAGED_APP_PATH;
 const executable = packagedApp
   ? path.join(packagedApp, "Contents", "MacOS", "Vera")
-  : path.join(desktopRoot, "node_modules", ".bin", "electron");
+  : require("electron");
 const args = packagedApp ? [] : [path.join(desktopRoot, "connectedMain.js")];
 let requestedPath = null;
 const isolatedProfile = fs.mkdtempSync(

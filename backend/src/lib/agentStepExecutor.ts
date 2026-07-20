@@ -196,7 +196,7 @@ export async function verifyTaskCitationLinks(
 
 export function isTransientModelError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return /\b429\b|\b503\b|overloaded|queue|temporarily unavailable|resource exhausted|timed out/i.test(
+  return /\b429\b|\b503\b|overloaded|queue|temporarily unavailable|resource exhausted|timed out|fetch failed|econnreset|etimedout|enetunreach|eai_again|socket hang up/i.test(
     message,
   );
 }
