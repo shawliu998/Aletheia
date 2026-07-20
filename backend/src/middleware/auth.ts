@@ -1,110 +1,216 @@
-import { timingSafeEqual } from "node:crypto";
-import type { NextFunction, Request, Response } from "express";
-import { LocalIdentityRepository } from "../lib/aletheia/localIdentity";
+import { Request, Response, NextFunction } from "express";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { syncProfileEmail } from "../lib/userLookup";
 
-let localIdentityRepository: LocalIdentityRepository | null = null;
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+  if (isDev) console.log(...args);
+};
 
-function identities() {
-  if (!localIdentityRepository) {
-    localIdentityRepository = new LocalIdentityRepository();
-  }
-  return localIdentityRepository;
-}
-
-function bearerToken(req: Request) {
-  const auth = req.headers.authorization ?? "";
-  if (!auth.startsWith("Bearer ")) return "";
-  return auth.slice(7).trim();
-}
-
-function constantTimeTokenEqual(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) return false;
-  return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function setLocalAletheiaUser(res: Response, token: string) {
-  res.locals.userId = process.env.ALETHEIA_LOCAL_USER_ID ?? "local-user";
-  res.locals.userEmail =
-    process.env.ALETHEIA_LOCAL_USER_EMAIL ?? "local@aletheia.internal";
-  res.locals.token = token;
-  res.locals.authKind = "bootstrap";
-}
-
-function setPrincipalAletheiaUser(
-  res: Response,
-  authentication: {
-    principalId: string;
-    email: string | null;
-    tokenId: string;
-  },
+function summarizeMfaFactors(
+  factors: Array<{
+    factor_type?: string;
+    status?: string;
+  }> | null | undefined,
 ) {
-  res.locals.userId = authentication.principalId;
-  res.locals.userEmail = authentication.email ?? "";
-  res.locals.token = "local-principal-token";
-  res.locals.authKind = "principal_token";
-  res.locals.principalTokenId = authentication.tokenId;
+  return (factors ?? []).map((factor) => ({
+    type: factor.factor_type ?? "unknown",
+    status: factor.status ?? "unknown",
+  }));
 }
 
-export function requireAuth(
+function isLoginMfaBootstrapRoute(req: Request) {
+  const path = req.originalUrl.split("?")[0];
+  return (
+    (req.method === "GET" || req.method === "POST") &&
+    (path === "/user/profile" || path === "/users/profile")
+  );
+}
+
+async function enforceLoginMfaIfEnabled(
+  req: Request,
+  res: Response,
+  admin: SupabaseClient<any, "public", any>,
+  token: string,
+) {
+  if (isLoginMfaBootstrapRoute(req)) return true;
+
+  const { data, error } = await admin
+    .from("user_profiles")
+    .select("mfa_on_login")
+    .eq("user_id", res.locals.userId)
+    .maybeSingle();
+
+  if (error) {
+    devLog("[auth/mfa] login preference lookup failed", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+      error: error.message,
+      code: error.code,
+    });
+    if (error.code === "42703") return true;
+    res.status(500).json({ detail: error.message });
+    return false;
+  }
+
+  const profile = data as { mfa_on_login?: boolean } | null;
+  if (profile?.mfa_on_login !== true) return true;
+
+  const { data: assurance, error: assuranceError } =
+    await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
+
+  if (assuranceError) {
+    devLog("[auth/mfa] login assurance lookup failed", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+      error: assuranceError.message,
+    });
+    res.status(401).json({ detail: assuranceError.message });
+    return false;
+  }
+
+  if (assurance.nextLevel === "aal2" && assurance.currentLevel !== "aal2") {
+    devLog("[auth/mfa] login verification required", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+    });
+    res.status(403).json({
+      code: "mfa_verification_required",
+      detail: "MFA verification required",
+    });
+    return false;
+  }
+
+  return true;
+}
+
+export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction,
-): void {
-  if (!req.originalUrl.startsWith("/aletheia")) {
-    res.status(404).json({ detail: "Route is outside the Aletheia API." });
+): Promise<void> {
+  const auth = req.headers.authorization ?? "";
+  if (!auth.startsWith("Bearer ")) {
+    res.status(401).json({ detail: "Missing or invalid Authorization header" });
+    return;
+  }
+  const token = auth.slice(7).trim();
+
+  const supabaseUrl = process.env.SUPABASE_URL ?? "";
+  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
+
+  if (!supabaseUrl || !serviceKey) {
+    res.status(500).json({ detail: "Server auth is not configured" });
     return;
   }
 
-  const authMode =
-    process.env.ALETHEIA_AUTH_MODE ?? process.env.ALET_HEIA_AUTH_MODE;
-  if (authMode === "single_user") {
-    setLocalAletheiaUser(res, "local-single-user");
-    next();
-    return;
-  }
-
-  if (authMode === "private_token") {
-    const expected = process.env.ALETHEIA_PRIVATE_AUTH_TOKEN?.trim() ?? "";
-    if (expected.length < 32) {
-      res.status(500).json({
-        detail:
-          "Aletheia private token auth requires ALETHEIA_PRIVATE_AUTH_TOKEN with at least 32 characters.",
-      });
-      return;
-    }
-    const token = bearerToken(req);
-    if (!token) {
-      res.status(401).json({ detail: "Invalid Aletheia private token." });
-      return;
-    }
-    if (constantTimeTokenEqual(token, expected)) {
-      setLocalAletheiaUser(res, "local-private-token");
-      next();
-      return;
-    }
-    if (process.env.ALETHEIA_MULTI_PRINCIPAL_ENABLED === "true") {
-      try {
-        const principal = identities().authenticate(token);
-        if (principal) {
-          setPrincipalAletheiaUser(res, principal);
-          next();
-          return;
-        }
-      } catch {
-        res.status(500).json({
-          detail: "Local principal identity store is unavailable.",
-        });
-        return;
-      }
-    }
-    res.status(401).json({ detail: "Invalid Aletheia private token." });
-    return;
-  }
-
-  res.status(500).json({
-    detail:
-      "ALETHEIA_AUTH_MODE must be explicitly configured as single_user or private_token.",
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
   });
+  const { data } = await admin.auth.getUser(token);
+  if (!data.user) {
+    res.status(401).json({ detail: "Invalid or expired token" });
+    return;
+  }
+
+  res.locals.userId = data.user.id;
+  res.locals.userEmail = data.user.email?.toLowerCase() ?? "";
+  res.locals.token = token;
+  const syncError = await syncProfileEmail(
+    admin,
+    data.user.id,
+    data.user.email,
+  );
+  if (syncError) {
+    devLog("[auth/profile-email] sync failed", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: data.user.id,
+      error: syncError.message,
+    });
+  }
+  if (!(await enforceLoginMfaIfEnabled(req, res, admin, token))) {
+    return;
+  }
+  next();
+}
+
+export async function requireMfaIfEnrolled(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const token = typeof res.locals.token === "string" ? res.locals.token : "";
+  if (!token) {
+    devLog("[auth/mfa] missing auth session", {
+      method: req.method,
+      path: req.originalUrl,
+    });
+    res.status(401).json({ detail: "Missing auth session" });
+    return;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL ?? "";
+  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
+
+  if (!supabaseUrl || !serviceKey) {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return;
+  }
+
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+  });
+  const { data, error } =
+    await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
+
+  if (error) {
+    devLog("[auth/mfa] assurance lookup failed", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+      error: error.message,
+    });
+    res.status(401).json({ detail: error.message });
+    return;
+  }
+
+  devLog("[auth/mfa] assurance level", {
+    method: req.method,
+    path: req.originalUrl,
+    userId: res.locals.userId,
+    currentLevel: data.currentLevel,
+    nextLevel: data.nextLevel,
+    required: data.nextLevel === "aal2" && data.currentLevel !== "aal2",
+  });
+
+  if (isDev) {
+    const { data: userData, error: userError } = await admin.auth.getUser(token);
+    devLog("[auth/mfa] user factors", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+      factorCount: userData.user?.factors?.length ?? 0,
+      factors: summarizeMfaFactors(userData.user?.factors),
+      error: userError?.message ?? null,
+    });
+  }
+
+  if (data.nextLevel === "aal2" && data.currentLevel !== "aal2") {
+    devLog("[auth/mfa] verification required", {
+      method: req.method,
+      path: req.originalUrl,
+      userId: res.locals.userId,
+    });
+    res.status(403).json({
+      code: "mfa_verification_required",
+      detail: "MFA verification required",
+    });
+    return;
+  }
+
+  next();
 }

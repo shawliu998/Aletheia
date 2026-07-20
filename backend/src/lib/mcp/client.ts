@@ -28,7 +28,7 @@ function encryptionSecret(): string {
 }
 
 function encryptionKey(): Buffer {
-    return crypto.scryptSync(encryptionSecret(), "aletheia-user-mcp-v1", 32);
+    return crypto.scryptSync(encryptionSecret(), "mike-user-mcp-v1", 32);
 }
 
 export function mcpOAuthCallbackUrl() {

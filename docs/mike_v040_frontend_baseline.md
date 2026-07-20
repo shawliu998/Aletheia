@@ -1,19 +1,24 @@
-# Mike v0.4.0 Frontend Baseline
+# Mike v0.4.0 Full-Stack Baseline
 
-This branch establishes the unmodified Mike frontend as Vera's new UI and
-interaction baseline before branding, desktop integration, or Agent Task work.
+This branch establishes the matching Mike frontend and backend as Vera's new UI
+and interaction baseline before desktop integration or Agent Task work.
 
 ## Source lock
 
 - Repository: `https://github.com/Open-Legal-Products/mike.git`
 - Tag: `v0.4.0`
 - Commit: `dafac6b0a449a99c4280988e22feaf160eb6fbb9`
-- Imported scope: `frontend/`
+- Imported scope: `frontend/` and `backend/`
 - License: `AGPL-3.0-only`
 
 The import was performed from the fetched Git object rather than reconstructed
 from screenshots or Figma. The existing Vera working directory and the archived
 version A were not modified.
+
+The matching upstream backend compiles successfully with `npm run build`. Live
+authenticated flow testing still requires a configured Supabase instance, an
+S3-compatible bucket, and at least one model provider. No privileged cloud
+credentials are committed to this branch.
 
 ## Baseline routes
 
