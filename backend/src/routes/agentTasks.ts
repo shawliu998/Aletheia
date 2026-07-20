@@ -2,27 +2,40 @@ import { Router } from "express";
 import { checkProjectAccess } from "../lib/access";
 import {
   advanceAgentTask,
+  attachAgentTaskDocuments,
   createAgentTask,
+  deferAgentTaskForProvider,
   getAgentTaskSnapshot,
+  linkAgentTaskArtifacts,
   listAgentTasks,
   pauseAgentTask,
   resumeAgentTask,
+  retryAgentTask,
   stopAgentTask,
 } from "../lib/agentTasks";
-import { executeAgentStep } from "../lib/agentStepExecutor";
+import {
+  executeAgentStep,
+  isTransientModelError,
+  verifyTaskCitationLinks,
+} from "../lib/agentStepExecutor";
 import { createServerSupabase } from "../lib/supabase";
 import { requireAuth } from "../middleware/auth";
 
 export const agentTasksRouter = Router();
 
-function routeError(res: Parameters<Parameters<typeof agentTasksRouter.get>[1]>[1], error: unknown) {
-  const detail = error instanceof Error ? error.message : "Agent task request failed";
+function routeError(
+  res: Parameters<Parameters<typeof agentTasksRouter.get>[1]>[1],
+  error: unknown,
+) {
+  const detail =
+    error instanceof Error ? error.message : "Agent task request failed";
   const status = detail.startsWith("Only a") ? 409 : 500;
   res.status(status).json({ detail });
 }
 
 function executionErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "Model or tool execution failed";
+  const message =
+    error instanceof Error ? error.message : "Model or tool execution failed";
   if (/gemini api key|api key is not configured/i.test(message)) {
     return "Gemini is unavailable. Configure a Gemini API key in Settings before running this task.";
   }
@@ -34,8 +47,13 @@ function executionErrorMessage(error: unknown) {
 
 agentTasksRouter.get("/", requireAuth, async (req, res) => {
   try {
-    const matterId = typeof req.query.matter_id === "string" ? req.query.matter_id : undefined;
-    const data = await listAgentTasks(createServerSupabase(), res.locals.userId as string, matterId);
+    const matterId =
+      typeof req.query.matter_id === "string" ? req.query.matter_id : undefined;
+    const data = await listAgentTasks(
+      createServerSupabase(),
+      res.locals.userId as string,
+      matterId,
+    );
     res.json(data);
   } catch (error) {
     routeError(res, error);
@@ -46,7 +64,8 @@ agentTasksRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const goal = typeof req.body?.goal === "string" ? req.body.goal.trim() : "";
-  const matterId = typeof req.body?.matter_id === "string" ? req.body.matter_id.trim() : "";
+  const matterId =
+    typeof req.body?.matter_id === "string" ? req.body.matter_id.trim() : "";
   const rawDocumentIds: unknown[] = Array.isArray(req.body?.document_ids)
     ? (req.body.document_ids as unknown[])
     : [];
@@ -54,19 +73,23 @@ agentTasksRouter.post("/", requireAuth, async (req, res) => {
     ? Array.from(
         new Set(
           rawDocumentIds.filter(
-            (value: unknown): value is string => typeof value === "string" && value.trim().length > 0,
+            (value: unknown): value is string =>
+              typeof value === "string" && value.trim().length > 0,
           ),
         ),
       ).slice(0, 100)
     : [];
   if (!goal) return void res.status(400).json({ detail: "goal is required" });
-  if (goal.length > 4000) return void res.status(400).json({ detail: "goal is too long" });
-  if (!matterId) return void res.status(400).json({ detail: "matter_id is required" });
+  if (goal.length > 4000)
+    return void res.status(400).json({ detail: "goal is too long" });
+  if (!matterId)
+    return void res.status(400).json({ detail: "matter_id is required" });
 
   try {
     const db = createServerSupabase();
     const access = await checkProjectAccess(matterId, userId, userEmail, db);
-    if (!access.ok) return void res.status(404).json({ detail: "Matter not found" });
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Matter not found" });
     if (documentIds.length) {
       const { data: documents, error: documentsError } = await db
         .from("documents")
@@ -75,7 +98,9 @@ agentTasksRouter.post("/", requireAuth, async (req, res) => {
         .in("id", documentIds);
       if (documentsError) throw documentsError;
       if ((documents ?? []).length !== documentIds.length) {
-        return void res.status(400).json({ detail: "One or more documents are not in this Matter" });
+        return void res
+          .status(400)
+          .json({ detail: "One or more documents are not in this Matter" });
       }
     }
     const snapshot = await createAgentTask(db, {
@@ -101,7 +126,8 @@ agentTasksRouter.get("/:taskId", requireAuth, async (req, res) => {
       req.params.taskId,
       res.locals.userId as string,
     );
-    if (!snapshot) return void res.status(404).json({ detail: "Agent task not found" });
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
     res.json(snapshot);
   } catch (error) {
     routeError(res, error);
@@ -113,12 +139,16 @@ agentTasksRouter.post("/:taskId/advance", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const userId = res.locals.userId as string;
     const current = await getAgentTaskSnapshot(db, req.params.taskId, userId);
-    if (!current) return void res.status(404).json({ detail: "Agent task not found" });
+    if (!current)
+      return void res.status(404).json({ detail: "Agent task not found" });
     if (current.task.status === "queued") {
       const started = await advanceAgentTask(db, req.params.taskId, userId);
       return void res.json(started);
     }
-    if (current.task.status !== "running" && current.task.status !== "verifying") {
+    if (
+      current.task.status !== "running" &&
+      current.task.status !== "verifying"
+    ) {
       return void res.json(current);
     }
     let execution;
@@ -131,6 +161,15 @@ agentTasksRouter.post("/:taskId/advance", requireAuth, async (req, res) => {
       });
     } catch (error) {
       const summary = executionErrorMessage(error);
+      if (isTransientModelError(error)) {
+        const deferred = await deferAgentTaskForProvider(
+          db,
+          req.params.taskId,
+          userId,
+          `Provider queue: ${summary} Resume retries this step without losing completed work.`,
+        );
+        return void res.status(202).json(deferred);
+      }
       const failed = await stopAgentTask(db, req.params.taskId, userId, {
         status: "failed",
         summary,
@@ -148,27 +187,200 @@ agentTasksRouter.post("/:taskId/advance", requireAuth, async (req, res) => {
       return void res.json(waiting);
     }
     if (current.task.status === "verifying") {
+      execution.citationCheck = await verifyTaskCitationLinks(db, current);
       const allArtifacts = [...current.artifacts, ...execution.artifacts];
-      const hasRiskMatrix = allArtifacts.some((artifact) => artifact.purpose === "Risk matrix");
-      const hasReviewMemo = allArtifacts.some((artifact) => artifact.purpose === "Review memo draft");
-      if (!hasRiskMatrix || !hasReviewMemo) {
-        const missing = [
-          !hasRiskMatrix ? "risk matrix" : null,
-          !hasReviewMemo ? "review memo draft" : null,
-        ].filter(Boolean).join(" and ");
+      const missingDeliverables = () =>
+        [
+          !allArtifacts.some((artifact) => artifact.purpose === "Risk matrix")
+            ? "risk matrix"
+            : null,
+          !allArtifacts.some(
+            (artifact) => artifact.purpose === "Review memo draft",
+          )
+            ? "review memo draft"
+            : null,
+        ].filter((value): value is string => Boolean(value));
+      const summaryHasGap = /\bGAP\b/i.test(execution.summary);
+      const citationGap =
+        execution.citationCheck.total > 0 &&
+        execution.citationCheck.missing > 0;
+      const initialGaps = missingDeliverables();
+      if (initialGaps.length || summaryHasGap || citationGap) {
+        const reasons = [
+          initialGaps.length ? `missing ${initialGaps.join(" and ")}` : null,
+          summaryHasGap
+            ? "the verifier reported one or more GAP findings"
+            : null,
+          citationGap
+            ? `${execution.citationCheck.missing} citation(s) could not be relocated`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("; ");
+        let repair;
+        let recheck;
+        try {
+          repair = await executeAgentStep({
+            db,
+            snapshot: current,
+            userId,
+            userEmail: res.locals.userEmail as string | undefined,
+            instructionOverride: `This is the single permitted repair pass. Repair: ${reasons}. Re-read the sources, update or recreate only the affected deliverables, and preserve lawyer-review status.`,
+          });
+          await linkAgentTaskArtifacts(
+            db,
+            req.params.taskId,
+            userId,
+            repair.artifacts,
+          );
+          const repairedSnapshot = {
+            ...current,
+            artifacts: [
+              ...current.artifacts,
+              ...repair.artifacts.map((artifact) => ({
+                task_id: req.params.taskId,
+                ...artifact,
+              })),
+            ],
+          };
+          recheck = await executeAgentStep({
+            db,
+            snapshot: repairedSnapshot,
+            userId,
+            userEmail: res.locals.userEmail as string | undefined,
+            instructionOverride:
+              "Re-run the four verifier checks after the one permitted repair. Do not repair again. Return PASS or GAP for every check.",
+          });
+          recheck.citationCheck = await verifyTaskCitationLinks(db, {
+            ...repairedSnapshot,
+            artifacts: [
+              ...repairedSnapshot.artifacts,
+              ...recheck.artifacts.map((artifact) => ({
+                task_id: req.params.taskId,
+                ...artifact,
+              })),
+            ],
+          });
+        } catch (error) {
+          if (isTransientModelError(error)) {
+            const deferred = await deferAgentTaskForProvider(
+              db,
+              req.params.taskId,
+              userId,
+              `Provider queue during verifier repair 1/1: ${executionErrorMessage(error)} Resume retries verification without losing completed work.`,
+            );
+            return void res.status(202).json(deferred);
+          }
+          throw error;
+        }
+        allArtifacts.push(...repair.artifacts);
+        const remaining = missingDeliverables();
+        if (
+          remaining.length ||
+          /\bGAP\b/i.test(recheck.summary) ||
+          recheck.citationCheck.missing > 0
+        ) {
+          const missing = remaining.length
+            ? remaining.join(" and ")
+            : "one or more verifier checks";
+          const failed = await stopAgentTask(db, req.params.taskId, userId, {
+            status: "failed",
+            summary: `Verification blocked after one repair pass: ${missing}.`,
+          });
+          return void res.status(409).json({
+            detail: `Verification blocked after one repair pass: ${missing}.`,
+            task: failed,
+          });
+        }
+        execution = {
+          ...recheck,
+          summary: `Verifier repair 1/1 completed.\n${recheck.summary}`,
+          artifacts: [
+            ...execution.artifacts,
+            ...repair.artifacts,
+            ...recheck.artifacts,
+          ],
+        };
+      } else if (execution.citationCheck.total === 0) {
         const failed = await stopAgentTask(db, req.params.taskId, userId, {
           status: "failed",
-          summary: `Verification blocked: missing ${missing}.`,
+          summary:
+            "Verification blocked: no source citations were available for deterministic relocation checks.",
         });
         return void res.status(409).json({
-          detail: `Verification blocked: missing ${missing}.`,
+          detail:
+            "Verification blocked: no source citations were available for deterministic relocation checks.",
           task: failed,
         });
       }
     }
-    const snapshot = await advanceAgentTask(db, req.params.taskId, userId, execution);
-    if (!snapshot) return void res.status(404).json({ detail: "Agent task not found" });
+    const snapshot = await advanceAgentTask(
+      db,
+      req.params.taskId,
+      userId,
+      execution,
+    );
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
     res.json(snapshot);
+  } catch (error) {
+    routeError(res, error);
+  }
+});
+
+agentTasksRouter.post("/:taskId/retry", requireAuth, async (req, res) => {
+  try {
+    const snapshot = await retryAgentTask(
+      createServerSupabase(),
+      req.params.taskId,
+      res.locals.userId as string,
+    );
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
+    res.json(snapshot);
+  } catch (error) {
+    routeError(res, error);
+  }
+});
+
+agentTasksRouter.post("/:taskId/documents", requireAuth, async (req, res) => {
+  const rawDocumentIds: unknown[] = Array.isArray(req.body?.document_ids)
+    ? (req.body.document_ids as unknown[])
+    : [];
+  const documentIds: string[] = Array.from(
+    new Set(
+      rawDocumentIds.filter(
+        (value: unknown): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      ),
+    ),
+  ).slice(0, 100);
+  if (!documentIds.length)
+    return void res.status(400).json({ detail: "document_ids is required" });
+  try {
+    const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const snapshot = await getAgentTaskSnapshot(db, req.params.taskId, userId);
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
+    const { data: documents, error } = await db
+      .from("documents")
+      .select("id")
+      .eq("project_id", snapshot.task.matter_id)
+      .in("id", documentIds);
+    if (error) throw error;
+    if ((documents ?? []).length !== documentIds.length) {
+      return void res
+        .status(400)
+        .json({ detail: "One or more documents are not in this Matter" });
+    }
+    const updated = await attachAgentTaskDocuments(
+      db,
+      req.params.taskId,
+      userId,
+      documentIds,
+    );
+    res.json(updated);
   } catch (error) {
     routeError(res, error);
   }
@@ -181,7 +393,8 @@ agentTasksRouter.post("/:taskId/pause", requireAuth, async (req, res) => {
       req.params.taskId,
       res.locals.userId as string,
     );
-    if (!snapshot) return void res.status(404).json({ detail: "Agent task not found" });
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
     res.json(snapshot);
   } catch (error) {
     routeError(res, error);
@@ -195,7 +408,8 @@ agentTasksRouter.post("/:taskId/resume", requireAuth, async (req, res) => {
       req.params.taskId,
       res.locals.userId as string,
     );
-    if (!snapshot) return void res.status(404).json({ detail: "Agent task not found" });
+    if (!snapshot)
+      return void res.status(404).json({ detail: "Agent task not found" });
     res.json(snapshot);
   } catch (error) {
     routeError(res, error);

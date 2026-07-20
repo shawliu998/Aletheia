@@ -44,19 +44,23 @@ export const DEFAULT_WORK_PLAN: StepDefinition[] = [
   },
   {
     title: "Extract facts and contract positions",
-    expected_output: "Verified facts separated from assumptions and open questions.",
+    expected_output:
+      "Verified facts separated from assumptions and open questions.",
   },
   {
     title: "Build the risk matrix",
-    expected_output: "A clause-by-clause risk matrix linked to source passages.",
+    expected_output:
+      "A clause-by-clause risk matrix linked to source passages.",
   },
   {
     title: "Draft the review memo",
-    expected_output: "A reviewable memo draft with citations and recommendations.",
+    expected_output:
+      "A reviewable memo draft with citations and recommendations.",
   },
   {
     title: "Verify deliverables",
-    expected_output: "Coverage, source, contradiction, and artifact checks completed.",
+    expected_output:
+      "Coverage, source, contradiction, and artifact checks completed.",
   },
 ];
 
@@ -148,27 +152,34 @@ export async function getAgentTaskSnapshot(
   if (taskError) throw dbError(taskError, "Failed to load task");
   if (!task) return null;
 
-  const [{ data: steps, error: stepsError }, { data: artifacts, error: artifactsError }] =
-    await Promise.all([
-      db
-        .from("agent_steps")
-        .select("id,task_id,title,status,expected_output,attempt,result_summary,position")
-        .eq("task_id", taskId)
-        .order("position", { ascending: true }),
-      db
-        .from("agent_artifact_links")
-        .select("task_id,artifact_type,artifact_id,purpose")
-        .eq("task_id", taskId)
-        .order("created_at", { ascending: true }),
-    ]);
+  const [
+    { data: steps, error: stepsError },
+    { data: artifacts, error: artifactsError },
+  ] = await Promise.all([
+    db
+      .from("agent_steps")
+      .select(
+        "id,task_id,title,status,expected_output,attempt,result_summary,position",
+      )
+      .eq("task_id", taskId)
+      .order("position", { ascending: true }),
+    db
+      .from("agent_artifact_links")
+      .select("task_id,artifact_type,artifact_id,purpose")
+      .eq("task_id", taskId)
+      .order("created_at", { ascending: true }),
+  ]);
   if (stepsError) throw dbError(stepsError, "Failed to load task plan");
-  if (artifactsError) throw dbError(artifactsError, "Failed to load task artifacts");
+  if (artifactsError)
+    throw dbError(artifactsError, "Failed to load task artifacts");
 
   const { user_id: _userId, ...publicTask } = task;
   return {
     task: {
       ...publicTask,
-      current_plan: (steps ?? []).map(({ position: _position, ...step }) => step),
+      current_plan: (steps ?? []).map(
+        ({ position: _position, ...step }) => step,
+      ),
     },
     artifacts: artifacts ?? [],
   };
@@ -181,7 +192,9 @@ export async function listAgentTasks(
 ) {
   let query = db
     .from("agent_tasks")
-    .select("id,matter_id,goal,mode,status,deliverables,current_step,latest_checkpoint,created_at,updated_at")
+    .select(
+      "id,matter_id,goal,mode,status,deliverables,current_step,latest_checkpoint,created_at,updated_at",
+    )
     .eq("user_id", userId)
     .order("updated_at", { ascending: false })
     .limit(100);
@@ -204,6 +217,54 @@ export async function addAgentArtifactLinks(
   if (error) throw dbError(error, "Failed to link task artifacts");
 }
 
+async function syncDeliverables(
+  db: Db,
+  taskId: string,
+  userId: string,
+  links: AgentArtifactLinkInput[],
+) {
+  if (!links.length) return;
+  const { data: row, error } = await db
+    .from("agent_tasks")
+    .select("deliverables")
+    .eq("id", taskId)
+    .eq("user_id", userId)
+    .single();
+  if (error || !row) throw dbError(error, "Failed to load task deliverables");
+  const deliverables = (
+    Array.isArray(row.deliverables) ? row.deliverables : []
+  ).map((deliverable: Record<string, unknown>) => {
+    const match = links.find((link) =>
+      deliverable.key === "risk-matrix"
+        ? link.purpose === "Risk matrix"
+        : deliverable.key === "review-memo"
+          ? link.purpose === "Review memo draft"
+          : false,
+    );
+    return match
+      ? { ...deliverable, artifact_id: match.artifact_id }
+      : deliverable;
+  });
+  const { error: updateError } = await db
+    .from("agent_tasks")
+    .update({ deliverables, updated_at: now() })
+    .eq("id", taskId)
+    .eq("user_id", userId);
+  if (updateError)
+    throw dbError(updateError, "Failed to update task deliverables");
+}
+
+export async function linkAgentTaskArtifacts(
+  db: Db,
+  taskId: string,
+  userId: string,
+  links: AgentArtifactLinkInput[],
+) {
+  if (!links.length) return;
+  await addAgentArtifactLinks(db, taskId, links);
+  await syncDeliverables(db, taskId, userId, links);
+}
+
 export async function advanceAgentTask(
   db: Db,
   taskId: string,
@@ -216,7 +277,9 @@ export async function advanceAgentTask(
     status: AgentTaskStatus;
     current_step: string | null;
   };
-  if (["completed", "failed", "paused", "waiting_input"].includes(task.status)) {
+  if (
+    ["completed", "failed", "paused", "waiting_input"].includes(task.status)
+  ) {
     return snapshot;
   }
 
@@ -234,7 +297,11 @@ export async function advanceAgentTask(
     const current = steps[currentIndex];
     const { error } = await db
       .from("agent_steps")
-      .update({ status: "running", attempt: current.attempt + 1, updated_at: updatedAt })
+      .update({
+        status: "running",
+        attempt: current.attempt + 1,
+        updated_at: updatedAt,
+      })
       .eq("id", current.id)
       .eq("task_id", taskId);
     if (error) throw dbError(error, "Failed to start task step");
@@ -244,19 +311,27 @@ export async function advanceAgentTask(
     const summary = result?.summary?.trim() || "Step completed.";
     const { error } = await db
       .from("agent_steps")
-      .update({ status: "completed", result_summary: summary, updated_at: updatedAt })
+      .update({
+        status: "completed",
+        result_summary: summary,
+        updated_at: updatedAt,
+      })
       .eq("id", current.id)
       .eq("task_id", taskId);
     if (error) throw dbError(error, "Failed to complete task step");
     if (result?.artifacts?.length) {
-      await addAgentArtifactLinks(db, taskId, result.artifacts);
+      await linkAgentTaskArtifacts(db, taskId, userId, result.artifacts);
     }
     currentIndex += 1;
     if (currentIndex < steps.length) {
       const next = steps[currentIndex];
       const { error: nextError } = await db
         .from("agent_steps")
-        .update({ status: "running", attempt: next.attempt + 1, updated_at: updatedAt })
+        .update({
+          status: "running",
+          attempt: next.attempt + 1,
+          updated_at: updatedAt,
+        })
         .eq("id", next.id)
         .eq("task_id", taskId);
       if (nextError) throw dbError(nextError, "Failed to start next task step");
@@ -266,7 +341,8 @@ export async function advanceAgentTask(
   const isComplete = currentIndex >= steps.length;
   const isVerifying = !isComplete && currentIndex === steps.length - 1;
   const activeStep = isComplete ? null : steps[currentIndex];
-  const completedStep = task.status === "queued" ? null : steps[currentIndex - 1];
+  const completedStep =
+    task.status === "queued" ? null : steps[currentIndex - 1];
   const { error: taskUpdateError } = await db
     .from("agent_tasks")
     .update({
@@ -284,7 +360,100 @@ export async function advanceAgentTask(
     })
     .eq("id", taskId)
     .eq("user_id", userId);
-  if (taskUpdateError) throw dbError(taskUpdateError, "Failed to update task state");
+  if (taskUpdateError)
+    throw dbError(taskUpdateError, "Failed to update task state");
+  return getAgentTaskSnapshot(db, taskId, userId);
+}
+
+export async function deferAgentTaskForProvider(
+  db: Db,
+  taskId: string,
+  userId: string,
+  summary: string,
+) {
+  const snapshot = await getAgentTaskSnapshot(db, taskId, userId);
+  if (!snapshot) return null;
+  const current = snapshot.task.current_plan.find(
+    (step: { status: AgentStepStatus }) => step.status === "running",
+  );
+  const updatedAt = now();
+  const { error } = await db
+    .from("agent_tasks")
+    .update({
+      status: "paused",
+      latest_checkpoint: current
+        ? {
+            step_id: current.id,
+            iteration: current.attempt,
+            summary,
+            created_at: updatedAt,
+          }
+        : snapshot.task.latest_checkpoint,
+      updated_at: updatedAt,
+    })
+    .eq("id", taskId)
+    .eq("user_id", userId);
+  if (error) throw dbError(error, "Failed to defer provider-queued task");
+  return getAgentTaskSnapshot(db, taskId, userId);
+}
+
+export async function retryAgentTask(db: Db, taskId: string, userId: string) {
+  const snapshot = await getAgentTaskSnapshot(db, taskId, userId);
+  if (!snapshot) return null;
+  if (!["failed", "waiting_input"].includes(snapshot.task.status)) {
+    throw new Error("Only a failed or input-blocked task can be retried");
+  }
+  const current = snapshot.task.current_plan.find(
+    (step: { status: AgentStepStatus }) => step.status === "blocked",
+  );
+  if (!current) throw new Error("Blocked task has no recoverable step");
+  const activeIndex = snapshot.task.current_plan.findIndex(
+    (step: { id: string }) => step.id === current.id,
+  );
+  const updatedAt = now();
+  const { error: stepError } = await db
+    .from("agent_steps")
+    .update({
+      status: "running",
+      attempt: current.attempt + 1,
+      updated_at: updatedAt,
+    })
+    .eq("id", current.id)
+    .eq("task_id", taskId);
+  if (stepError) throw dbError(stepError, "Failed to retry task step");
+  const status: AgentTaskStatus =
+    activeIndex === snapshot.task.current_plan.length - 1
+      ? "verifying"
+      : "running";
+  const { error } = await db
+    .from("agent_tasks")
+    .update({ status, current_step: current.id, updated_at: updatedAt })
+    .eq("id", taskId)
+    .eq("user_id", userId);
+  if (error) throw dbError(error, "Failed to retry task");
+  return getAgentTaskSnapshot(db, taskId, userId);
+}
+
+export async function attachAgentTaskDocuments(
+  db: Db,
+  taskId: string,
+  userId: string,
+  documentIds: string[],
+) {
+  const snapshot = await getAgentTaskSnapshot(db, taskId, userId);
+  if (!snapshot) return null;
+  await addAgentArtifactLinks(
+    db,
+    taskId,
+    documentIds.map((artifactId) => ({
+      artifact_type: "document" as const,
+      artifact_id: artifactId,
+      purpose: "Source document",
+    })),
+  );
+  if (snapshot.task.status === "waiting_input") {
+    return retryAgentTask(db, taskId, userId);
+  }
   return getAgentTaskSnapshot(db, taskId, userId);
 }
 
@@ -309,9 +478,12 @@ export async function resumeAgentTask(db: Db, taskId: string, userId: string) {
   if (snapshot.task.status !== "paused") {
     throw new Error("Only a paused task can be resumed");
   }
-  const steps = snapshot.task.current_plan as Array<{ status: AgentStepStatus }>;
+  const steps = snapshot.task.current_plan as Array<{
+    status: AgentStepStatus;
+  }>;
   const activeIndex = steps.findIndex((step) => step.status === "running");
-  const status: AgentTaskStatus = activeIndex === steps.length - 1 ? "verifying" : "running";
+  const status: AgentTaskStatus =
+    activeIndex === steps.length - 1 ? "verifying" : "running";
   const { error } = await db
     .from("agent_tasks")
     .update({ status, updated_at: now() })

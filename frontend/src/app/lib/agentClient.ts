@@ -1,7 +1,8 @@
 import { supabase } from "@/app/lib/supabase";
 import type { AgentTask, AgentTaskSnapshot } from "@/app/types/agent";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const {
@@ -19,8 +20,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(payload?.detail || `Agent task request failed (${response.status})`);
+    const payload = (await response.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      payload?.detail || `Agent task request failed (${response.status})`,
+    );
   }
   return (await response.json()) as T;
 }
@@ -46,23 +51,56 @@ export function listAgentTasks(matterId?: string) {
 }
 
 export function getAgentTask(taskId: string) {
-  return request<AgentTaskSnapshot>(`/agent-tasks/${encodeURIComponent(taskId)}`);
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}`,
+  );
 }
 
 export function advanceAgentTask(taskId: string) {
-  return request<AgentTaskSnapshot>(`/agent-tasks/${encodeURIComponent(taskId)}/advance`, {
-    method: "POST",
-  });
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/advance`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function pauseAgentTask(taskId: string) {
-  return request<AgentTaskSnapshot>(`/agent-tasks/${encodeURIComponent(taskId)}/pause`, {
-    method: "POST",
-  });
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/pause`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function resumeAgentTask(taskId: string) {
-  return request<AgentTaskSnapshot>(`/agent-tasks/${encodeURIComponent(taskId)}/resume`, {
-    method: "POST",
-  });
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/resume`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function retryAgentTask(taskId: string) {
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/retry`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function attachAgentTaskDocuments(
+  taskId: string,
+  documentIds: string[],
+) {
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/documents`,
+    {
+      method: "POST",
+      body: JSON.stringify({ document_ids: documentIds }),
+    },
+  );
 }

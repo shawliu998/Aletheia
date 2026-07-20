@@ -4,6 +4,7 @@ import {
   buildWorkflowStore,
   runLLMStream,
   stripTransientAssistantEvents,
+  type AssistantEvent,
   type ChatMessage,
 } from "./chat";
 import {
@@ -41,8 +42,12 @@ function taskPrompt(
   return [
     `WORK TASK GOAL\n${snapshot.task.goal}`,
     `CURRENT STEP\n${STEP_INSTRUCTIONS[stepIndex] ?? snapshot.task.current_plan[stepIndex]?.expected_output}`,
-    completed.length ? `COMPLETED STEP CHECKPOINTS\n${completed.join("\n")}` : "",
-    artifactManifest.length ? `LINKED ARTIFACTS\n${artifactManifest.join("\n")}` : "LINKED ARTIFACTS\nNone yet.",
+    completed.length
+      ? `COMPLETED STEP CHECKPOINTS\n${completed.join("\n")}`
+      : "",
+    artifactManifest.length
+      ? `LINKED ARTIFACTS\n${artifactManifest.join("\n")}`
+      : "LINKED ARTIFACTS\nNone yet.",
     "Complete only this step. Keep the output concise enough to serve as the saved checkpoint.",
   ]
     .filter(Boolean)
@@ -67,9 +72,14 @@ async function getOrCreateTaskChat(
     })
     .select("id")
     .single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to create task chat");
+  if (error || !data)
+    throw new Error(error?.message ?? "Failed to create task chat");
   await addAgentArtifactLinks(db, snapshot.task.id, [
-    { artifact_type: "chat", artifact_id: data.id, purpose: "Task execution record" },
+    {
+      artifact_type: "chat",
+      artifact_id: data.id,
+      purpose: "Task execution record",
+    },
   ]);
   return data.id as string;
 }
@@ -78,13 +88,184 @@ export type AgentStepExecutionResult = {
   summary: string;
   artifacts: AgentArtifactLinkInput[];
   waitingForInput: boolean;
+  citationCheck: { total: number; relocatable: number; missing: number };
 };
+
+export async function verifyTaskCitationLinks(
+  db: Db,
+  snapshot: NonNullable<TaskSnapshot>,
+) {
+  const sourceIds = snapshot.artifacts
+    .filter(
+      (artifact) =>
+        artifact.artifact_type === "document" &&
+        artifact.purpose === "Source document",
+    )
+    .map((artifact) => artifact.artifact_id);
+  const allowedDocumentIds = Array.from(
+    new Set(
+      snapshot.artifacts
+        .filter((artifact) =>
+          ["document", "draft", "tabular_review"].includes(
+            artifact.artifact_type,
+          ),
+        )
+        .map((artifact) => artifact.artifact_id),
+    ),
+  );
+  const messageIds = snapshot.artifacts
+    .filter((artifact) => artifact.artifact_type === "citation_snapshot")
+    .map((artifact) => artifact.artifact_id);
+  if (!messageIds.length) return { total: 0, relocatable: 0, missing: 0 };
+  const [
+    { data: messages, error: messageError },
+    { data: documents, error: documentError },
+  ] = await Promise.all([
+    db.from("chat_messages").select("id,citations").in("id", messageIds),
+    db
+      .from("documents")
+      .select("id,current_version_id")
+      .in("id", allowedDocumentIds),
+  ]);
+  if (messageError) throw new Error(messageError.message);
+  if (documentError) throw new Error(documentError.message);
+  const currentVersions = new Map(
+    (documents ?? []).map((document) => [
+      document.id as string,
+      document.current_version_id as string | null,
+    ]),
+  );
+  const citations: unknown[] = [];
+  for (const message of messages ?? []) {
+    const original = Array.isArray(message.citations) ? message.citations : [];
+    let changed = false;
+    const normalized = original.map((citation) => {
+      if (!citation || typeof citation !== "object") return citation;
+      const row = citation as Record<string, unknown>;
+      const documentId =
+        typeof row.document_id === "string" ? row.document_id : null;
+      const currentVersionId = documentId
+        ? currentVersions.get(documentId)
+        : null;
+      if (
+        documentId &&
+        currentVersionId &&
+        typeof row.version_id !== "string"
+      ) {
+        changed = true;
+        return { ...row, version_id: currentVersionId };
+      }
+      return citation;
+    });
+    if (changed) {
+      const { error: updateError } = await db
+        .from("chat_messages")
+        .update({ citations: normalized })
+        .eq("id", message.id);
+      if (updateError) throw new Error(updateError.message);
+    }
+    citations.push(...normalized);
+  }
+  const relocatable = citations.filter((citation) => {
+    if (!citation || typeof citation !== "object") return false;
+    const row = citation as Record<string, unknown>;
+    const documentId =
+      typeof row.document_id === "string" ? row.document_id : null;
+    return Boolean(
+      documentId &&
+      allowedDocumentIds.includes(documentId) &&
+      typeof row.version_id === "string" &&
+      currentVersions.get(documentId) === row.version_id &&
+      typeof row.quote === "string" &&
+      row.quote.trim(),
+    );
+  }).length;
+  const sourceBacked = citations.filter((citation) => {
+    if (!citation || typeof citation !== "object") return false;
+    const row = citation as Record<string, unknown>;
+    return (
+      typeof row.document_id === "string" && sourceIds.includes(row.document_id)
+    );
+  }).length;
+  return {
+    total: citations.length,
+    relocatable,
+    missing: citations.length - relocatable + (sourceBacked > 0 ? 0 : 1),
+  };
+}
+
+export function isTransientModelError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b429\b|\b503\b|overloaded|queue|temporarily unavailable|resource exhausted|timed out/i.test(
+    message,
+  );
+}
+
+async function runStepWithQueueRetry(args: Parameters<typeof runLLMStream>[0]) {
+  const attempts = [
+    { model: "gemini-3-flash-preview", waitMs: 0 },
+    { model: "gemini-3-flash-preview", waitMs: 1200 },
+    { model: "gemini-3.5-flash", waitMs: 2200 },
+  ];
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    if (attempt.waitMs) {
+      await new Promise((resolve) => setTimeout(resolve, attempt.waitMs));
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 70_000);
+    try {
+      return await runLLMStream({
+        ...args,
+        model: attempt.model,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const normalized = controller.signal.aborted
+        ? new Error(`Model request timed out while using ${attempt.model}`)
+        : error;
+      lastError = normalized;
+      if (!isTransientModelError(normalized)) throw normalized;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw lastError;
+}
+
+function artifactFromCreatedEvent(
+  event: Extract<AssistantEvent, { type: "doc_created" }>,
+  stepIndex: number,
+): AgentArtifactLinkInput | null {
+  if (!event.document_id) return null;
+  const filename = event.filename.toLowerCase();
+  if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
+    return {
+      artifact_type: "tabular_review",
+      artifact_id: event.document_id,
+      purpose: "Risk matrix",
+    };
+  }
+  if (filename.endsWith(".docx") || stepIndex === 3) {
+    return {
+      artifact_type: "draft",
+      artifact_id: event.document_id,
+      purpose: "Review memo draft",
+    };
+  }
+  return {
+    artifact_type: "document",
+    artifact_id: event.document_id,
+    purpose: "Generated document",
+  };
+}
 
 export async function executeAgentStep(input: {
   db: Db;
   snapshot: NonNullable<TaskSnapshot>;
   userId: string;
   userEmail?: string;
+  instructionOverride?: string;
 }): Promise<AgentStepExecutionResult> {
   const { db, snapshot, userId, userEmail } = input;
   const stepIndex = snapshot.task.current_plan.findIndex(
@@ -93,13 +274,18 @@ export async function executeAgentStep(input: {
   if (stepIndex < 0) throw new Error("Running task has no executable step");
 
   const sourceIds = snapshot.artifacts
-    .filter((artifact) => artifact.artifact_type === "document" && artifact.purpose === "Source document")
+    .filter(
+      (artifact) =>
+        artifact.artifact_type === "document" &&
+        artifact.purpose === "Source document",
+    )
     .map((artifact) => artifact.artifact_id);
   if (sourceIds.length === 0 && stepIndex < 4) {
     return {
       summary: "Source documents are required before this step can run.",
       artifacts: [],
       waitingForInput: true,
+      citationCheck: { total: 0, relocatable: 0, missing: 0 },
     };
   }
 
@@ -113,23 +299,48 @@ export async function executeAgentStep(input: {
   }));
 
   const chatId = await getOrCreateTaskChat(db, snapshot, userId);
-  const prompt = taskPrompt(
-    snapshot,
-    stepIndex,
-    snapshot.artifacts.map(
-      (artifact) => `- ${artifact.purpose}: ${artifact.artifact_type}/${artifact.artifact_id}`,
-    ),
-  );
-  const userMessage: ChatMessage = { role: "user", content: prompt, files: sourceFiles };
+  const prompt = input.instructionOverride
+    ? `${taskPrompt(
+        snapshot,
+        stepIndex,
+        snapshot.artifacts.map(
+          (artifact) =>
+            `- ${artifact.purpose}: ${artifact.artifact_type}/${artifact.artifact_id}`,
+        ),
+      )}\n\nREPAIR INSTRUCTION\n${input.instructionOverride}`
+    : taskPrompt(
+        snapshot,
+        stepIndex,
+        snapshot.artifacts.map(
+          (artifact) =>
+            `- ${artifact.purpose}: ${artifact.artifact_type}/${artifact.artifact_id}`,
+        ),
+      );
+  const verifierOnly =
+    stepIndex === 4 &&
+    !input.instructionOverride?.startsWith(
+      "This is the single permitted repair pass",
+    );
+  const activeSourceFiles = verifierOnly ? [] : sourceFiles;
+  const userMessage: ChatMessage = {
+    role: "user",
+    content: prompt,
+    files: activeSourceFiles,
+  };
   const { error: userMessageError } = await db.from("chat_messages").insert({
     chat_id: chatId,
     role: "user",
     content: prompt,
-    files: sourceFiles.length ? sourceFiles : null,
+    files: activeSourceFiles.length ? activeSourceFiles : null,
   });
   if (userMessageError) throw new Error(userMessageError.message);
 
-  const { docIndex, docStore } = await buildDocContext([userMessage], userId, db, chatId);
+  const { docIndex, docStore } = await buildDocContext(
+    [userMessage],
+    userId,
+    db,
+    verifierOnly ? null : chatId,
+  );
   const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
     doc_id,
     filename: info.filename,
@@ -137,7 +348,9 @@ export async function executeAgentStep(input: {
   const apiMessages = buildMessages(
     [userMessage],
     docAvailability,
-    "You are executing one bounded step in a Vera legal Work Task. Preserve source boundaries, never imply lawyer approval, and use the existing Mike tools when the step requires a document artifact.",
+    verifierOnly
+      ? "You are the final Vera verifier. Use only the saved checkpoints and artifact manifest. Do not call tools or create documents. Return PASS or GAP for exactly four checks and never imply lawyer approval."
+      : "You are executing one bounded step in a Vera legal Work Task. Preserve source boundaries, never imply lawyer approval, and use the existing Mike tools when the step requires a document artifact.",
     docIndex,
     false,
   );
@@ -145,7 +358,7 @@ export async function executeAgentStep(input: {
     getUserModelSettings(userId, db),
     buildWorkflowStore(userId, userEmail, db),
   ]);
-  const { fullText, events, citations } = await runLLMStream({
+  const { fullText, events, citations } = await runStepWithQueueRetry({
     apiMessages,
     docStore,
     docIndex,
@@ -154,7 +367,6 @@ export async function executeAgentStep(input: {
     write: () => {},
     workflowStore,
     includeResearchTools: false,
-    model: "gemini-3-flash-preview",
     apiKeys,
     projectId: snapshot.task.matter_id,
   });
@@ -170,20 +382,17 @@ export async function executeAgentStep(input: {
     .select("id")
     .single();
   if (assistantError || !assistantMessage) {
-    throw new Error(assistantError?.message ?? "Failed to save task step result");
+    throw new Error(
+      assistantError?.message ?? "Failed to save task step result",
+    );
   }
 
-  const artifactPurpose = stepIndex === 2 ? "Risk matrix" : stepIndex === 3 ? "Review memo draft" : "Generated document";
-  const artifacts: AgentArtifactLinkInput[] = persistedEvents.flatMap((event) =>
-    event.type === "doc_created" && event.document_id
-      ? [
-          {
-            artifact_type: stepIndex === 3 ? ("draft" as const) : ("document" as const),
-            artifact_id: event.document_id,
-            purpose: artifactPurpose,
-          },
-        ]
-      : [],
+  const artifacts: AgentArtifactLinkInput[] = persistedEvents.flatMap(
+    (event) => {
+      if (event.type !== "doc_created") return [];
+      const artifact = artifactFromCreatedEvent(event, stepIndex);
+      return artifact ? [artifact] : [];
+    },
   );
   if (citations.length) {
     artifacts.push({
@@ -192,15 +401,49 @@ export async function executeAgentStep(input: {
       purpose: `Step ${stepIndex + 1} evidence citations`,
     });
   }
-  const waitingForInput = persistedEvents.some((event) => event.type === "ask_inputs");
+  const waitingForInput = persistedEvents.some(
+    (event) => event.type === "ask_inputs",
+  );
   const contentText = persistedEvents
-    .filter((event): event is Extract<typeof event, { type: "content" }> => event.type === "content")
+    .filter(
+      (event): event is Extract<typeof event, { type: "content" }> =>
+        event.type === "content",
+    )
     .map((event) => event.text)
     .join("\n")
     .trim();
   return {
-    summary: (contentText || fullText || `Step ${stepIndex + 1} completed.`).slice(0, 4000),
+    summary: (
+      contentText ||
+      fullText ||
+      `Step ${stepIndex + 1} completed.`
+    ).slice(0, 4000),
     artifacts,
     waitingForInput,
+    citationCheck: {
+      total: citations.length,
+      relocatable: citations.filter((citation) => {
+        if (!citation || typeof citation !== "object") return false;
+        const row = citation as Record<string, unknown>;
+        return (
+          typeof row.document_id === "string" &&
+          sourceIds.includes(row.document_id) &&
+          typeof row.version_id === "string" &&
+          typeof row.quote === "string" &&
+          row.quote.trim().length > 0
+        );
+      }).length,
+      missing: citations.filter((citation) => {
+        if (!citation || typeof citation !== "object") return true;
+        const row = citation as Record<string, unknown>;
+        return !(
+          typeof row.document_id === "string" &&
+          sourceIds.includes(row.document_id) &&
+          typeof row.version_id === "string" &&
+          typeof row.quote === "string" &&
+          row.quote.trim().length > 0
+        );
+      }).length,
+    },
   };
 }

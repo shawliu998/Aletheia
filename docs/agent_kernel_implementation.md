@@ -16,6 +16,8 @@ Chats, project documents, generated Word/Excel files, workflows, citations, and 
 - `GET /agent-tasks`
 - `GET /agent-tasks/:taskId`
 - `POST /agent-tasks/:taskId/advance`
+- `POST /agent-tasks/:taskId/retry`
+- `POST /agent-tasks/:taskId/documents`
 - `POST /agent-tasks/:taskId/pause`
 - `POST /agent-tasks/:taskId/resume`
 
@@ -36,8 +38,10 @@ Every running step enters Mike's existing `runLLMStream` tool loop with its exis
 The deterministic controller prevents false completion:
 
 - no source documents → `waiting_input`;
-- model/tool failure → `failed`;
+- transient 429/503/model queue → bounded retry on Gemini 3 Flash, then one Gemini 3.5 Flash fallback, then `paused` without losing completed work;
+- non-transient model/tool failure → `failed` with an explicit retry action;
 - missing risk matrix or review memo at verification → verification is blocked;
+- a verification gap permits one repair pass and one recheck only;
 - completion never implies lawyer approval; the UI remains “Ready for lawyer review.”
 
 ## Verified states
@@ -47,10 +51,14 @@ The deterministic controller prevents false completion:
 - `waiting_input` when the task has no Matter documents.
 - `failed` and a recovery link when Gemini is not configured.
 - Matter/document ownership validation.
-- responsive task workspace at 1280, 1024, 760, and 390 CSS pixels.
+- supplemental Matter documents can be attached to a waiting task and execution resumes from the blocked step.
+- pause/resume preserves prior steps and artifact links.
+- a task left in `verifying` survives backend restart and resumes from its saved checkpoint.
+- a real synthetic contract completed all five steps with Gemini: one source DOCX, 36/36 relocatable citations, a valid 10-row Excel risk matrix, a valid 7,166-character Word review memo, and a four-check PASS result that remains pending lawyer review.
+- provider queue behavior was exercised: the risk-matrix step completed on attempt 3 after transient 503 responses without rerunning earlier steps.
+- responsive task workspace at 1440, 1024, 760, and 390 CSS pixels with no horizontal overflow.
+- keyboard traversal reaches the desktop navigation, Matter history, task breadcrumb, activity links, and artifact actions.
 - frontend and backend production builds.
-
-Full successful model execution requires a configured Gemini key. The local QA database was intentionally left without a provider key, so no key or model response was fabricated during verification.
 
 ## Boundaries unchanged
 
