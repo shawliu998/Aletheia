@@ -1,485 +1,410 @@
 "use client";
 
-// Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/tabular/NewTRModal.tsx
-import { useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, Plus } from "lucide-react";
-import { Modal } from "@/app/components/shared/Modal";
-import { useI18n } from "@/app/i18n";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Upload } from "lucide-react";
+import type { Document, Project, Workflow } from "../shared/types";
 import {
-  listVeraProjectDocuments,
-  listVeraProjects,
-} from "@/app/lib/veraApi";
-import {
-  getVeraModelSettingsStatus,
-  type VeraModelProfile,
-} from "@/app/lib/veraModelSettingsApi";
-import type {
-  VeraDocumentWire,
-  VeraProjectWire,
-} from "@/app/lib/veraWireTypes";
-import type {
-  VeraTabularColumn,
-  VeraTabularReviewCreateInput,
-} from "@/app/lib/veraTabularApi";
-import { AddColumnModal } from "./AddColumnModal";
-import { formatOption } from "./columnFormat";
+    getProject,
+    listWorkflows,
+    uploadProjectDocument,
+    uploadStandaloneDocument,
+} from "@/app/lib/mikeApi";
+import { FileDirectory } from "../shared/FileDirectory";
+import { Modal } from "../modals/Modal";
+import { ModalFieldLabel } from "../modals/ModalFieldLabel";
+import { ModalSelect } from "../modals/ModalSelect";
+import { ModalTextInput } from "../modals/ModalTextInput";
 
-function readyModel(profile: VeraModelProfile): boolean {
-  return (
-    profile.enabled &&
-    profile.availability.selectable &&
-    profile.connection_test.status === "passed"
-  );
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+    if (isDev) console.log(...args);
+};
+
+interface Props {
+    open: boolean;
+    onClose: () => void;
+    onAdd: (
+        title: string,
+        projectId?: string,
+        documentIds?: string[],
+        columnsConfig?: Workflow["columns_config"],
+    ) => void;
+    projects?: Project[];
+    /** When provided, skip the project/directory picker and show only these docs */
+    projectDocs?: Document[];
+    projectName?: string;
+    projectCmNumber?: string | null;
 }
 
 export function NewTRModal({
-  open,
-  fixedProject,
-  creating = false,
-  onClose,
-  onCreate,
-}: {
-  open: boolean;
-  fixedProject?: Pick<VeraProjectWire, "id" | "name" | "default_model_profile_id">;
-  creating?: boolean;
-  onClose: () => void;
-  onCreate: (input: VeraTabularReviewCreateInput) => Promise<void>;
-}) {
-  const { t, errorMessage } = useI18n();
-  const [title, setTitle] = useState("");
-  const [projects, setProjects] = useState<VeraProjectWire[]>([]);
-  const [projectId, setProjectId] = useState<string>(fixedProject?.id ?? "");
-  const [documents, setDocuments] = useState<VeraDocumentWire[]>([]);
-  const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
-  const [models, setModels] = useState<VeraModelProfile[]>([]);
-  const [modelProfileId, setModelProfileId] = useState("");
-  const [columns, setColumns] = useState<VeraTabularColumn[]>([]);
-  const [columnModalOpen, setColumnModalOpen] = useState(false);
-  const [editingColumn, setEditingColumn] = useState<VeraTabularColumn>();
-  const [loading, setLoading] = useState(false);
-  const [loadingDocuments, setLoadingDocuments] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const formId = "vera-new-tabular-review";
-  const fixedProjectId = fixedProject?.id;
-  const fixedDefaultModelProfileId = fixedProject?.default_model_profile_id;
-
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      if (controller.signal.aborted) return;
-      setTitle("");
-      setColumns([]);
-      setSelectedDocuments([]);
-      setEditingColumn(undefined);
-      setColumnModalOpen(false);
-      setError(null);
-      setLoading(true);
-      setProjectId(fixedProjectId ?? "");
-    });
-    Promise.all([
-      fixedProjectId
-        ? Promise.resolve([])
-        : listVeraProjects(controller.signal),
-      getVeraModelSettingsStatus({ signal: controller.signal }),
-    ])
-      .then(([loadedProjects, settings]) => {
-        if (controller.signal.aborted) return;
-        setProjects(loadedProjects);
-        const selectable = settings.models.filter(readyModel);
-        setModels(selectable);
-        const projectDefault = fixedDefaultModelProfileId;
-        const preferred =
-          selectable.find((model) => model.id === projectDefault)?.id ??
-          selectable.find(
-            (model) => model.id === settings.settings.default_model_profile_id,
-          )?.id ??
-          selectable[0]?.id ??
-          "";
-        setModelProfileId(preferred);
-        if (!fixedProjectId && settings.settings.default_project_id) {
-          const defaultProject = loadedProjects.find(
-            (project) => project.id === settings.settings.default_project_id,
-          );
-          if (defaultProject) setProjectId(defaultProject.id);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) setError(errorMessage(reason as Error));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [
-    errorMessage,
-    fixedDefaultModelProfileId,
-    fixedProjectId,
     open,
-  ]);
+    onClose,
+    onAdd,
+    projects = [],
+    projectDocs: fixedProjectDocs,
+    projectName,
+    projectCmNumber,
+}: Props) {
+    const isProjectMode = fixedProjectDocs !== undefined;
+    const [step, setStep] = useState<"details" | "documents">("details");
+    const [title, setTitle] = useState("");
+    const [underProject, setUnderProject] = useState(false);
+    const [selectedProjectId, setSelectedProjectId] = useState("");
 
-  useEffect(() => {
-    if (!open || !projectId) {
-      if (!projectId) {
-        queueMicrotask(() => {
-          setDocuments([]);
-          setSelectedDocuments([]);
-        });
-      }
-      return;
-    }
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      if (!controller.signal.aborted) {
-        setLoadingDocuments(true);
-        setSelectedDocuments([]);
-      }
-    });
-    listVeraProjectDocuments(projectId, {}, controller.signal)
-      .then((loaded) => {
-        if (!controller.signal.aborted) setDocuments(loaded);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) {
-          setDocuments([]);
-          setError(errorMessage(reason as Error));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingDocuments(false);
-      });
-    return () => controller.abort();
-  }, [errorMessage, open, projectId]);
+    // Project-scoped docs (when underProject is true and no fixedProjectDocs)
+    const [projectDocs, setProjectDocs] = useState<Document[]>([]);
+    const [loadingDocs, setLoadingDocs] = useState(false);
 
-  const readyDocuments = useMemo(
-    () => documents.filter((document) => document.status === "ready"),
-    [documents],
-  );
-  const maximumDocumentCount =
-    columns.length === 0 ? 1_000 : Math.floor(10_000 / columns.length);
-  const maximumColumnCount = Math.min(
-    100,
-    selectedDocuments.length === 0
-      ? 100
-      : Math.floor(10_000 / selectedDocuments.length),
-  );
-  const selectableReadyDocuments = readyDocuments.slice(
-    0,
-    maximumDocumentCount,
-  );
-  const allSelectableDocumentsSelected =
-    selectableReadyDocuments.length > 0 &&
-    selectedDocuments.length === selectableReadyDocuments.length &&
-    selectableReadyDocuments.every((document) =>
-      selectedDocuments.includes(document.id),
+    const [extraStandaloneDocs, setExtraStandaloneDocs] = useState<Document[]>(
+        [],
     );
-  const invalid =
-    !title.trim() ||
-    !projectId ||
-    !modelProfileId ||
-    selectedDocuments.length === 0 ||
-    columns.length === 0 ||
-    columns.length > 100 ||
-    selectedDocuments.length * columns.length > 10_000;
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
+    const [uploading, setUploading] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (invalid || submitting || creating) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onCreate({
-        title: title.trim(),
-        project_id: projectId,
-        model_profile_id: modelProfileId,
-        document_ids: selectedDocuments,
-        columns_config: columns,
-      });
-    } catch (reason) {
-      setError(errorMessage(reason as Error));
-    } finally {
-      setSubmitting(false);
+    // Workflow templates
+    const [workflows, setWorkflows] = useState<Workflow[]>([]);
+    const [loadingWorkflows, setLoadingWorkflows] = useState(false);
+    const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
+        null,
+    );
+    const formId = "new-tabular-review-modal-form";
+
+    useEffect(() => {
+        if (!open) return;
+
+        setLoadingWorkflows(true);
+        listWorkflows("tabular")
+            .then((workflows) => {
+                devLog("[workflows/ui:tabular-review-modal] loaded", {
+                    workflowCount: workflows.length,
+                    systemCount: workflows.filter((workflow) => workflow.is_system)
+                        .length,
+                    sample: workflows.slice(0, 5).map((workflow) => ({
+                        id: workflow.id,
+                        title: workflow.metadata.title,
+                        type: workflow.metadata.type,
+                        user_id: workflow.user_id,
+                        is_system: workflow.is_system,
+                        is_owner: workflow.is_owner,
+                    })),
+                });
+                setWorkflows(workflows);
+            })
+            .catch((error) => {
+                devLog(
+                    "[workflows/ui:tabular-review-modal] failed",
+                    error,
+                );
+                setWorkflows([]);
+            })
+            .finally(() => setLoadingWorkflows(false));
+
+        if (isProjectMode) {
+            setSelectedDocuments(fixedProjectDocs ?? []);
+        }
+    }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (!open) return null;
+
+    function handleClose() {
+        setStep("details");
+        setTitle("");
+        setUnderProject(false);
+        setSelectedProjectId("");
+        setProjectDocs([]);
+        setExtraStandaloneDocs([]);
+        setSelectedDocuments([]);
+        setSelectedWorkflowId(null);
+        onClose();
     }
-  };
 
-  const nextIndex =
-    columns.reduce((maximum, column) => Math.max(maximum, column.index), -1) + 1;
+    function submitterValue(e: React.FormEvent<HTMLFormElement>) {
+        return (
+            (e.nativeEvent as SubmitEvent).submitter as
+                | HTMLButtonElement
+                | null
+        )?.value;
+    }
 
-  return (
-    <>
-      <Modal
-        open={open}
-        onClose={() => {
-          if (!submitting && !creating) onClose();
-        }}
-        size="xl"
-        breadcrumbs={[t("tabular.title"), t("tabular.new.title")]}
-        primaryAction={{
-          label:
-            submitting || creating
-              ? t("common.status.saving")
-              : t("tabular.new.create"),
-          type: "submit",
-          form: formId,
-          disabled: invalid || submitting || creating || loading,
-          icon:
-            submitting || creating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : undefined,
-        }}
-        cancelAction={{
-          label: t("common.actions.cancel"),
-          onClick: onClose,
-          disabled: submitting || creating,
-        }}
-      >
-        <form id={formId} onSubmit={(event) => void submit(event)} className="grid gap-5 pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <div className="space-y-4">
-            {error && (
-              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-                {error}
-              </p>
-            )}
-            <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-              <span>{t("tabular.new.name")}</span>
-              <input
-                autoFocus
-                value={title}
-                maxLength={240}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder={t("tabular.new.namePlaceholder")}
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-              />
-            </label>
+    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!title.trim()) return;
+        if (underProject && !selectedProjectId) return;
+        if (step === "details" || submitterValue(e) !== "create-review") {
+            setStep("documents");
+            return;
+        }
+        const selectedWorkflow = workflows.find(
+            (w) => w.id === selectedWorkflowId,
+        );
+        onAdd(
+            title.trim(),
+            underProject ? selectedProjectId : undefined,
+            selectedDocuments.length > 0
+                ? selectedDocuments.map((document) => document.id)
+                : undefined,
+            selectedWorkflow?.columns_config ?? undefined,
+        );
+        handleClose();
+    }
 
-            <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-              <span>{t("tabular.new.project")}</span>
-              {fixedProject ? (
-                <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                  {fixedProject.name}
-                </div>
-              ) : (
-                <select
-                  value={projectId}
-                  disabled={loading}
-                  onChange={(event) => setProjectId(event.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-                >
-                  <option value="">{t("tabular.new.chooseProject")}</option>
-                  {projects
-                    .filter((project) => project.status === "active")
-                    .map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                </select>
-              )}
-            </label>
+    async function handleSelectProject(projectId: string) {
+        setSelectedProjectId(projectId);
+        setProjectDocs([]);
+        setSelectedDocuments([]);
+        setLoadingDocs(true);
+        try {
+            const proj = await getProject(projectId);
+            const docs = (proj.documents ?? []).filter(
+                (d) => d.status === "ready",
+            );
+            setProjectDocs(docs);
+            setSelectedDocuments(docs);
+        } finally {
+            setLoadingDocs(false);
+        }
+    }
 
-            <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-              <span>{t("tabular.new.model")}</span>
-              <select
-                value={modelProfileId}
-                disabled={loading || models.length === 0}
-                onChange={(event) => setModelProfileId(event.target.value)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-              >
-                <option value="">{t("tabular.new.chooseModel")}</option>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name} · {model.model}
-                  </option>
-                ))}
-              </select>
-              {models.length === 0 && !loading && (
-                <span className="block text-xs font-normal text-amber-700">
-                  {t("tabular.new.noReadyModel")}
-                </span>
-              )}
-            </label>
+    async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        if (!files.length) return;
+        setUploading(true);
+        try {
+            const uploaded = await Promise.all(
+                files.map((f) =>
+                    underProject && selectedProjectId
+                        ? uploadProjectDocument(selectedProjectId, f)
+                        : uploadStandaloneDocument(f),
+                ),
+            );
+            if (underProject && selectedProjectId) {
+                setProjectDocs((prev) => [...uploaded, ...prev]);
+            } else {
+                setExtraStandaloneDocs((prev) => [...uploaded, ...prev]);
+            }
+            setSelectedDocuments((prev) => [
+                ...prev,
+                ...uploaded.filter(
+                    (document) =>
+                        !prev.some((selected) => selected.id === document.id),
+                ),
+            ]);
+        } catch (err) {
+            console.error("Upload failed:", err);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+    }
 
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-700">
-                  {t("tabular.columns.title")}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingColumn(undefined);
-                    setColumnModalOpen(true);
-                  }}
-                  disabled={columns.length >= maximumColumnCount}
-                  title={
-                    columns.length >= maximumColumnCount
-                      ? t("tabular.documents.matrixLimit")
-                      : undefined
-                  }
-                  className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-950 disabled:opacity-40"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("tabular.columns.add")}
-                </button>
-              </div>
-              {columns.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-200 px-3 py-6 text-center text-xs text-gray-400">
-                  {t("tabular.columns.empty")}
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {columns.map((column) => {
-                    const option = formatOption(column.format);
-                    const Icon = option.icon;
-                    return (
-                      <button
-                        key={column.index}
-                        type="button"
-                        onClick={() => {
-                          setEditingColumn(column);
-                          setColumnModalOpen(true);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
-                      >
-                        <Icon className={`h-3.5 w-3.5 ${option.iconClassName}`} />
-                        <span className="min-w-0 flex-1 truncate">{column.name}</span>
-                        <span className="text-gray-400">{t(option.labelKey)}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
+    const workflowOptions = [
+        {
+            value: "",
+            label: loadingWorkflows
+                ? "Loading templates..."
+                : "No template - start from scratch",
+        },
+        ...workflows.map((workflow) => ({
+            value: workflow.id,
+            label: workflow.metadata.title,
+        })),
+    ];
+    const projectOptions = projects.length
+        ? projects.map((project) => ({
+              value: project.id,
+              label:
+                  project.name +
+                  (project.cm_number ? ` (#${project.cm_number})` : ""),
+          }))
+        : [{ value: "", label: "No projects found" }];
 
-          <section className="flex min-h-[360px] flex-col rounded-2xl border border-gray-100 bg-gray-50/60 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div>
-                <h3 className="text-xs font-medium text-gray-800">
-                  {t("tabular.new.documents")}
-                </h3>
-                <p className="mt-0.5 text-[11px] text-gray-400">
-                  {t("tabular.new.readyDocumentsOnly")}
-                </p>
-              </div>
-              {selectableReadyDocuments.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelectedDocuments(
-                      allSelectableDocumentsSelected
-                        ? []
-                        : selectableReadyDocuments.map(
-                            (document) => document.id,
+    // What to show in the directory depends on mode and toggle state
+    const directoryDocuments = isProjectMode
+        ? (fixedProjectDocs ?? [])
+        : underProject
+          ? projectDocs
+          : extraStandaloneDocs;
+    const directoryLoading = isProjectMode
+        ? false
+        : underProject
+          ? loadingDocs
+          : false;
+    const showDirectory = isProjectMode || !underProject || !!selectedProjectId;
+    const breadcrumbs =
+        isProjectMode && projectName
+            ? [
+                  "Projects",
+                  `${projectName}${projectCmNumber ? ` (#${projectCmNumber})` : ""}`,
+                  "New Tabular Review",
+              ]
+            : ["Tabular Reviews", "New Tabular Review"];
+
+    return (
+        <Modal
+            open={open}
+            onClose={handleClose}
+            breadcrumbs={[
+                ...breadcrumbs,
+                step === "details" ? "Details" : "Add Documents",
+            ]}
+            secondaryAction={
+                step === "documents"
+                    ? {
+                          label: uploading ? "Uploading..." : "Upload",
+                          icon: uploading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                              <Upload className="h-3.5 w-3.5" />
                           ),
-                    )
-                  }
-                  className="text-xs text-gray-500 hover:text-gray-900"
-                >
-                  {allSelectableDocumentsSelected
-                    ? t("tabular.new.clearSelection")
-                    : t("tabular.new.selectAll")}
-                </button>
-              )}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white bg-white/80">
-              {loadingDocuments ? (
-                <div className="flex h-full min-h-40 items-center justify-center text-gray-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-              ) : !projectId ? (
-                <div className="flex h-full min-h-40 items-center justify-center px-6 text-center text-xs text-gray-400">
-                  {t("tabular.new.chooseProjectFirst")}
-                </div>
-              ) : documents.length === 0 ? (
-                <div className="flex h-full min-h-40 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-gray-400">
-                  <FileText className="h-6 w-6 text-gray-300" />
-                  {t("tabular.new.noDocuments")}
-                </div>
-              ) : (
-                documents.map((document) => {
-                  const selected = selectedDocuments.includes(document.id);
-                  const ready = document.status === "ready";
-                  const canSelect =
-                    selected ||
-                    (ready && selectedDocuments.length < maximumDocumentCount);
-                  return (
-                    <label
-                      key={document.id}
-                      className={`flex items-center gap-3 border-b border-gray-50 px-3 py-2.5 text-xs last:border-b-0 ${
-                        canSelect
-                          ? "cursor-pointer hover:bg-gray-50"
-                          : "cursor-not-allowed opacity-50"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        disabled={!canSelect}
-                        onChange={() =>
-                          setSelectedDocuments((current) =>
-                            current.includes(document.id)
-                              ? current.filter((id) => id !== document.id)
-                              : [...current, document.id],
-                          )
-                        }
-                        className="h-3 w-3 accent-black"
-                      />
-                      <FileText className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                      <span className="min-w-0 flex-1 truncate text-gray-700">
-                        {document.filename}
-                      </span>
-                      {!ready && (
-                        <span className="text-[10px] text-gray-400">
-                          {t(`tabular.documentStatus.${document.status}`)}
-                        </span>
-                      )}
-                    </label>
-                  );
-                })
-              )}
-            </div>
-            <p className="mt-2 text-[11px] text-gray-400">
-              {t("tabular.new.matrixSize", {
-                documents: selectedDocuments.length,
-                columns: columns.length,
-                cells: selectedDocuments.length * columns.length,
-              })}
-              {` · ${t("tabular.documents.matrixLimit")}`}
-            </p>
-          </section>
-        </form>
-      </Modal>
+                          onClick: () => fileInputRef.current?.click(),
+                          disabled: uploading,
+                      }
+                    : undefined
+            }
+            cancelAction={
+                step === "documents"
+                    ? {
+                          label: "Back",
+                          onClick: () => setStep("details"),
+                          disabled: uploading,
+                      }
+                    : undefined
+            }
+            primaryAction={
+                step === "details"
+                    ? {
+                          label: "Next",
+                          type: "button",
+                          onClick: (event) => {
+                              event.preventDefault();
+                              setStep("documents");
+                          },
+                          disabled:
+                              !title.trim() ||
+                              (underProject && !selectedProjectId),
+                      }
+                    : {
+                          label: "Create",
+                          type: "submit",
+                          form: formId,
+                          name: "modalAction",
+                          value: "create-review",
+                          disabled:
+                              !title.trim() ||
+                              (underProject && !selectedProjectId),
+                      }
+            }
+        >
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt"
+                multiple
+                className="hidden"
+                onChange={handleUpload}
+            />
+            <form
+                id={formId}
+                onSubmit={handleSubmit}
+                className="flex flex-col min-h-0 flex-1"
+            >
+                {step === "details" ? (
+                    <div className="space-y-6">
+                        <div>
+                            <ModalFieldLabel htmlFor="new-tr-title">
+                                Review name
+                            </ModalFieldLabel>
+                            <ModalTextInput
+                                id="new-tr-title"
+                                type="text"
+                                value={title}
+                                onChange={(e) => setTitle(e.target.value)}
+                                placeholder="Review name"
+                                variant="minimal"
+                                className="placeholder:text-gray-400"
+                                autoFocus
+                            />
+                        </div>
 
-      <AddColumnModal
-        open={columnModalOpen}
-        nextIndex={nextIndex}
-        maxColumns={
-          editingColumn ? 1 : maximumColumnCount - columns.length
-        }
-        editingColumn={editingColumn}
-        onClose={() => {
-          setColumnModalOpen(false);
-          setEditingColumn(undefined);
-        }}
-        onAdd={(added) => setColumns((current) => [...current, ...added])}
-        onSave={(saved) =>
-          setColumns((current) =>
-            current.map((column) =>
-              column.index === saved.index ? saved : column,
-            ),
-          )
-        }
-        onDelete={(index) =>
-          setColumns((current) =>
-            current
-              .filter((column) => column.index !== index)
-              .map((column, position) => ({ ...column, index: position })),
-          )
-        }
-      />
-    </>
-  );
+                        {/* Workflow template */}
+                        <div>
+                            <ModalFieldLabel as="p">
+                                Workflow template
+                            </ModalFieldLabel>
+                            <ModalSelect
+                                id="new-tr-workflow-template"
+                                value={selectedWorkflowId ?? ""}
+                                options={workflowOptions}
+                                onChange={(value) =>
+                                    setSelectedWorkflowId(value || null)
+                                }
+                                disabled={loadingWorkflows}
+                            />
+                        </div>
+
+                        {/* Create under a project toggle */}
+                        {!isProjectMode && (
+                            <div className="space-y-3">
+                                <ModalFieldLabel as="p">
+                                    Project
+                                </ModalFieldLabel>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = !underProject;
+                                        setUnderProject(next);
+                                        if (!next) {
+                                            setSelectedProjectId("");
+                                            setProjectDocs([]);
+                                            setSelectedDocuments([]);
+                                        }
+                                    }}
+                                    className="flex w-fit items-center gap-2.5"
+                                >
+                                    <span
+                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${underProject ? "bg-gray-900" : "bg-gray-100"}`}
+                                    >
+                                        <span
+                                            className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${underProject ? "translate-x-4" : "translate-x-0"}`}
+                                        />
+                                    </span>
+                                    <span className="text-sm text-gray-600">
+                                        Create under a project
+                                    </span>
+                                </button>
+
+                                {underProject && (
+                                    <ModalSelect
+                                        id="new-tr-project"
+                                        value={selectedProjectId}
+                                        options={projectOptions}
+                                        onChange={(value) => {
+                                            if (value) {
+                                                void handleSelectProject(value);
+                                            }
+                                        }}
+                                        placeholder="Select project..."
+                                        disabled={projects.length === 0}
+                                    />
+                                )}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                        {showDirectory && (
+                            <FileDirectory
+                                documents={directoryDocuments}
+                                loading={directoryLoading}
+                                selectedDocuments={selectedDocuments}
+                                onChange={setSelectedDocuments}
+                                showTabs={!isProjectMode && !underProject}
+                            />
+                        )}
+                    </div>
+                )}
+            </form>
+        </Modal>
+    );
 }

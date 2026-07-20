@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -13,15 +9,10 @@
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "types": [
-      "node",
-      "react",
-      "react-dom"
-    ],
+    "types": ["node", "react", "react-dom"],
     "incremental": true,
     "plugins": [
       {
@@ -29,9 +20,7 @@
       }
     ],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"]
     }
   },
   "include": [
@@ -40,17 +29,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts",
-    ".next-ui-smoke/types/**/*.ts",
-    ".next-ui-smoke/dev/types/**/*.ts",
-    ".next-build/types/**/*.ts",
-    ".next-build/dev/types/**/*.ts",
-    ".next-anchor-settings-audit/types/**/*.ts",
-    ".next-anchor-settings-audit/dev/types/**/*.ts"
+    "**/*.mts"
   ],
-  "exclude": [
-    "node_modules",
-    ".next-ui-smoke",
-    ".next"
-  ]
+  "exclude": ["node_modules"]
 }

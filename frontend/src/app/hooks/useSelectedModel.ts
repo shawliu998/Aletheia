@@ -1,43 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-    ALETHEIA_SETTINGS_EVENT,
-    SELECTED_MODEL_KEY,
-    readAletheiaSettings,
-} from "@/aletheia/settingsModel";
+import { ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID } from "../components/assistant/ModelToggle";
 
-const SAFE_MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const STORAGE_KEY = "mike.selectedModel";
 
 function readStored(): string {
-    if (typeof window === "undefined") return "";
-    const raw = window.localStorage.getItem(SELECTED_MODEL_KEY);
-    if (raw && SAFE_MODEL_ID.test(raw)) return raw;
-    const configured = readAletheiaSettings().defaultModel;
-    return SAFE_MODEL_ID.test(configured) ? configured : "";
+    if (typeof window === "undefined") return DEFAULT_MODEL_ID;
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw && ALLOWED_MODEL_IDS.has(raw)) return raw;
+    return DEFAULT_MODEL_ID;
 }
 
 export function useSelectedModel(): [string, (id: string) => void] {
-    const [model, setModelState] = useState<string>(readStored);
+    const [model, setModelState] = useState<string>(DEFAULT_MODEL_ID);
 
     useEffect(() => {
-        function syncModel() {
-            setModelState(readStored());
-        }
-        window.addEventListener("storage", syncModel);
-        window.addEventListener(ALETHEIA_SETTINGS_EVENT, syncModel);
-        return () => {
-            window.removeEventListener("storage", syncModel);
-            window.removeEventListener(ALETHEIA_SETTINGS_EVENT, syncModel);
-        };
+        setModelState(readStored());
     }, []);
 
     const setModel = useCallback((id: string) => {
-        const next = SAFE_MODEL_ID.test(id) ? id : "";
+        const next = ALLOWED_MODEL_IDS.has(id) ? id : DEFAULT_MODEL_ID;
         setModelState(next);
         if (typeof window !== "undefined") {
-            if (next) window.localStorage.setItem(SELECTED_MODEL_KEY, next);
-            else window.localStorage.removeItem(SELECTED_MODEL_KEY);
+            window.localStorage.setItem(STORAGE_KEY, next);
         }
     }, []);
 

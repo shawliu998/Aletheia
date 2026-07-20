@@ -1,13 +1,13 @@
 "use client";
 
 import { use } from "react";
-import { TabularReviewView } from "@/app/components/tabular/TabularReviewView";
+import { TRView } from "@/app/components/tabular/TabularReviewView";
 
-export default function ProjectTabularReviewPage({
-  params,
-}: {
-  params: Promise<{ id: string; reviewId: string }>;
-}) {
-  const { id, reviewId } = use(params);
-  return <TabularReviewView reviewId={reviewId} projectId={id} />;
+interface Props {
+    params: Promise<{ id: string; reviewId: string }>;
+}
+
+export default function ProjectTabularReviewPage({ params }: Props) {
+    const { id, reviewId } = use(params);
+    return <TRView reviewId={reviewId} projectId={id} />;
 }

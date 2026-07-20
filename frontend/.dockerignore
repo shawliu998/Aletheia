@@ -1,9 +1,0 @@
-node_modules
-.next
-.open-next
-test-results
-playwright-report
-.env
-.env.*
-npm-debug.log*
-*.tsbuildinfo

@@ -1,9 +1,19 @@
-// Shared TypeScript types for the Aletheia workspace.
+// Shared TypeScript types for Mike AI legal assistant
 
 export interface Folder {
   id: string;
   project_id: string;
   user_id: string;
+  name: string;
+  parent_folder_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LibraryFolder {
+  id: string;
+  user_id: string;
+  library_kind: "file" | "template";
   name: string;
   parent_folder_id: string | null;
   created_at: string;
@@ -18,6 +28,7 @@ export interface Project {
   owner_email?: string | null;
   name: string;
   cm_number: string | null;
+  practice: string | null;
   shared_with: string[];
   created_at: string;
   updated_at: string;
@@ -33,10 +44,12 @@ export interface Document {
   user_id?: string;
   project_id: string | null;
   folder_id?: string | null;
+  library_kind?: "file" | "template";
+  library_folder_id?: string | null;
   filename: string;
   owner_email?: string | null;
   owner_display_name?: string | null;
-  file_type: string | null; // pdf | docx | doc | xlsx
+  file_type: string | null; // pdf | docx | doc | xlsx | xlsm | xls | pptx | ppt
   storage_path: string | null;
   pdf_storage_path: string | null;
   size_bytes: number | null;
@@ -88,11 +101,6 @@ export interface EditAnnotation {
 }
 
 export type AssistantEvent =
-  | {
-      type: "status";
-      status: "queued" | "running" | "retrying";
-      isStreaming?: boolean;
-    }
   | { type: "reasoning"; text: string; isStreaming?: boolean }
   | { type: "error"; message: string }
   | {
@@ -110,6 +118,46 @@ export type AssistantEvent =
       error?: string;
       isStreaming?: boolean;
     }
+  | {
+      type: "ask_inputs";
+      items: (
+        | {
+            id: string;
+            kind: "choice";
+            question: string;
+            options: {
+              value: string;
+            }[];
+            allow_other: boolean;
+            other_label: string;
+            response_prefix?: string;
+          }
+        | {
+            id: string;
+            kind: "documents";
+            document_types: string[];
+            response_prefix?: string;
+          }
+      )[];
+    }
+  | {
+      type: "ask_inputs_response";
+      responses: (
+        | {
+            id: string;
+            kind: "choice";
+            question: string;
+            answer?: string;
+            skipped?: boolean;
+          }
+        | {
+            id: string;
+            kind: "documents";
+            filenames: string[];
+            skipped?: boolean;
+          }
+      )[];
+    }
   | { type: "thinking"; isStreaming?: boolean }
   | {
       type: "doc_read";
@@ -118,21 +166,10 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
-      type: "doc_read_start";
-      filename: string;
-      isStreaming?: boolean;
-    }
-  | {
       type: "doc_find";
       filename: string;
       query: string;
       total_matches: number;
-      isStreaming?: boolean;
-    }
-  | {
-      type: "doc_find_start";
-      filename: string;
-      query: string;
       isStreaming?: boolean;
     }
   | {
@@ -271,29 +308,15 @@ export type CaseCitationQuote = {
 };
 
 export interface Message {
-  /** Durable local message identity returned by the Vera workspace. */
   id?: string;
   role: "user" | "assistant";
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
   model?: string;
-  annotations?: CitationAnnotation[];
+  citations?: Citation[];
   citationStatus?: "started" | "partial" | "final";
   events?: AssistantEvent[];
-  generation?: {
-    jobId: string;
-    status:
-      | "queued"
-      | "running"
-      | "complete"
-      | "failed"
-      | "cancelled"
-      | "interrupted";
-    retryable: boolean;
-    cancelRequested: boolean;
-    terminal: boolean;
-  };
   /** Set when streaming failed; rendered as a red error block. */
   error?: string;
 }
@@ -306,9 +329,15 @@ export interface CitationQuote {
 export type DocumentCitationQuote = {
   page: number | string;
   quote: string;
+  /**
+   * Spreadsheet citations are located by cell, not page: `sheet` is the
+   * worksheet name and `cell` is an A1 address or range (e.g. "B7", "B7:C9").
+   */
+  sheet?: string;
+  cell?: string;
 };
 
-export type DocumentCitationAnnotation = {
+export type DocumentCitation = {
   type: "citation_data";
   kind?: "document";
   ref: number;
@@ -317,13 +346,15 @@ export type DocumentCitationAnnotation = {
   version_id?: string | null;
   version_number?: number | null;
   filename: string;
-  /** Legacy single-quote fields. Prefer `quotes` for new annotations. */
+  /** Legacy single-quote fields. Prefer `quotes` for new citations. */
   page: number | string;
   quote: string;
+  sheet?: string;
+  cell?: string;
   quotes?: DocumentCitationQuote[];
 };
 
-export type CaseCitationAnnotation = {
+export type CaseCitation = {
   type: "citation_data";
   kind: "case";
   ref: number;
@@ -341,15 +372,55 @@ export type CaseCitationAnnotation = {
  * anchors. Case citations anchor to a CourtListener cluster and include a
  * quoted opinion passage.
  */
-export type CitationAnnotation =
-  | DocumentCitationAnnotation
-  | CaseCitationAnnotation;
+export type Citation =
+  | DocumentCitation
+  | CaseCitation;
 
 const PAGE_BREAK_SENTINEL = "[[PAGE_BREAK]]";
 
-function expandDocumentQuoteEntry(
-  entry: DocumentCitationQuote,
-): CitationQuote[] {
+export function isSpreadsheetFilename(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext === "xlsx" || ext === "xlsm" || ext === "xls";
+}
+
+export function isDocxFilename(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext === "docx" || ext === "doc";
+}
+
+/**
+ * Human-readable cell locator for a spreadsheet citation, e.g. "Sheet1!B7".
+ * Falls back to whichever of `sheet`/`cell` is present.
+ */
+function formatCellLocator(sheet?: string, cell?: string): string {
+  if (sheet && cell) return `${sheet}!${cell}`;
+  return cell ?? sheet ?? "";
+}
+
+/**
+ * Reader-friendly cell locator, e.g. "Sheet1, cell B7" (or "cells B7:C9" for a
+ * range). Unlike `formatCellLocator`, this avoids the Excel `!` notation, which
+ * reads poorly in prose. Used for the single-quote detail shown to the reader;
+ * the machine-style `Sheet1!B7` form is kept where locators are joined together.
+ */
+function formatCellLocatorReadable(sheet?: string, cell?: string): string {
+  if (!cell) return sheet ?? "";
+  const cellWord = cell.includes(":") ? "cells" : "cell";
+  const cellPart = `${cellWord} ${cell}`;
+  return sheet ? `${sheet}, ${cellPart}` : cellPart;
+}
+
+/** `{sheet, cell}` locators for a citation's quotes (spreadsheet sources). */
+export function getCitationCells(
+  a: Citation,
+): { sheet?: string; cell?: string }[] {
+  if (a.kind === "case") return [];
+  return getDocumentCitationQuotes(a)
+    .filter((q) => q.cell || q.sheet)
+    .map((q) => ({ sheet: q.sheet, cell: q.cell }));
+}
+
+function expandDocumentQuoteEntry(entry: DocumentCitationQuote): CitationQuote[] {
   const rangeMatch =
     typeof entry.page === "string"
       ? entry.page.match(/^(\d+)\s*-\s*(\d+)$/)
@@ -372,13 +443,13 @@ function expandDocumentQuoteEntry(
 }
 
 export function getDocumentCitationQuotes(
-  a: CitationAnnotation,
+  a: Citation,
 ): DocumentCitationQuote[] {
   if (a.kind === "case") return [];
   if (Array.isArray(a.quotes) && a.quotes.length) {
     return a.quotes.filter((entry) => entry.quote.trim().length > 0);
   }
-  return [{ page: a.page, quote: a.quote }];
+  return [{ page: a.page, quote: a.quote, sheet: a.sheet, cell: a.cell }];
 }
 
 /**
@@ -387,54 +458,72 @@ export function getDocumentCitationQuotes(
  * cross-page citation with page "N-M" and a `[[PAGE_BREAK]]` split yields two.
  */
 export function expandCitationToEntries(
-  a: CitationAnnotation,
+  a: Citation,
 ): CitationQuote[] {
   if (a.kind === "case") return [];
   return getDocumentCitationQuotes(a).flatMap(expandDocumentQuoteEntry);
 }
 
 /**
- * Select the one exact page-bound excerpt that the source viewer can verify.
- * Multi-page citations remain available in the citation summary, but must not
- * be merged and mislabeled as if all quoted text belonged to the first page.
+ * Format the page(s) of a citation for display, e.g. "Page 3" or "Page 41-42".
+ * Spreadsheets have no meaningful page locator, so this returns "" for them —
+ * callers join with `.filter(Boolean)` so the locator is simply omitted.
  */
-export function firstDocumentCitationViewerEntry(
-  a: DocumentCitationAnnotation,
-): CitationQuote | null {
-  return (
-    expandCitationToEntries(a).find(
-      (entry) =>
-        Number.isSafeInteger(entry.page) &&
-        Number(entry.page) > 0 &&
-        entry.quote.trim().length > 0,
-    ) ?? null
-  );
-}
-
-/** Format the page(s) of a citation for display, e.g. "Page 3" or "Page 41-42". */
-export function formatCitationPage(a: CitationAnnotation): string {
+export function formatCitationPage(a: Citation): string {
   if (a.kind === "case") {
     return a.citation || a.case_name || `Case ${a.cluster_id}`;
   }
   const quotes = getDocumentCitationQuotes(a);
+  // Spreadsheets are located by cell, e.g. "Sheet1!B7" (or several).
+  if (isSpreadsheetFilename(a.filename)) {
+    const cells = Array.from(
+      new Set(
+        quotes.map((q) => formatCellLocator(q.sheet, q.cell)).filter(Boolean),
+      ),
+    );
+    return cells.join(", ");
+  }
   const pages = Array.from(
     new Set(quotes.map((q) => String(q.page)).filter(Boolean)),
   );
   if (pages.length > 1) return `Pages ${pages.join(", ")}`;
   if (pages.length === 1) return `Page ${pages[0]}`;
-  if (typeof a.page === "string") return `Page ${a.page}`;
   return `Page ${a.page}`;
 }
 
+/** Locator label for a single quote — "Page 3" for docs, "Sheet1, cell B7" for cells. */
+export function formatCitationQuotePage(
+  a: Citation,
+  page: number | string,
+  quote?: DocumentCitationQuote,
+): string {
+  if (a.kind !== "case" && isSpreadsheetFilename(a.filename)) {
+    return formatCellLocatorReadable(quote?.sheet, quote?.cell);
+  }
+  return `Page ${page}`;
+}
+
+/**
+ * Reader-friendly version of a single raw quote: replaces [[PAGE_BREAK]] with
+ * "...". Spreadsheet quotes now carry plain cell values, so no stripping.
+ */
+export function cleanCitationQuoteText(
+  _a: Citation,
+  rawQuote: string,
+): string {
+  return rawQuote.replaceAll(PAGE_BREAK_SENTINEL, "...");
+}
+
 /** Produce a reader-friendly version of the quote (replaces [[PAGE_BREAK]] with "..."). */
-export function displayCitationQuote(a: CitationAnnotation): string {
+export function displayCitationQuote(a: Citation): string {
   if (a.kind === "case") {
     return a.quotes
       .map((q) => q.quote.replaceAll(PAGE_BREAK_SENTINEL, "..."))
       .join(" / ");
   }
   return getDocumentCitationQuotes(a)
-    .map((q) => q.quote.replaceAll(PAGE_BREAK_SENTINEL, "..."))
+    .map((q) => cleanCitationQuoteText(a, q.quote))
+    .filter(Boolean)
     .join(" / ");
 }
 
@@ -493,19 +582,49 @@ export interface TabularCell {
 
 // Workflows
 
+export interface WorkflowOpenSourceSubmission {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  submitted_at: string;
+  updated_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface OpenSourceWorkflowResponse
+  extends WorkflowOpenSourceSubmission {
+  mode: "created" | "updated";
+}
+
+export type OpenSourceWorkflowContributorMode = "named" | "anonymous";
+
+export interface WorkflowContributor {
+  name: string;
+  organisation: string | null;
+  role: string | null;
+  linkedin: string | null;
+}
+
 export interface Workflow {
   id: string;
   user_id: string | null;
-  title: string;
-  type: "assistant" | "tabular";
-  prompt_md: string | null;
+  metadata: {
+    title: string;
+    description: string | null;
+    type: "assistant" | "tabular";
+    contributors: WorkflowContributor[];
+    language: string;
+    version: string | null;
+    practice: string | null;
+    jurisdictions: string[] | null;
+  };
+  skill_md: string | null;
   columns_config: ColumnConfig[] | null;
   is_system: boolean;
   created_at: string;
-  practice?: string | null;
   shared_by_name?: string | null;
   allow_edit?: boolean;
   is_owner?: boolean;
+  open_source_submission?: WorkflowOpenSourceSubmission | null;
 }
 
 // API helpers

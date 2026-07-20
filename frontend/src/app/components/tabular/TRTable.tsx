@@ -1,280 +1,442 @@
 "use client";
 
-// Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/tabular/TRTable.tsx
-import { ChevronLeft, ChevronRight, FilePlus2, Plus, Table2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useI18n } from "@/app/i18n";
-import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
+import {
+    forwardRef,
+    useImperativeHandle,
+    useRef,
+    useState,
+} from "react";
+import { Loader2, Plus, Upload } from "lucide-react";
 import type {
-  VeraTabularCell,
-  VeraTabularColumn,
-} from "@/app/lib/veraTabularApi";
-import { TABLE_CHECKBOX_CLASS } from "@/app/components/shared/TablePrimitive";
-import { TabularCell } from "./TabularCell";
+    ColumnConfig,
+    Document,
+    TabularCell,
+} from "../shared/types";
+import { TabularCell as TabularCellComponent } from "./TabularCell";
 import { TREditColumnMenu } from "./TREditColumnMenu";
+import {
+    TABLE_CHECKBOX_CLASS,
+    SkeletonDot,
+    SkeletonLine,
+    TableScrollArea,
+} from "../shared/TablePrimitive";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import {
+    APP_SURFACE_ACTIVE_CLASS,
+    APP_SURFACE_GROUP_HOVER_CLASS,
+    APP_SURFACE_HOVER_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
-export const TABULAR_ROWS_PER_PAGE = 25;
+const SKELETON_COLS = 4;
+const SKELETON_ROWS = 5;
 
-export function tabularPageCount(rowCount: number): number {
-  return Math.max(1, Math.ceil(Math.max(0, rowCount) / TABULAR_ROWS_PER_PAGE));
+const COL_W = "w-[300px] shrink-0";
+const DOC_COL_W = "w-[332px] shrink-0";
+const TR_STICKY_CELL_BG = "bg-app-surface";
+const TR_HEADER_BG = "bg-app-surface";
+
+// Pixel widths matching the CSS constants above
+const DOC_COL_W_PX = 332;
+const DATA_COL_W_PX = 300;
+const STICKY_LEFT_PX = DOC_COL_W_PX;
+
+export interface TRTableHandle {
+    scrollToCell: (colIdx: number, rowIdx: number) => void;
 }
 
-export function clampTabularPage(page: number, rowCount: number): number {
-  return Math.min(Math.max(0, Math.trunc(page)), tabularPageCount(rowCount) - 1);
+interface Props {
+    loading: boolean;
+    columns: ColumnConfig[];
+    documents: Document[];
+    cells: TabularCell[];
+    savingColumn: boolean;
+    savingColumnsConfig: boolean;
+    selectedDocIds: string[];
+    uploadingFilenames?: string[];
+    dragOverFiles?: boolean;
+    highlightedCell?: { colIdx: number; rowIdx: number } | null;
+    onSelectionChange: (ids: string[]) => void;
+    onExpand: (cell: TabularCell) => void;
+    onCitationClick: (
+        cell: TabularCell,
+        page: number | undefined,
+        quote: string,
+        citationRef: number,
+        sheet?: string,
+        citationCell?: string,
+    ) => void;
+    onUpdateColumn: (col: ColumnConfig) => void;
+    onDeleteColumn: (colIndex: number) => void;
+    onAddColumn: () => void;
+    onAddDocuments: () => void;
 }
 
-export function TRTable({
-  loading,
-  columns,
-  documents,
-  cells,
-  selectedDocumentIds,
-  disabled = false,
-  canAddColumn = true,
-  onSelectionChange,
-  onOpenCell,
-  onEditColumn,
-  onDeleteColumn,
-  onAddColumn,
-  onAddDocuments,
-}: {
-  loading: boolean;
-  columns: VeraTabularColumn[];
-  documents: VeraDocumentWire[];
-  cells: VeraTabularCell[];
-  selectedDocumentIds: string[];
-  disabled?: boolean;
-  canAddColumn?: boolean;
-  onSelectionChange: (ids: string[]) => void;
-  onOpenCell: (cell: VeraTabularCell) => void;
-  onEditColumn: (column: VeraTabularColumn) => void;
-  onDeleteColumn: (columnIndex: number) => Promise<void> | void;
-  onAddColumn: () => void;
-  onAddDocuments: () => void;
-}) {
-  const { t } = useI18n();
-  const [page, setPage] = useState(0);
-  const sortedColumns = useMemo(
-    () => [...columns].sort((left, right) => left.index - right.index),
-    [columns],
-  );
-  const cellMap = useMemo(
-    () =>
-      new Map(
-        cells.map((cell) => [
-          `${cell.document_id}:${cell.column_index}`,
-          cell,
-        ]),
-      ),
-    [cells],
-  );
-  const pageCount = tabularPageCount(documents.length);
-  const safePage = clampTabularPage(page, documents.length);
-  const pageDocuments = documents.slice(
-    safePage * TABULAR_ROWS_PER_PAGE,
-    (safePage + 1) * TABULAR_ROWS_PER_PAGE,
-  );
-  const allPageSelected =
-    pageDocuments.length > 0 &&
-    pageDocuments.every((document) => selectedDocumentIds.includes(document.id));
-  const somePageSelected =
-    !allPageSelected &&
-    pageDocuments.some((document) => selectedDocumentIds.includes(document.id));
+export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
+    {
+        loading,
+        columns,
+        documents,
+        cells,
+        savingColumn,
+        savingColumnsConfig,
+        selectedDocIds,
+        uploadingFilenames = [],
+        dragOverFiles = false,
+        highlightedCell,
+        onSelectionChange,
+        onExpand,
+        onCitationClick,
+        onUpdateColumn,
+        onDeleteColumn,
+        onAddColumn,
+        onAddDocuments,
+    },
+    ref,
+) {
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const lastScrollLeftRef = useRef(0);
+    const [scrollCloseSignal, setScrollCloseSignal] = useState(0);
 
-  useEffect(() => {
-    if (safePage !== page) queueMicrotask(() => setPage(safePage));
-  }, [page, safePage]);
+    function handleRowsScroll() {
+        const container = scrollContainerRef.current;
+        if (!container) return;
 
-  if (!loading && (documents.length === 0 || columns.length === 0)) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-        <div className="flex max-w-sm flex-col items-center text-center">
-          <Table2 className="h-8 w-8 text-gray-300" />
-          <h2 className="mt-4 font-serif text-2xl text-gray-900">
-            {documents.length === 0
-              ? t("tabular.table.noDocuments")
-              : t("tabular.table.noColumns")}
-          </h2>
-          <p className="mt-2 text-xs leading-relaxed text-gray-500">
-            {documents.length === 0
-              ? t("tabular.table.noDocumentsBody")
-              : t("tabular.table.noColumnsBody")}
-          </p>
-          <button
-            type="button"
-            onClick={documents.length === 0 ? onAddDocuments : onAddColumn}
-            disabled={disabled || (documents.length > 0 && !canAddColumn)}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-gray-950 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
-          >
-            {documents.length === 0 ? (
-              <FilePlus2 className="h-3.5 w-3.5" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
-            {documents.length === 0
-              ? t("tabular.addDocuments")
-              : t("tabular.addColumn")}
-          </button>
-        </div>
-      </div>
-    );
-  }
+        if (container.scrollLeft !== lastScrollLeftRef.current) {
+            lastScrollLeftRef.current = container.scrollLeft;
+            setScrollCloseSignal((signal) => signal + 1);
+        }
+    }
 
-  const totalWidth = 272 + sortedColumns.length * 288 + 48;
+    const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
+    const totalContentWidth =
+        DOC_COL_W_PX + sortedColumns.length * DATA_COL_W_PX + 32;
+    const skeletonContentWidth =
+        DOC_COL_W_PX + SKELETON_COLS * DATA_COL_W_PX + 32;
+    useImperativeHandle(ref, () => ({
+        scrollToCell(colIdx: number, rowIdx: number) {
+            const container = scrollContainerRef.current;
+            if (!container) return;
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div style={{ minWidth: totalWidth }}>
-          <div className="sticky top-0 z-[70] flex h-9 border-b border-gray-200 bg-[#fafbfc] text-xs font-medium text-gray-500">
-            <div className="sticky left-0 z-[80] flex w-[272px] shrink-0 items-center gap-4 border-r border-gray-200 bg-[#fafbfc] px-4">
-              <input
-                type="checkbox"
-                checked={allPageSelected}
-                ref={(element) => {
-                  if (element) element.indeterminate = somePageSelected;
-                }}
-                onChange={() => {
-                  const pageIds = new Set(pageDocuments.map((document) => document.id));
-                  onSelectionChange(
-                    allPageSelected
-                      ? selectedDocumentIds.filter((id) => !pageIds.has(id))
-                      : [...new Set([...selectedDocumentIds, ...pageIds])],
-                  );
-                }}
-                className={TABLE_CHECKBOX_CLASS}
-              />
-              {t("documents.title")}
-            </div>
-            {sortedColumns.map((column) => (
-              <div
-                key={column.index}
-                data-tr-col-header
-                className="flex w-72 shrink-0 items-center justify-between gap-2 border-r border-gray-200 px-3"
-              >
-                <span className="truncate" title={column.name}>{column.name}</span>
-                <TREditColumnMenu
-                  column={column}
-                  disabled={disabled}
-                  onEdit={onEditColumn}
-                  onDelete={onDeleteColumn}
-                />
-              </div>
-            ))}
-            <div className="flex w-12 shrink-0 items-center justify-center">
-              <button
-                type="button"
-                onClick={onAddColumn}
-                disabled={disabled || !canAddColumn}
-                aria-label={t("tabular.addColumn")}
-                title={!canAddColumn ? t("tabular.documents.matrixLimit") : undefined}
-                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
+            // Vertical: find actual row via DOM (handles variable row heights)
+            const allRows = container.querySelectorAll<HTMLElement>(
+                ":scope > div.flex.min-w-full",
+            );
+            const targetRow = allRows[rowIdx];
+            if (targetRow) {
+                container.scrollTo({
+                    top: Math.max(0, targetRow.offsetTop - 40),
+                    behavior: "smooth",
+                });
+            }
 
-          {loading ? (
-            <div className="space-y-px">
-              {Array.from({ length: 8 }, (_, index) => (
-                <div key={index} className="flex h-11 border-b border-gray-100">
-                  <div className="sticky left-0 z-[60] flex w-[272px] shrink-0 items-center gap-4 border-r border-gray-100 bg-[#fafbfc] px-4">
-                    <span className="h-2.5 w-2.5 animate-pulse rounded bg-gray-100" />
-                    <span className="h-3 w-36 animate-pulse rounded bg-gray-100" />
-                  </div>
-                  {sortedColumns.map((column) => (
-                    <div key={column.index} className="flex w-72 shrink-0 items-center border-r border-gray-100 px-3">
-                      <span className="h-3 w-32 animate-pulse rounded bg-gray-100" />
+            // Horizontal: fixed column widths — center the target column in view
+            const targetScrollLeft =
+                STICKY_LEFT_PX +
+                colIdx * DATA_COL_W_PX -
+                container.clientWidth / 2 +
+                DATA_COL_W_PX / 2;
+            container.scrollLeft = Math.max(0, targetScrollLeft);
+        },
+    }));
+
+    function getCell(docId: string, colIdx: number) {
+        return cells.find(
+            (c) => c.document_id === docId && c.column_index === colIdx,
+        );
+    }
+
+    const allSelected =
+        documents.length > 0 &&
+        documents.every((d) => selectedDocIds.includes(d.id));
+    const someSelected =
+        !allSelected && documents.some((d) => selectedDocIds.includes(d.id));
+
+    function toggleAll() {
+        if (allSelected) {
+            onSelectionChange([]);
+        } else {
+            onSelectionChange(documents.map((d) => d.id));
+        }
+    }
+
+    function toggleDoc(id: string) {
+        if (selectedDocIds.includes(id)) {
+            onSelectionChange(selectedDocIds.filter((x) => x !== id));
+        } else {
+            onSelectionChange([...selectedDocIds, id]);
+        }
+    }
+
+    if (loading) {
+        return (
+            <TableScrollArea
+                header={
+                    <div
+                        className={`flex h-10 shrink-0 ${TR_HEADER_BG}`}
+                        style={{ minWidth: skeletonContentWidth }}
+                    >
+                        <div
+                            className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500`}
+                        >
+                            <SkeletonDot className="mr-4" />
+                            <span>Document</span>
+                        </div>
+                        {Array.from({ length: SKELETON_COLS }).map((_, i) => (
+                            <div
+                                key={i}
+                                className={`${COL_W} flex items-center border-b border-r border-gray-200 p-2`}
+                            >
+                                <SkeletonLine className="h-4 w-28" />
+                            </div>
+                        ))}
+                        <div className="flex-1 border-b border-gray-200 min-w-8" />
                     </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          ) : (
-            pageDocuments.map((document, rowIndex) => {
-              const selected = selectedDocumentIds.includes(document.id);
-              const rowBackground = rowIndex % 2 === 0 ? "bg-[#fafbfc]" : "bg-gray-50";
-              return (
-                <div key={document.id} className={`flex h-11 border-b border-gray-100 ${rowBackground}`}>
-                  <div className={`sticky left-0 z-[60] flex w-[272px] shrink-0 items-center gap-4 border-r border-gray-100 px-4 ${selected ? "bg-gray-100" : rowBackground}`}>
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() =>
-                        onSelectionChange(
-                          selected
-                            ? selectedDocumentIds.filter((id) => id !== document.id)
-                            : [...selectedDocumentIds, document.id],
-                        )
-                      }
-                      className={TABLE_CHECKBOX_CLASS}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800" title={document.filename}>
-                      {document.filename}
-                    </span>
-                  </div>
-                  {sortedColumns.map((column) => {
-                    const cell = cellMap.get(`${document.id}:${column.index}`);
-                    return (
-                      <div key={column.index} className="w-72 shrink-0 border-r border-gray-100">
-                        {cell ? (
-                          <TabularCell
-                            cell={cell}
-                            column={column}
-                            onOpen={() => onOpenCell(cell)}
-                          />
-                        ) : (
-                          <div className="h-11" />
-                        )}
-                      </div>
-                    );
-                  })}
-                  <div className="w-12 shrink-0" />
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                }
+            >
+                    {Array.from({ length: SKELETON_ROWS }).map((_, row) => (
+                        <div
+                            key={row}
+                            className="flex h-8"
+                            style={{ minWidth: skeletonContentWidth }}
+                        >
+                            <div className={`sticky left-0 z-[60] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-4 pr-2`}>
+                                <SkeletonDot className="mr-4" />
+                                <SkeletonLine className="h-4 w-32" />
+                            </div>
+                            {Array.from({ length: SKELETON_COLS }).map((_, col) => (
+                                <div
+                                    key={col}
+                                    className={`${COL_W} flex items-center border-b border-r border-gray-200 p-2`}
+                                >
+                                    <SkeletonLine className="h-4" />
+                                </div>
+                            ))}
+                            <div className="flex-1 border-b border-gray-200 min-w-8" />
+                        </div>
+                    ))}
+            </TableScrollArea>
+        );
+    }
 
-      {!loading && documents.length > TABULAR_ROWS_PER_PAGE && (
-        <div className="flex h-10 shrink-0 items-center justify-between border-t border-gray-200 px-4 text-xs text-gray-500">
-          <span>
-            {t("tabular.table.pageRange", {
-              start: safePage * TABULAR_ROWS_PER_PAGE + 1,
-              end: Math.min((safePage + 1) * TABULAR_ROWS_PER_PAGE, documents.length),
-              total: documents.length,
-            })}
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setPage((current) => Math.max(0, current - 1))}
-              disabled={safePage === 0}
-              aria-label={t("tabular.table.previousPage")}
-              className="rounded-md p-1.5 hover:bg-gray-100 disabled:opacity-30"
+    if (
+        columns.length === 0 &&
+        documents.length === 0 &&
+        uploadingFilenames.length === 0
+    ) {
+        return (
+            <TableScrollArea
+                header={
+                    <div className={`shrink-0 flex h-10 items-center border-b border-gray-200 ${TR_HEADER_BG}`}>
+                        <div
+                            className={`${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500 select-none`}
+                        >
+                            Document
+                        </div>
+                        <div className="flex-1" />
+                    </div>
+                }
             >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span className="min-w-16 text-center">
-              {safePage + 1} / {pageCount}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setPage((current) => Math.min(pageCount - 1, current + 1))
-              }
-              disabled={safePage >= pageCount - 1}
-              aria-label={t("tabular.table.nextPage")}
-              className="rounded-md p-1.5 hover:bg-gray-100 disabled:opacity-30"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                <div className="relative flex min-h-0 flex-1">
+                    {dragOverFiles && (
+                        <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                    )}
+                    <div className="flex flex-1 flex-col items-start justify-center w-full max-w-xs mx-auto">
+                        <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
+                        <p className="text-2xl font-medium font-serif text-gray-900">
+                            Tabular Review
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400 text-left">
+                            Add columns and documents to get started.
+                        </p>
+                        <div className="mt-4 flex items-center gap-2">
+                            <PillButton
+                                tone="black"
+                                size="sm"
+                                onClick={onAddColumn}
+                                className="px-3"
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                                Add Columns
+                            </PillButton>
+                            <PillButton
+                                tone="white"
+                                size="sm"
+                                onClick={onAddDocuments}
+                                className="px-3"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                Add Documents
+                            </PillButton>
+                        </div>
+                    </div>
+                </div>
+            </TableScrollArea>
+        );
+    }
+
+    return (
+        <TableScrollArea
+            scrollRef={scrollContainerRef}
+            onScroll={handleRowsScroll}
+            header={
+                <div
+                    className={`z-[70] flex h-10 shrink-0 ${TR_HEADER_BG}`}
+                    style={{ minWidth: totalContentWidth }}
+                >
+                    <div
+                        className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} border-b border-r border-gray-200 flex items-center py-2 pl-4 pr-2 text-left text-xs font-medium text-gray-500 select-none`}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                                if (el) el.indeterminate = someSelected;
+                            }}
+                            onChange={toggleAll}
+                            className={TABLE_CHECKBOX_CLASS}
+                        />
+                        <span>Document</span>
+                    </div>
+                    {columns.map((col) => (
+                        <div
+                            key={col.index}
+                            data-tr-col-header
+                            className={`${COL_W} flex items-center border-b border-r border-gray-200 p-2 text-left text-xs font-medium text-gray-500 select-none`}
+                        >
+                            <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                <span className="truncate">{col.name}</span>
+                                <TREditColumnMenu
+                                    column={col}
+                                    closeSignal={scrollCloseSignal}
+                                    disabled={savingColumn || savingColumnsConfig}
+                                    onSave={onUpdateColumn}
+                                    onDelete={onDeleteColumn}
+                                />
+                            </div>
+                        </div>
+                    ))}
+                    <div className="flex-1 border-b border-gray-200 flex items-center justify-start p-2 min-w-8">
+                        <button
+                            onClick={onAddColumn}
+                            disabled={savingColumn || savingColumnsConfig}
+                            className="flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors disabled:text-gray-200"
+                        >
+                            <Plus className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
+            }
+        >
+                <div className="relative min-h-0 flex-1">
+                    {dragOverFiles && (
+                        <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                    )}
+                    {uploadingFilenames.map((filename) => (
+                    <div
+                        key={`uploading-${filename}`}
+                        className="flex h-8"
+                        style={{ minWidth: totalContentWidth }}
+                    >
+                        <div
+                            className={`sticky left-0 z-[60] ${DOC_COL_W} ${TR_STICKY_CELL_BG} border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs text-gray-400 flex items-center`}
+                        >
+                            <input
+                                type="checkbox"
+                                disabled
+                                className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-default accent-black disabled:opacity-100"
+                            />
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin shrink-0" />
+                            <span className="line-clamp-1" title={filename}>
+                                {filename}
+                            </span>
+                        </div>
+                        {sortedColumns.map((col) => (
+                            <div
+                                key={col.index}
+                                className={`${COL_W} border-b border-r border-gray-200 p-2`}
+                            >
+                                <SkeletonLine className="h-4 w-20" />
+                            </div>
+                        ))}
+                        <div className="flex-1 border-b border-gray-200 min-h-8 min-w-8" />
+                    </div>
+                    ))}
+                    {documents.map((doc, docIdx) => {
+                    const isSelected = selectedDocIds.includes(doc.id);
+                    const rowBg = isSelected
+                        ? APP_SURFACE_ACTIVE_CLASS
+                        : APP_SURFACE_HOVER_CLASS;
+                    const stickyRowBg = isSelected
+                        ? APP_SURFACE_ACTIVE_CLASS
+                        : TR_STICKY_CELL_BG;
+                    return (
+                        <div
+                            key={doc.id}
+                            className={`group flex transition-colors ${rowBg}`}
+                            style={{ minWidth: totalContentWidth }}
+                        >
+                            <div
+                                className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedDocIds.includes(doc.id)}
+                                    onChange={() => toggleDoc(doc.id)}
+                                    className={TABLE_CHECKBOX_CLASS}
+                                />
+                                <span
+                                    className="line-clamp-1"
+                                    title={doc.filename}
+                                >
+                                    {doc.filename}
+                                </span>
+                            </div>
+                            {columns.map((col) => {
+                                const cell = getCell(doc.id, col.index);
+                                const colPos = sortedColumns.findIndex(
+                                    (c) => c.index === col.index,
+                                );
+                                const isHighlighted =
+                                    highlightedCell?.colIdx === colPos &&
+                                    highlightedCell?.rowIdx === docIdx;
+                                return (
+                                    <div
+                                        key={col.index}
+                                        className={`${COL_W} border-b border-r border-gray-200 transition-colors ${isHighlighted ? "bg-blue-200" : ""}`}
+                                    >
+                                        {cell && (
+                                            <TabularCellComponent
+                                                cell={cell}
+                                                column={col}
+                                                closeSignal={scrollCloseSignal}
+                                                onExpand={() => onExpand(cell)}
+                                                onCitationClick={(
+                                                    page,
+                                                    quote,
+                                                    citationRef,
+                                                    sheet,
+                                                    citationCell,
+                                                ) =>
+                                                    onCitationClick(
+                                                        cell,
+                                                        page,
+                                                        quote,
+                                                        citationRef,
+                                                        sheet,
+                                                        citationCell,
+                                                    )
+                                                }
+                                            />
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            <div className="flex-1 border-b border-gray-200 min-h-8 min-w-8" />
+                        </div>
+                    );
+                    })}
+                </div>
+        </TableScrollArea>
+    );
+});

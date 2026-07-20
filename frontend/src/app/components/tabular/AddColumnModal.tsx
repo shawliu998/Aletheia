@@ -1,318 +1,539 @@
 "use client";
 
-// Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/tabular/AddColumnModal.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
-import { Modal } from "@/app/components/shared/Modal";
-import { useI18n } from "@/app/i18n";
-import type {
-  VeraTabularColumn,
-  VeraTabularFormat,
-} from "@/app/lib/veraTabularApi";
+import type { ColumnConfig, ColumnFormat } from "../shared/types";
+import { generateTabularColumnPrompt } from "@/app/lib/mikeApi";
 import { FORMAT_OPTIONS } from "./columnFormat";
 import { TAG_COLORS } from "./pillUtils";
+import { getPresetConfig, PROMPT_PRESETS } from "./columnPresets";
+import { Modal } from "../modals/Modal";
+import { ModalFieldLabel } from "../modals/ModalFieldLabel";
+import { ModalSelect } from "../modals/ModalSelect";
+import { ModalTextarea } from "../modals/ModalTextarea";
+import { ModalTextInput } from "../modals/ModalTextInput";
 
-type ColumnDraft = {
-  name: string;
-  prompt: string;
-  format: VeraTabularFormat;
-  tagsText: string;
+interface ColumnDraft {
+    name: string;
+    prompt: string;
+    format: ColumnFormat;
+    tags: string[];
+    tagInput: string;
+}
+
+const EMPTY_DRAFT: ColumnDraft = {
+    name: "",
+    prompt: "",
+    format: "text",
+    tags: [],
+    tagInput: "",
 };
 
-const emptyDraft = (): ColumnDraft => ({
-  name: "",
-  prompt: "",
-  format: "text",
-  tagsText: "",
-});
-
-function draftFor(column: VeraTabularColumn): ColumnDraft {
-  return {
-    name: column.name,
-    prompt: column.prompt,
-    format: column.format,
-    tagsText: column.tags.join(", "),
-  };
+interface Props {
+    open: boolean;
+    existingCount: number;
+    onClose: () => void;
+    onAdd: (cols: ColumnConfig[]) => void;
+    editingColumn?: ColumnConfig;
+    onSave?: (col: ColumnConfig) => void;
+    onDelete?: () => void;
 }
 
-function tagsFor(draft: ColumnDraft): string[] {
-  if (draft.format !== "tag") return [];
-  return [...new Set(draft.tagsText.split(",").map((tag) => tag.trim()).filter(Boolean))];
-}
-
-export function AddColumnModal({
-  open,
-  nextIndex,
-  maxColumns = 100,
-  editingColumn,
-  busy = false,
-  onClose,
-  onAdd,
-  onSave,
-  onDelete,
-}: {
-  open: boolean;
-  nextIndex: number;
-  maxColumns?: number;
-  editingColumn?: VeraTabularColumn;
-  busy?: boolean;
-  onClose: () => void;
-  onAdd: (columns: VeraTabularColumn[]) => Promise<void> | void;
-  onSave?: (column: VeraTabularColumn) => Promise<void> | void;
-  onDelete?: (columnIndex: number) => Promise<void> | void;
-}) {
-  const { t, errorMessage } = useI18n();
-  const [drafts, setDrafts] = useState<ColumnDraft[]>([emptyDraft()]);
-  const [collapsed, setCollapsed] = useState<number[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const editing = editingColumn !== undefined;
-  const formId = editing ? "vera-edit-tabular-column" : "vera-add-tabular-columns";
-
-  useEffect(() => {
-    if (!open) return;
-    let active = true;
-    queueMicrotask(() => {
-      if (!active) return;
-      setDrafts(editingColumn ? [draftFor(editingColumn)] : [emptyDraft()]);
-      setCollapsed([]);
-      setSubmitting(false);
-      setError(null);
-    });
-    return () => {
-      active = false;
-    };
-  }, [editingColumn, open]);
-
-  const invalid = drafts.length > maxColumns || drafts.some((draft) => {
-    const tags = tagsFor(draft);
-    return (
-      !draft.name.trim() ||
-      !draft.prompt.trim() ||
-      draft.name.trim().length > 240 ||
-      draft.prompt.length > 20_000 ||
-      (draft.format === "tag" && tags.length === 0) ||
-      tags.length > 100 ||
-      tags.some((tag) => tag.length > 160)
+export function AddColumnModal({ open, existingCount, onClose, onAdd, editingColumn, onSave, onDelete }: Props) {
+    const isEditing = !!editingColumn;
+    const formId = "add-column-modal-form";
+    const [columns, setColumns] = useState<ColumnDraft[]>([{ ...EMPTY_DRAFT }]);
+    const [collapsedIndices, setCollapsedIndices] = useState<number[]>([]);
+    const [generatingIndices, setGeneratingIndices] = useState<number[]>([]);
+    const [presetsOpenIndex, setPresetsOpenIndex] = useState<number | null>(
+        null,
     );
-  });
+    const presetsRef = useRef<HTMLDivElement>(null);
 
-  const update = (index: number, patch: Partial<ColumnDraft>) => {
-    setDrafts((current) =>
-      current.map((draft, position) =>
-        position === index ? { ...draft, ...patch } : draft,
-      ),
-    );
-  };
+    useEffect(() => {
+        if (!open) return;
+        if (editingColumn) {
+            setColumns([{
+                name: editingColumn.name,
+                prompt: editingColumn.prompt,
+                format: editingColumn.format ?? "text",
+                tags: editingColumn.tags ?? [],
+                tagInput: "",
+            }]);
+        } else {
+            setColumns([{ ...EMPTY_DRAFT }]);
+        }
+        setCollapsedIndices([]);
+    }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (invalid || submitting || busy) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const columns = drafts.map((draft, offset): VeraTabularColumn => ({
-        index: editingColumn?.index ?? nextIndex + offset,
-        name: draft.name.trim(),
-        prompt: draft.prompt.trim(),
-        format: draft.format,
-        tags: tagsFor(draft),
-      }));
-      if (editingColumn && onSave) await onSave(columns[0]!);
-      else await onAdd(columns);
-      onClose();
-    } catch (reason) {
-      setError(errorMessage(reason as Error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const deleteColumn = async () => {
-    if (!editingColumn || !onDelete || submitting || busy) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onDelete(editingColumn.index);
-      onClose();
-    } catch (reason) {
-      setError(errorMessage(reason as Error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={() => {
-        if (!submitting && !busy) onClose();
-      }}
-      breadcrumbs={[
-        t("tabular.title"),
-        editing ? t("tabular.columns.edit") : t("tabular.columns.add"),
-      ]}
-      primaryAction={{
-        label: editing
-          ? t("common.actions.save")
-          : t("tabular.columns.addAction"),
-        type: "submit",
-        form: formId,
-        disabled: invalid || submitting || busy,
-      }}
-      cancelAction={{
-        label: t("common.actions.cancel"),
-        onClick: onClose,
-        disabled: submitting || busy,
-      }}
-      secondaryAction={
-        editingColumn && onDelete
-          ? {
-              label: t("common.actions.delete"),
-              variant: "danger",
-              onClick: () => void deleteColumn(),
-              disabled: submitting || busy,
+    useEffect(() => {
+        if (presetsOpenIndex === null) return;
+        function handleClickOutside(e: MouseEvent) {
+            if (
+                presetsRef.current &&
+                !presetsRef.current.contains(e.target as Node)
+            ) {
+                setPresetsOpenIndex(null);
             }
-          : undefined
-      }
-    >
-      <form id={formId} onSubmit={(event) => void submit(event)} className="space-y-5 pb-4">
-        {error && (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </p>
-        )}
-        {drafts.map((draft, index) => {
-          const isCollapsed = collapsed.includes(index);
-          const formatId = `vera-tabular-column-${index}-format`;
-          return (
-            <section key={index} className="rounded-2xl border border-white/70 bg-gray-50/70 p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCollapsed((current) =>
-                      current.includes(index)
-                        ? current.filter((item) => item !== index)
-                        : [...current, index],
-                    )
-                  }
-                  aria-expanded={!isCollapsed}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                >
-                  <ChevronDown
-                    className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${
-                      isCollapsed ? "-rotate-90" : ""
-                    }`}
-                  />
-                  <span className="truncate font-serif text-xl text-gray-950">
-                    {draft.name.trim() || t("tabular.columns.ordinal", { index: index + 1 })}
-                  </span>
-                </button>
-                {!editing && drafts.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setDrafts((current) =>
-                        current.filter((_, position) => position !== index),
-                      )
-                    }
-                    aria-label={t("tabular.columns.remove")}
-                    className="rounded-lg p-1.5 text-gray-400 hover:bg-white hover:text-gray-700"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () =>
+            document.removeEventListener("mousedown", handleClickOutside);
+    }, [presetsOpenIndex]);
 
-              {!isCollapsed && (
-                <div className="mt-4 space-y-4">
-                  <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-                    <span>{t("tabular.columns.name")}</span>
-                    <input
-                      autoFocus={index === 0}
-                      value={draft.name}
-                      maxLength={240}
-                      onChange={(event) => update(index, { name: event.target.value })}
-                      placeholder={t("tabular.columns.namePlaceholder")}
-                      className="w-full rounded-xl border border-white/80 bg-white/75 px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-300"
-                    />
-                  </label>
+    if (!open) return null;
 
-                  <label htmlFor={formatId} className="block space-y-1.5 text-xs font-medium text-gray-700">
-                    <span>{t("tabular.columns.format")}</span>
-                    <select
-                      id={formatId}
-                      value={draft.format}
-                      onChange={(event) =>
-                        update(index, {
-                          format: event.target.value as VeraTabularFormat,
-                          tagsText:
-                            event.target.value === "tag" ? draft.tagsText : "",
-                        })
+    function resetForm() {
+        setColumns([{ ...EMPTY_DRAFT }]);
+        setCollapsedIndices([]);
+        setGeneratingIndices([]);
+    }
+
+    function handleClose() {
+        resetForm();
+        onClose();
+    }
+
+    function updateColumn(index: number, patch: Partial<ColumnDraft>) {
+        setColumns((prev) =>
+            prev.map((col, i) => (i === index ? { ...col, ...patch } : col)),
+        );
+    }
+
+    function addAnotherColumn() {
+        setColumns((prev) => [...prev, { ...EMPTY_DRAFT }]);
+    }
+
+    function removeColumn(index: number) {
+        setColumns((prev) =>
+            prev.length === 1
+                ? [{ ...EMPTY_DRAFT }]
+                : prev.filter((_, i) => i !== index),
+        );
+        setCollapsedIndices((prev) =>
+            prev
+                .filter((collapsedIndex) => collapsedIndex !== index)
+                .map((collapsedIndex) =>
+                    collapsedIndex > index
+                        ? collapsedIndex - 1
+                        : collapsedIndex,
+                ),
+        );
+    }
+
+    function toggleColumnCollapsed(index: number) {
+        setCollapsedIndices((prev) =>
+            prev.includes(index)
+                ? prev.filter((collapsedIndex) => collapsedIndex !== index)
+                : [...prev, index],
+        );
+        setPresetsOpenIndex(null);
+    }
+
+    function commitTag(index: number) {
+        setColumns((prev) => {
+            const col = prev[index]!;
+            const tag = col.tagInput.trim();
+            if (!tag || col.tags.includes(tag)) {
+                return prev.map((c, i) =>
+                    i === index ? { ...c, tagInput: "" } : c,
+                );
+            }
+            return prev.map((c, i) =>
+                i === index
+                    ? { ...c, tags: [...c.tags, tag], tagInput: "" }
+                    : c,
+            );
+        });
+    }
+
+    function handleTagKeyDown(
+        e: React.KeyboardEvent<HTMLInputElement>,
+        index: number,
+    ) {
+        if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commitTag(index);
+        } else if (
+            e.key === "Backspace" &&
+            columns[index]!.tagInput === "" &&
+            columns[index]!.tags.length > 0
+        ) {
+            updateColumn(index, {
+                tags: columns[index]!.tags.slice(0, -1),
+            });
+        }
+    }
+
+    async function autoGeneratePrompt(index: number) {
+        const title = columns[index]?.name?.trim() ?? "";
+        if (!title) return;
+        setGeneratingIndices((prev) => [...prev, index]);
+        try {
+            const col = columns[index]!;
+            const { prompt } = await generateTabularColumnPrompt(title, {
+                format: col.format,
+                tags: col.format === "tag" ? col.tags : undefined,
+            });
+            updateColumn(index, { prompt });
+        } finally {
+            setGeneratingIndices((prev) => prev.filter((v) => v !== index));
+        }
+    }
+
+    function handleSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        if (columns.some((col) => !col.name.trim() || !col.prompt.trim()))
+            return;
+        if (isEditing && onSave && editingColumn) {
+            const col = columns[0]!;
+            onSave({
+                index: editingColumn.index,
+                name: col.name.trim(),
+                prompt: col.prompt.trim(),
+                format: col.format,
+                tags: col.format === "tag" ? col.tags : undefined,
+            });
+        } else {
+            onAdd(
+                columns.map((col, i) => ({
+                    index: existingCount + i,
+                    name: col.name.trim(),
+                    prompt: col.prompt.trim(),
+                    format: col.format,
+                    tags: col.format === "tag" ? col.tags : undefined,
+                })),
+            );
+        }
+        resetForm();
+        onClose();
+    }
+
+    return (
+        <Modal
+            open={open}
+            onClose={handleClose}
+            breadcrumbs={[
+                "Tabular Review",
+                isEditing ? "Edit column" : "New column",
+            ]}
+            primaryAction={{
+                label: isEditing ? "Save changes" : "Add columns",
+                type: "submit",
+                form: formId,
+                disabled: columns.some(
+                    (col) => !col.name.trim() || !col.prompt.trim(),
+                ),
+            }}
+            cancelAction={{ label: "Cancel", onClick: handleClose }}
+            secondaryAction={
+                isEditing && onDelete
+                    ? {
+                          label: "Delete",
+                          variant: "danger",
+                          onClick: onDelete,
                       }
-                      className="w-full rounded-xl border border-white/80 bg-white/75 px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-300"
-                    >
-                      {FORMAT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {t(option.labelKey)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    : undefined
+            }
+        >
+            <form
+                id={formId}
+                onSubmit={handleSubmit}
+                className="flex min-h-0 flex-1 flex-col"
+            >
+                <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3">
+                        {columns.map((column, index) => (
+                            <div
+                                key={index}
+                                className="relative"
+                            >
+                                {(() => {
+                                    const nameInputId = `column-${index}-name`;
+                                    const formatInputId = `column-${index}-format`;
+                                    const tagInputId = `column-${index}-tag`;
+                                    const promptInputId = `column-${index}-prompt`;
+                                    const isCollapsed =
+                                        collapsedIndices.includes(index);
 
-                  {draft.format === "tag" && (
-                    <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-                      <span>{t("tabular.columns.tags")}</span>
-                      <input
-                        value={draft.tagsText}
-                        onChange={(event) => update(index, { tagsText: event.target.value })}
-                        placeholder={t("tabular.columns.tagsPlaceholder")}
-                        className="w-full rounded-xl border border-white/80 bg-white/75 px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-300"
-                      />
-                      <span className="flex flex-wrap gap-1">
-                        {tagsFor(draft).map((tag, tagIndex) => (
-                          <span
-                            key={tag}
-                            className={`rounded-full px-2 py-0.5 text-[10px] ${TAG_COLORS[tagIndex % TAG_COLORS.length]}`}
-                          >
-                            {tag}
-                          </span>
+                                    return (
+                                        <>
+                                            <div className="mb-4 flex items-center justify-between gap-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        toggleColumnCollapsed(
+                                                            index,
+                                                        )
+                                                    }
+                                                    aria-expanded={!isCollapsed}
+                                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-300"
+                                                >
+                                                    <ChevronDown
+                                                        className={`h-4 w-4 shrink-0 text-gray-600 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                                                    />
+                                                    <h3 className="font-serif text-2xl text-gray-950">
+                                                        Column {index + 1}
+                                                    </h3>
+                                                </button>
+                                                {columns.length > 1 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            removeColumn(index)
+                                                        }
+                                                        className="rounded-lg p-1.5 text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-500"
+                                                        aria-label="Remove column"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {!isCollapsed && (
+                                                <>
+                                            <ModalFieldLabel htmlFor={nameInputId}>
+                                                Column title
+                                            </ModalFieldLabel>
+                                {/* Name row */}
+                                <div className="flex items-start gap-2">
+                                    {/* Input + preset dropdown anchored to this wrapper */}
+                                    <div
+                                        className="relative flex flex-1 items-start"
+                                        ref={
+                                            presetsOpenIndex === index
+                                                ? presetsRef
+                                                : null
+                                        }
+                                    >
+                                        <ModalTextInput
+                                            id={nameInputId}
+                                            type="text"
+                                            variant="minimal"
+                                            value={column.name}
+                                            onChange={(e) => {
+                                                const name = e.target.value;
+                                                const preset =
+                                                    getPresetConfig(name);
+                                                updateColumn(index, {
+                                                    name,
+                                                    ...(preset
+                                                        ? {
+                                                              prompt: preset.prompt,
+                                                              format: preset.format,
+                                                              tags:
+                                                                  preset.tags ??
+                                                                  [],
+                                                              tagInput: "",
+                                                          }
+                                                        : {}),
+                                                });
+                                            }}
+                                            placeholder="Column name"
+                                            className="flex-1"
+                                            autoFocus={index === 0}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setPresetsOpenIndex(
+                                                    presetsOpenIndex === index
+                                                        ? null
+                                                        : index,
+                                                )
+                                            }
+                                            title="Column presets"
+                                            className="mt-1.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                                        >
+                                            <ChevronDown
+                                                className={`h-4 w-4 transition-transform ${presetsOpenIndex === index ? "rotate-180" : ""}`}
+                                            />
+                                        </button>
+                                        {presetsOpenIndex === index && (
+                                            <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl border border-gray-100 bg-white shadow-lg overflow-y-auto max-h-64">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        updateColumn(index, { ...EMPTY_DRAFT });
+                                                        setPresetsOpenIndex(null);
+                                                    }}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                                                >
+                                                    No Preset
+                                                </button>
+                                                {PROMPT_PRESETS.map(
+                                                    (preset) => (
+                                                        <button
+                                                            key={preset.name}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                updateColumn(
+                                                                    index,
+                                                                    {
+                                                                        name: preset.name,
+                                                                        prompt: preset.prompt,
+                                                                        format: preset.format,
+                                                                        tags:
+                                                                            preset.tags ??
+                                                                            [],
+                                                                        tagInput:
+                                                                            "",
+                                                                    },
+                                                                );
+                                                                setPresetsOpenIndex(
+                                                                    null,
+                                                                );
+                                                            }}
+                                                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                                                        >
+                                                            {preset.name}
+                                                        </button>
+                                                    ),
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Format */}
+                                <div className="mt-4">
+                                    <ModalFieldLabel htmlFor={formatInputId}>
+                                        Format
+                                    </ModalFieldLabel>
+                                    <ModalSelect
+                                        id={formatInputId}
+                                        value={column.format}
+                                        options={FORMAT_OPTIONS.map((option) => ({
+                                            value: option.value,
+                                            label: option.label,
+                                            icon: option.icon,
+                                            iconClassName: option.iconClassName,
+                                        }))}
+                                        onChange={(value) =>
+                                            updateColumn(index, {
+                                                format: value as ColumnFormat,
+                                                tags: [],
+                                                tagInput: "",
+                                            })
+                                        }
+                                    />
+                                </div>
+
+                                {/* Tag input */}
+                                {column.format === "tag" && (
+                                    <div className="mt-3">
+                                        <ModalFieldLabel htmlFor={tagInputId}>
+                                            Tags
+                                        </ModalFieldLabel>
+                                        <div className="mt-1 flex flex-wrap gap-1.5 rounded-xl border border-white/70 bg-white/55 px-2 py-1.5 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl">
+                                            {column.tags.map((tag, tagIdx) => (
+                                                <span
+                                                    key={tag}
+                                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${TAG_COLORS[tagIdx % TAG_COLORS.length]}`}
+                                                >
+                                                    {tag}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            updateColumn(
+                                                                index,
+                                                                {
+                                                                    tags: column.tags.filter(
+                                                                        (t) =>
+                                                                            t !==
+                                                                            tag,
+                                                                    ),
+                                                                },
+                                                            )
+                                                        }
+                                                        className="text-gray-400 hover:text-gray-600"
+                                                    >
+                                                        <X className="h-2.5 w-2.5" />
+                                                    </button>
+                                                </span>
+                                            ))}
+                                            <ModalTextInput
+                                                id={tagInputId}
+                                                type="text"
+                                                variant="minimal"
+                                                value={column.tagInput}
+                                                onChange={(e) =>
+                                                    updateColumn(index, {
+                                                        tagInput:
+                                                            e.target.value,
+                                                    })
+                                                }
+                                                onKeyDown={(e) =>
+                                                    handleTagKeyDown(e, index)
+                                                }
+                                                onBlur={() => commitTag(index)}
+                                                placeholder="Add tag…"
+                                                className="min-w-[80px] flex-1 bg-transparent font-sans text-sm text-gray-700 shadow-none placeholder:text-gray-400"
+                                            />
+                                        </div>
+                                        <p className="mt-1 text-xs text-gray-400">
+                                            Press Enter or comma to add a tag.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Prompt */}
+                                <div className="mt-4 flex items-center justify-between">
+                                    <ModalFieldLabel
+                                        htmlFor={promptInputId}
+                                        className="mb-0"
+                                    >
+                                        Prompt
+                                    </ModalFieldLabel>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            autoGeneratePrompt(index)
+                                        }
+                                        disabled={
+                                            !column.name.trim() ||
+                                            generatingIndices.includes(index)
+                                        }
+                                        className="inline-flex items-center gap-1.5 text-sm text-gray-500 transition-colors hover:text-gray-900 disabled:text-gray-300"
+                                    >
+                                        {generatingIndices.includes(index) ? (
+                                            <span className="h-4 w-4 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin block" />
+                                        ) : (
+                                            <Plus className="h-4 w-4" />
+                                        )}
+                                        Auto-Generate Prompt
+                                    </button>
+                                </div>
+                                <ModalTextarea
+                                    id={promptInputId}
+                                    rows={6}
+                                    value={column.prompt}
+                                    onChange={(e) =>
+                                        updateColumn(index, {
+                                            prompt: e.target.value,
+                                        })
+                                    }
+                                    placeholder="Write the analysis prompt — describe what Mike should extract from each document for this column…"
+                                    className="mt-2 min-h-36"
+                                />
+                                                </>
+                                            )}
+                                        </>
+                                    );
+                                })()}
+                            </div>
                         ))}
-                      </span>
-                    </label>
-                  )}
 
-                  <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-                    <span>{t("tabular.columns.prompt")}</span>
-                    <textarea
-                      value={draft.prompt}
-                      maxLength={20_000}
-                      rows={5}
-                      onChange={(event) => update(index, { prompt: event.target.value })}
-                      placeholder={t("tabular.columns.promptPlaceholder")}
-                      className="w-full resize-y rounded-xl border border-white/80 bg-white/75 px-3 py-2 text-sm leading-relaxed text-gray-900 outline-none focus:border-gray-300"
-                    />
-                  </label>
+                        {!isEditing && (
+                            <button
+                                type="button"
+                                onClick={addAnotherColumn}
+                                className="inline-flex items-center gap-1.5 text-sm text-gray-500 transition-colors hover:text-gray-900"
+                            >
+                                <Plus className="h-4 w-4" />
+                                Add another column
+                            </button>
+                        )}
                 </div>
-              )}
-            </section>
-          );
-        })}
-
-        {!editing && (
-          <button
-            type="button"
-            onClick={() => setDrafts((current) => [...current, emptyDraft()])}
-            disabled={drafts.length >= maxColumns}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-950 disabled:opacity-40"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("tabular.columns.addAnother")}
-          </button>
-        )}
-      </form>
-    </Modal>
-  );
+            </form>
+        </Modal>
+    );
 }

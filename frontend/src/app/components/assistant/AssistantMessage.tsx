@@ -1,476 +1,1044 @@
 "use client";
 
-// Local P0 rendering port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/assistant/AssistantMessage.tsx and its message/*
-// children. Cloud connectors, case-law browsing, and document editing blocks
-// are intentionally omitted; durable local reasoning, document reads/finds,
-// citations, completion, retry, and regeneration remain real.
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
+import type { AssistantEvent, Citation, EditAnnotation } from "../shared/types";
+import { EditCard } from "./EditCard";
+import { PreResponseWrapper } from "./PreResponseWrapper";
+import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
+import { eventErrorMessage, toolCallLabel } from "./message/eventUtils";
+import { preprocessCitations, internalCaseHref } from "./message/citationUtils";
+import { useSmoothedReveal } from "./message/useSmoothedReveal";
+import { MarkdownContent } from "./message/MarkdownContent";
+import { CitationsBlock, buildCitationAppendix } from "./message/CitationSources";
+import { EditCardsSection } from "./message/EditCardsSection";
 import {
-  Check,
-  ChevronDown,
-  Copy,
-  FileSearch,
-  FileText,
-  FilePenLine,
-  Loader2,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Wrench,
-} from "lucide-react";
-import type {
-  AssistantEvent,
-  CitationAnnotation,
-  DocumentCitationAnnotation,
-  Message,
-} from "@/app/components/shared/types";
-import {
-  displayCitationQuote,
-  firstDocumentCitationViewerEntry,
-  getDocumentCitationQuotes,
-} from "@/app/components/shared/types";
-import {
-  ProjectCitationSourceViewer,
-  type ProjectAssistantCitationSource,
-} from "@/app/components/projects/ProjectCitationSourceViewer";
-import { useI18n, type MessageKey, type Translate } from "@/app/i18n";
-import { createVeraStudioDraftFromAssistant } from "@/app/lib/veraDocumentStudioApi";
-import { AssistantMarkdown } from "./AssistantMarkdown";
-import { ResponseStatus } from "./ResponseStatus";
+    AskInputsBlock,
+    CourtListenerBlock,
+    DocCreatedBlock,
+    DocDownloadBlock,
+    DocEditedBlock,
+    DocFindBlock,
+    DocReadBlock,
+    DocReplicatedBlock,
+    EventBlock,
+    ReasoningBlock,
+    WorkflowAppliedBlock,
+    type CourtListenerBlockItem,
+} from "./message/EventBlocks";
 
-const TOOL_LABEL_KEYS: Readonly<Record<string, MessageKey>> = {
-  list_documents: "assistant.events.listDocuments",
-  read_document: "assistant.events.readDocument",
-  fetch_documents: "assistant.events.fetchDocuments",
-  find_in_document: "assistant.events.findInDocument",
-  read_studio_document: "assistant.events.readStudioDocument",
-  suggest_studio_edit: "assistant.events.suggestStudioEdit",
-  list_workflows: "assistant.events.listWorkflows",
-  read_workflow: "assistant.events.readWorkflow",
-};
-
-function preEventLabel(
-  event: AssistantEvent,
-  t: Translate,
-): {
-  icon: React.ReactNode;
-  title: string;
-  detail?: string;
-  active?: boolean;
-} | null {
-  switch (event.type) {
-    case "status":
-      return {
-        icon: <Loader2 className="h-3.5 w-3.5" />,
-        title:
-          event.status === "retrying"
-            ? t("assistant.events.retrying")
-            : event.status === "queued"
-              ? t("assistant.events.queued")
-              : t("assistant.events.generating"),
-        active: true,
-      };
-    case "reasoning":
-      return {
-        icon: <ChevronDown className="h-3.5 w-3.5" />,
-        title: t("assistant.events.reasoning"),
-        detail: event.text,
-        active: event.isStreaming,
-      };
-    case "tool_call_start":
-      return {
-        icon: <Wrench className="h-3.5 w-3.5" />,
-        title: t(TOOL_LABEL_KEYS[event.name] ?? "assistant.events.localTool"),
-        active: event.isStreaming,
-      };
-    case "doc_read_start":
-      return {
-        icon: <FileText className="h-3.5 w-3.5" />,
-        title: t("assistant.events.readingDocument", {
-          filename: event.filename,
-        }),
-        active: true,
-      };
-    case "doc_read":
-      return {
-        icon: <FileText className="h-3.5 w-3.5" />,
-        title: t("assistant.events.documentRead", {
-          filename: event.filename,
-        }),
-      };
-    case "doc_find_start":
-      return {
-        icon: <Search className="h-3.5 w-3.5" />,
-        title: t("assistant.events.findingDocument", {
-          filename: event.filename,
-        }),
-        detail: event.query,
-        active: true,
-      };
-    case "doc_find":
-      return {
-        icon: <FileSearch className="h-3.5 w-3.5" />,
-        title: t("assistant.events.matches", {
-          filename: event.filename,
-          count: event.total_matches,
-        }),
-        detail: event.query,
-      };
-    case "workflow_applied":
-      return {
-        icon: <Wrench className="h-3.5 w-3.5" />,
-        title: t("assistant.events.workflowApplied", { title: event.title }),
-      };
-    case "thinking":
-      return {
-        icon: <Loader2 className="h-3.5 w-3.5" />,
-        title: t("assistant.events.thinking"),
-        active: true,
-      };
-    default:
-      return null;
-  }
-}
-
-function citationLocation(citation: CitationAnnotation, t: Translate): string {
-  if (citation.kind === "case") {
-    return (
-      citation.citation ||
-      citation.case_name ||
-      t("assistant.caseFallback", {
-        id: String(citation.cluster_id ?? "—"),
-      })
-    );
-  }
-  const quotes = getDocumentCitationQuotes(citation);
-  const pages = Array.from(
-    new Set(quotes.map((quote) => String(quote.page)).filter(Boolean)),
-  );
-  if (pages.length > 1) {
-    return t("assistant.citationPages", { pages: pages.join(", ") });
-  }
-  const page = pages[0] ?? String(citation.page);
-  return t("assistant.citationPage", { page });
-}
-
-function responseState(message: Message, streaming: boolean) {
-  if (
-    message.error ||
-    ["failed", "interrupted"].includes(message.generation?.status ?? "")
-  ) {
-    return "error" as const;
-  }
-  if (streaming) return "active" as const;
-  if (message.generation?.status === "complete") return "complete" as const;
-  return null;
+interface Props {
+    events?: AssistantEvent[];
+    isStreaming?: boolean;
+    isError?: boolean;
+    /** Human-readable error text rendered alongside the red Mike icon. */
+    errorMessage?: string;
+    citations?: Citation[];
+    citationStatus?: "started" | "partial" | "final";
+    onCitationClick?: (citation: Citation) => void;
+    onOpenCitationSource?: (citation: Citation) => void;
+    onCaseClick?: (
+        citation: Extract<AssistantEvent, { type: "case_citation" }>,
+    ) => void;
+    minHeight?: string;
+    onWorkflowClick?: (workflowId: string) => void;
+    onEditViewClick?: (
+        ann: EditAnnotation,
+        filename: string,
+        changeNumber?: number,
+    ) => void;
+    /**
+     * Opens the editor panel for a document without auto-highlighting any
+     * specific edit. Used by the download card click — opening a doc to
+     * read/download shouldn't jump the viewer to the first edit.
+     */
+    onOpenDocument?: (args: {
+        documentId: string;
+        filename: string;
+        versionId: string | null;
+        versionNumber: number | null;
+    }) => void;
+    /**
+     * Fires immediately when the user clicks Accept / Reject (single card
+     * or the bulk "Accept all" / "Reject all"), before the backend call.
+     * Parents use this to flip download cards / editor viewers into a
+     * "saving" state for the duration of the round-trip.
+     */
+    onEditResolveStart?: (args: {
+        editId: string;
+        documentId: string;
+        verb: "accept" | "reject";
+    }) => void;
+    onEditResolved?: (args: {
+        editId: string;
+        documentId: string;
+        status: "accepted" | "rejected";
+        versionId: string | null;
+        downloadUrl: string | null;
+    }) => void;
+    onEditError?: (args: {
+        editId: string;
+        documentId: string;
+        versionId: string | null;
+        message: string;
+    }) => void;
+    isDocReloading?: (documentId: string) => boolean;
+    /**
+     * True while an accept/reject request for this specific edit is in
+     * flight. Used to disable just that edit's Accept/Reject controls
+     * (sibling edits on the same doc stay clickable).
+     */
+    isEditReloading?: (editId: string) => boolean;
+    /**
+     * External override for individual edit statuses. When present, an
+     * EditCard looks up its edit_id here and treats the mapped value
+     * ("accepted" / "rejected") as authoritative — used so bulk-resolved
+     * edits flip their per-card UI without per-card clicks.
+     */
+    resolvedEditStatuses?: Record<string, "accepted" | "rejected">;
 }
 
 export function AssistantMessage({
-  message,
-  isStreaming,
-  isLatest,
-  onRetry,
-  onRegenerate,
-  studioHandoff,
-  citationScope,
-}: {
-  message: Message;
-  isStreaming: boolean;
-  isLatest: boolean;
-  onRetry: () => void | Promise<void>;
-  onRegenerate: () => void | Promise<void>;
-  studioHandoff?: Readonly<{ projectId: string; chatId: string }>;
-  citationScope?: Readonly<{
-    projectId: string;
-    documentIds: readonly string[];
-  }>;
-}) {
-  const router = useRouter();
-  const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
-  const [creatingDraft, setCreatingDraft] = useState(false);
-  const [draftFailure, setDraftFailure] = useState(false);
-  const [selectedCitation, setSelectedCitation] =
-    useState<CitationAnnotation | null>(null);
-  const [citationSource, setCitationSource] =
-    useState<ProjectAssistantCitationSource | null>(null);
-  const [citationSourceFailure, setCitationSourceFailure] = useState(false);
-  const citations = message.annotations ?? [];
-  const events = useMemo(() => message.events ?? [], [message.events]);
-  const contentEvents = events.filter(
-    (event): event is Extract<AssistantEvent, { type: "content" }> =>
-      event.type === "content",
-  );
-  const content = contentEvents.length
-    ? contentEvents.map((event) => event.text).join("")
-    : message.content;
-  const preEvents = useMemo(
-    () =>
-      events
-        .map((event) => preEventLabel(event, t))
-        .filter((item): item is NonNullable<typeof item> => !!item),
-    [events, t],
-  );
-  const generation = message.generation;
-  const canRetry =
-    isLatest &&
-    generation?.terminal &&
-    generation.retryable &&
-    generation.status !== "complete";
-  const canRegenerate =
-    isLatest && generation?.terminal && generation.status === "complete";
-  const canCreateDraft =
-    Boolean(studioHandoff) &&
-    Boolean(message.id) &&
-    Boolean(content.trim()) &&
-    generation?.status === "complete";
+    events,
+    isStreaming = false,
+    isError = false,
+    errorMessage,
+    citations = [],
+    citationStatus,
+    onCitationClick,
+    onOpenCitationSource,
+    onCaseClick,
+    minHeight = "0px",
+    onWorkflowClick,
+    onEditViewClick,
+    onOpenDocument,
+    onEditResolveStart,
+    onEditResolved,
+    onEditError,
+    isDocReloading,
+    isEditReloading,
+    resolvedEditStatuses,
+}: Props) {
+    const contentDivRef = useRef<HTMLDivElement | null>(null);
+    const [isCopied, setIsCopied] = useState(false);
+    // Per-document override of the download URL, set as Accept/Reject resolves
+    // each tracked change and produces a new version.
+    const [resolvedOverrides, setResolvedOverrides] = useState<
+        Record<string, string>
+    >({});
 
-  async function createStudioDraft() {
-    if (!studioHandoff || !message.id || !canCreateDraft || creatingDraft)
-      return;
-    setCreatingDraft(true);
-    setDraftFailure(false);
-    try {
-      const draft = await createVeraStudioDraftFromAssistant(
-        studioHandoff.projectId,
-        {
-          chat_id: studioHandoff.chatId,
-          assistant_message_id: message.id,
-        },
-      );
-      router.push(
-        `/projects/${draft.project_id}/documents/${draft.document_id}/studio`,
-      );
-    } catch {
-      setDraftFailure(true);
-    } finally {
-      setCreatingDraft(false);
+    const handleEditResolved = (args: {
+        editId: string;
+        documentId: string;
+        status: "accepted" | "rejected";
+        versionId: string | null;
+        downloadUrl: string | null;
+    }) => {
+        if (args.downloadUrl) {
+            setResolvedOverrides((prev) => ({
+                ...prev,
+                [args.documentId]: args.downloadUrl as string,
+            }));
+        }
+        onEditResolved?.(args);
+    };
+
+    const eventErrorMessages = (events ?? [])
+        .map(eventErrorMessage)
+        .filter((message): message is string => !!message);
+    const topLevelErrorMessage =
+        errorMessage ??
+        (
+            (events ?? []).find((event) => event.type === "error") as
+                | Extract<AssistantEvent, { type: "error" }>
+                | undefined
+        )?.message ??
+        null;
+    const effectiveErrorMessage =
+        topLevelErrorMessage ?? eventErrorMessages[0] ?? null;
+    const hasError = isError || !!effectiveErrorMessage;
+    const status: StatusState = hasError
+        ? "error"
+        : isStreaming
+          ? "active"
+          : null;
+
+    const isRenderableEvent = (event: AssistantEvent) =>
+        event.type !== "error" &&
+        event.type !== "ask_inputs_response" &&
+        event.type !== "case_citation" &&
+        event.type !== "case_opinions";
+
+    // Find the last content event so its raw text can be smoothed before
+    // citation preprocessing — slicing already-preprocessed text would risk
+    // chopping a `§N§` citation token in half.
+    const lastContentIdx = events
+        ? events.reduce(
+              (last, e, idx) => (e.type === "content" ? idx : last),
+              -1,
+          )
+        : -1;
+    const lastContentEvent =
+        events && lastContentIdx >= 0
+            ? (events[lastContentIdx] as Extract<
+                  AssistantEvent,
+                  { type: "content" }
+              >)
+            : null;
+    // Only smooth while the content event is still the visible tail. The
+    // moment the model emits a follow-up (tool call, reasoning, another
+    // content block), that content's text is frozen on the server — keeping
+    // it half-revealed below would make a tool-call wrapper appear under
+    // prose that still looks like it's typing.
+    const lastRenderableIdx = events
+        ? events.reduce(
+              (last, e, idx) => (isRenderableEvent(e) ? idx : last),
+              -1,
+          )
+        : -1;
+    const contentIsTail =
+        lastContentEvent !== null && lastContentIdx === lastRenderableIdx;
+    const smoothedLastText = useSmoothedReveal(
+        lastContentEvent?.text ?? "",
+        isStreaming && contentIsTail,
+    );
+
+    // Pre-process citations for all content events. Each [N] marker resolves
+    // to exactly one citation (models are instructed to use shared refs
+    // only for cross-page continuations via the [[PAGE_BREAK]] sentinel).
+    const inlineCitationTargets: Citation[] = [];
+    const caseCitations = new Map<
+        string,
+        Extract<AssistantEvent, { type: "case_citation" }>
+    >();
+    const caseOpinions = new Map<
+        number,
+        Extract<AssistantEvent, { type: "case_opinions" }>["case"]
+    >();
+    const processedTexts: string[] = [];
+    if (events) {
+        for (let i = 0; i < events.length; i++) {
+            const event = events[i];
+            if (event.type === "case_citation") {
+                const hrefKey = internalCaseHref(event.cluster_id);
+                if (hrefKey) caseCitations.set(hrefKey, event);
+            } else if (event.type === "case_opinions") {
+                caseOpinions.set(event.cluster_id, event.case);
+            }
+            processedTexts.push(
+                event.type === "content"
+                    ? preprocessCitations(
+                          i === lastContentIdx ? smoothedLastText : event.text,
+                          citations,
+                          inlineCitationTargets,
+                      )
+                    : "",
+            );
+        }
     }
-  }
+    const handleOpenCitationSource = (citation: Citation) => {
+        if (onOpenCitationSource) {
+            onOpenCitationSource(citation);
+            return;
+        }
+        if (citation.kind === "case" || !onOpenDocument) return;
+        onOpenDocument({
+            documentId: citation.document_id,
+            filename: citation.filename,
+            versionId: citation.version_id ?? null,
+            versionNumber: citation.version_number ?? null,
+        });
+    };
+    const canOpenCitationSource = (citation: Citation) =>
+        !!onOpenCitationSource ||
+        (citation.kind !== "case" && !!onOpenDocument);
+    const showCitationBlock =
+        !!citationStatus || (!isStreaming && citations.length > 0);
+    const handleCopy = async () => {
+        try {
+            let html = "";
+            let plainText = "";
+            if (contentDivRef.current) {
+                const clone = contentDivRef.current.cloneNode(
+                    true,
+                ) as HTMLElement;
+                clone.querySelectorAll("[data-citation-ref]").forEach((el) => {
+                    const ref = el.getAttribute("data-citation-ref");
+                    if (!ref) return;
+                    const sup = document.createElement("sup");
+                    sup.textContent = ref;
+                    el.replaceWith(sup);
+                });
+                html = clone.innerHTML;
+                plainText = clone.textContent || "";
+            }
+            const appendix = buildCitationAppendix(citations);
+            html += appendix.html;
+            plainText += appendix.text;
+            const item = new ClipboardItem({
+                "text/html": new Blob([html], { type: "text/html" }),
+                "text/plain": new Blob([plainText], { type: "text/plain" }),
+            });
+            await navigator.clipboard.write([item]);
+            setIsCopied(true);
+            setTimeout(() => setIsCopied(false), 2000);
+        } catch {
+            // ignore
+        }
+    };
 
-  function openCitation(citation: CitationAnnotation) {
-    setCitationSourceFailure(false);
-    if (citation.kind === "case" || !citationScope) {
-      setSelectedCitation(citation);
-      return;
+    // Walk events in chronological order and group consecutive non-content
+    // events into their own PreResponseWrapper. Content events render
+    // between wrappers, so reasoning/tool chatter that arrives after the
+    // model has already streamed some prose gets its own wrapper.
+    type EventGroup =
+        | { kind: "pre"; events: AssistantEvent[]; indices: number[] }
+        | {
+              kind: "content";
+              event: Extract<AssistantEvent, { type: "content" }>;
+              index: number;
+          };
+
+    const groups: EventGroup[] = [];
+    if (events) {
+        let current: Extract<EventGroup, { kind: "pre" }> | null = null;
+        events.forEach((e, i) => {
+            if (!isRenderableEvent(e)) return;
+            if (e.type === "content") {
+                if (current) {
+                    groups.push(current);
+                    current = null;
+                }
+                groups.push({ kind: "content", event: e, index: i });
+            } else {
+                if (!current)
+                    current = { kind: "pre", events: [], indices: [] };
+                current.events.push(e);
+                current.indices.push(i);
+            }
+        });
+        if (current) groups.push(current);
     }
-    const documentCitation = citation as DocumentCitationAnnotation;
-    // The source viewer highlights one exact page-bound excerpt. Never merge
-    // later-page text into the first page and label that aggregate verified.
-    const firstEntry = firstDocumentCitationViewerEntry(documentCitation);
-    const quote = firstEntry?.quote.trim() ?? "";
-    if (
-      !documentCitation.version_id ||
-      !citationScope.documentIds.includes(documentCitation.document_id) ||
-      !quote
-    ) {
-      setSelectedCitation(null);
-      setCitationSourceFailure(true);
-      return;
-    }
-    setSelectedCitation(null);
-    setCitationSource({
-      kind: "assistant_document",
-      documentId: documentCitation.document_id,
-      versionId: documentCitation.version_id,
-      filename: documentCitation.filename,
-      quote,
-      page: firstEntry?.page ?? null,
-    });
-  }
 
-  return (
-    <div className="w-full" data-message-id={message.id}>
-      <ResponseStatus state={responseState(message, isStreaming)} />
+    const hasContentAfter = (groupIdx: number): boolean => {
+        for (let i = groupIdx + 1; i < groups.length; i++) {
+            const g = groups[i];
+            if (g.kind === "content" && g.event.text.length > 0) return true;
+        }
+        return false;
+    };
 
-      {preEvents.length > 0 && (
-        <div className="mb-4 overflow-hidden rounded-xl border border-white/70 bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-2xl">
-          {preEvents.map((item, index) =>
-            item.detail ? (
-              <details
-                key={`${item.title}-${index}`}
-                className="group border-b border-gray-100 px-3 py-2 text-xs text-gray-600 last:border-b-0"
-              >
-                <summary className="flex cursor-pointer list-none items-center gap-2">
-                  <span className={item.active ? "animate-spin" : undefined}>
-                    {item.icon}
-                  </span>
-                  <span className="font-medium">{item.title}</span>
-                </summary>
-                <p className="mt-2 whitespace-pre-wrap border-l border-gray-200 pl-5 leading-5 text-gray-500">
-                  {item.detail}
-                </p>
-              </details>
-            ) : (
-              <div
-                key={`${item.title}-${index}`}
-                className="flex items-center gap-2 border-b border-gray-100 px-3 py-2 text-xs text-gray-600 last:border-b-0"
-              >
-                <span className={item.active ? "animate-spin" : undefined}>
-                  {item.icon}
-                </span>
-                <span className="font-medium">{item.title}</span>
-              </div>
-            ),
-          )}
-        </div>
-      )}
+    const askInputsResponseFor = (askInputsIdx: number) => {
+        if (!events) return undefined;
+        for (let i = askInputsIdx + 1; i < events.length; i++) {
+            const candidate = events[i];
+            if (candidate.type === "ask_inputs") return undefined;
+            if (candidate.type === "ask_inputs_response") return candidate;
+        }
+        return undefined;
+    };
 
-      {content && (
-        <AssistantMarkdown
-          text={content}
-          citations={citations}
-          onCitationClick={openCitation}
-        />
-      )}
+    const hasPendingAskInput = (group: Extract<EventGroup, { kind: "pre" }>) =>
+        group.events.some(
+            (event, index) =>
+                event.type === "ask_inputs" &&
+                !askInputsResponseFor(group.indices[index]),
+        );
 
-      {citationSourceFailure && (
-        <p role="alert" className="mb-3 text-xs text-red-600">
-          {t("assistant.errors.citationSource")}
-        </p>
-      )}
+    const renderEvent = (
+        event: AssistantEvent,
+        i: number,
+        allEvents: AssistantEvent[],
+        globalIdx: number,
+    ) => {
+        const nextEvent = allEvents[i + 1];
+        const showConnector =
+            nextEvent !== undefined && nextEvent.type !== "content";
 
-      {selectedCitation && (
-        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs text-gray-700">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-medium text-gray-900">
-                [{selectedCitation.ref}]{" "}
-                {selectedCitation.kind === "case"
-                  ? (selectedCitation.case_name ?? selectedCitation.citation)
-                  : selectedCitation.filename}
-              </p>
-              <p className="mt-1 text-gray-500">
-                {citationLocation(selectedCitation, t)}
-              </p>
+        if (event.type === "reasoning") {
+            return (
+                <ReasoningBlock
+                    key={globalIdx}
+                    text={event.text}
+                    isStreaming={!!event.isStreaming}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "tool_call_start") {
+            return (
+                <EventBlock
+                    key={globalIdx}
+                    showConnector={showConnector}
+                    isStreaming
+                >
+                    <span className="font-medium">
+                        {toolCallLabel(event.name)}
+                    </span>
+                </EventBlock>
+            );
+        }
+        if (event.type === "thinking") {
+            return (
+                <EventBlock
+                    key={globalIdx}
+                    showConnector={showConnector}
+                    isStreaming
+                >
+                    <span>Thinking...</span>
+                </EventBlock>
+            );
+        }
+        if (event.type === "mcp_tool_call") {
+            const isError = event.status === "error";
+            const label = event.connector_name
+                ? `${event.connector_name}: ${event.tool_name}`
+                : toolCallLabel(event.openai_tool_name);
+            return (
+                <EventBlock
+                    key={globalIdx}
+                    showConnector={showConnector}
+                    isStreaming={event.isStreaming}
+                    dotColor={isError ? "red" : "gray"}
+                >
+                    <span className="font-medium">
+                        {event.isStreaming ? "Using connector..." : label}
+                    </span>
+                    {isError && event.error && (
+                        <p className="mt-0.5 text-xs text-red-600">
+                            {event.error}
+                        </p>
+                    )}
+                </EventBlock>
+            );
+        }
+        if (event.type === "doc_read") {
+            const ann = citations.find(
+                (a) => a.kind !== "case" && a.filename === event.filename,
+            );
+            return (
+                <DocReadBlock
+                    key={globalIdx}
+                    filename={event.filename}
+                    isStreaming={event.isStreaming}
+                    onClick={
+                        !event.isStreaming && ann && onCitationClick
+                            ? () => onCitationClick(ann)
+                            : undefined
+                    }
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "doc_find") {
+            return (
+                <DocFindBlock
+                    key={globalIdx}
+                    filename={event.filename}
+                    query={event.query}
+                    totalMatches={event.total_matches}
+                    isStreaming={!!event.isStreaming}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "doc_created") {
+            return (
+                <DocCreatedBlock
+                    key={globalIdx}
+                    filename={event.filename}
+                    isStreaming={event.isStreaming}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "doc_replicated") {
+            // The backend now does N copies in one tool call and reports
+            // count + copies on a single event, so no consecutive-event
+            // aggregation needed.
+            return (
+                <DocReplicatedBlock
+                    key={globalIdx}
+                    filename={event.filename}
+                    count={event.count}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "doc_edited") {
+            return (
+                <DocEditedBlock
+                    key={globalIdx}
+                    filename={event.filename}
+                    isStreaming={event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "workflow_applied") {
+            return (
+                <WorkflowAppliedBlock
+                    key={globalIdx}
+                    title={event.title}
+                    showConnector={showConnector}
+                    onClick={
+                        onWorkflowClick
+                            ? () => onWorkflowClick(event.workflow_id)
+                            : undefined
+                    }
+                />
+            );
+        }
+        if (event.type === "ask_inputs") {
+            const response = askInputsResponseFor(globalIdx);
+            return (
+                <AskInputsBlock
+                    key={globalIdx}
+                    event={event}
+                    response={response}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "courtlistener_search_case_law") {
+            const count = event.result_count ?? 0;
+            const detail = event.isStreaming
+                ? event.query
+                    ? `for "${event.query}"`
+                    : undefined
+                : event.error
+                  ? event.error
+                  : `${count} ${count === 1 ? "result" : "results"}${event.query ? ` for "${event.query}"` : ""}`;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? "Searching case law"
+                            : event.error
+                              ? "Case law search failed"
+                              : "Searched case law"
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "courtlistener_get_cases") {
+            const caseCount = event.case_count ?? event.cluster_ids.length;
+            const displayLabel = `${caseCount} ${
+                caseCount === 1 ? "case" : "cases"
+            }`;
+            const detail = event.error ? event.error : undefined;
+            const items: CourtListenerBlockItem[] =
+                event.cases?.map((caseItem) => ({
+                    caseName: caseItem.case_name,
+                    citation: caseItem.citation,
+                    url: caseItem.url ?? null,
+                })) ??
+                event.cluster_ids.map((clusterId) => {
+                    const citation = caseCitations.get(`us-case-${clusterId}`);
+                    return {
+                        caseName: citation?.case_name ?? null,
+                        citation: citation?.citation ?? `Cluster ${clusterId}`,
+                        url: citation?.url ?? null,
+                    };
+                });
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? `Fetching ${displayLabel}`
+                            : event.error
+                              ? "Case fetch failed"
+                              : `Fetched ${displayLabel}`
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                    items={items.length > 0 ? items : undefined}
+                />
+            );
+        }
+        if (event.type === "courtlistener_find_in_case") {
+            const searches = event.searches ?? [];
+            if (searches.length > 0) {
+                const matches =
+                    event.total_matches ??
+                    searches.reduce(
+                        (sum, search) => sum + (search.total_matches ?? 0),
+                        0,
+                    );
+                const caseIds = new Set(
+                    searches.map(
+                        (search) =>
+                            search.cluster_id ??
+                            `${search.case_name ?? ""}|${search.citation ?? ""}`,
+                    ),
+                );
+                const caseCount = caseIds.size || searches.length;
+                const searchLabel = `${searches.length} ${
+                    searches.length === 1 ? "search" : "searches"
+                } in ${caseCount} ${caseCount === 1 ? "case" : "cases"}`;
+                const detail = event.isStreaming
+                    ? undefined
+                    : event.error
+                      ? event.error
+                      : `(${matches} ${matches === 1 ? "match" : "matches"})`;
+                const items: CourtListenerBlockItem[] = searches.map(
+                    (search) => ({
+                        caseName: search.case_name ?? null,
+                        citation:
+                            search.citation ??
+                            (search.cluster_id
+                                ? `Cluster ${search.cluster_id}`
+                                : null),
+                        url: null,
+                        query: search.query,
+                        totalMatches: search.total_matches ?? 0,
+                        hasError: !!search.error,
+                    }),
+                );
+                return (
+                    <CourtListenerBlock
+                        key={globalIdx}
+                        label={
+                            event.isStreaming
+                                ? `Running ${searchLabel}`
+                                : event.error
+                                  ? "Case searches failed"
+                                  : `Ran ${searchLabel}`
+                        }
+                        detail={detail}
+                        isStreaming={!!event.isStreaming}
+                        hasError={!!event.error}
+                        showConnector={showConnector}
+                        items={items.length > 0 ? items : undefined}
+                    />
+                );
+            }
+            const matches = event.total_matches ?? 0;
+            const caseLabel =
+                [event.case_name, event.citation].filter(Boolean).join(", ") ||
+                (event.cluster_id ? `cluster ${event.cluster_id}` : "case");
+            const detail = event.isStreaming
+                ? event.query
+                    ? `for "${event.query}" in ${caseLabel}`
+                    : caseLabel
+                : event.error
+                  ? event.error
+                  : `${matches} ${matches === 1 ? "match" : "matches"}${event.query ? ` for "${event.query}"` : ""} in ${caseLabel}`;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? "Searching case"
+                            : event.error
+                              ? "Case search failed"
+                              : "Searched case"
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "courtlistener_read_case") {
+            const count = event.opinion_count ?? 0;
+            const caseLabel =
+                [event.case_name, event.citation].filter(Boolean).join(", ") ||
+                "case";
+            const detail = event.isStreaming
+                ? undefined
+                : event.error
+                  ? event.error
+                  : count > 0
+                    ? `(${count} ${count === 1 ? "opinion" : "opinions"})`
+                    : undefined;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? `Reading case ${caseLabel}`
+                            : event.error
+                              ? `Case read failed ${caseLabel}`
+                              : `Read case ${caseLabel}`
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "courtlistener_verify_citations") {
+            const citations = event.citation_count ?? 0;
+            const matches = event.match_count ?? 0;
+            const citationLabel = `${citations} ${citations === 1 ? "citation" : "citations"}`;
+            const detail = event.isStreaming
+                ? undefined
+                : event.error
+                  ? event.error
+                  : `(${matches} ${matches === 1 ? "match" : "matches"})`;
+            // Adjacent `case_citation` events are emitted between the start
+            // and final verify_citations events (one per matched citation) —
+            // collect them so the user can expand to see resolved cases.
+            const items: CourtListenerBlockItem[] = [];
+            if (events) {
+                for (let j = globalIdx + 1; j < events.length; j++) {
+                    const e = events[j];
+                    if (e.type !== "case_citation") break;
+                    items.push({
+                        caseName: e.case_name,
+                        citation: e.citation,
+                        url: e.url || null,
+                    });
+                }
+            }
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? `Verifying ${citationLabel}`
+                            : event.error
+                              ? "Citation verification failed"
+                              : `Verified ${citationLabel}`
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                    items={items.length > 0 ? items : undefined}
+                />
+            );
+        }
+        return null;
+    };
+
+    return (
+        <div style={{ minHeight }}>
+            <ResponseStatus status={status} />
+            <div className="w-full font-inter relative mt-2">
+                {events && events.length > 0 ? (
+                    <div className="flex flex-col gap-4">
+                        {groups.map((g, gIdx) => {
+                            if (g.kind === "content") {
+                                const isLastContent =
+                                    g.index === lastContentIdx;
+                                return (
+                                    <div key={`c-${g.index}`}>
+                                        <MarkdownContent
+                                            text={processedTexts[g.index]}
+                                            inlineCitationTargets={
+                                                inlineCitationTargets
+                                            }
+                                            caseCitations={caseCitations}
+                                            caseOpinions={caseOpinions}
+                                            onCitationClick={onCitationClick}
+                                            onCaseClick={onCaseClick}
+                                            divRef={
+                                                isLastContent
+                                                    ? contentDivRef
+                                                    : undefined
+                                            }
+                                        />
+                                    </div>
+                                );
+                            }
+                            const subsequentContent = hasContentAfter(gIdx);
+                            const pendingAskInput = hasPendingAskInput(g);
+                            const wrapperIsStreaming =
+                                g.events.some(
+                                    (event) =>
+                                        "isStreaming" in event &&
+                                        !!event.isStreaming,
+                                ) || pendingAskInput;
+                            return (
+                                <PreResponseWrapper
+                                    key={`p-${g.indices[0]}`}
+                                    stepCount={g.events.length}
+                                    shouldMinimize={
+                                        pendingAskInput
+                                            ? false
+                                            : subsequentContent
+                                    }
+                                    isStreaming={wrapperIsStreaming}
+                                    forceOpen={pendingAskInput}
+                                >
+                                    {g.events.map((event, i) =>
+                                        renderEvent(
+                                            event,
+                                            i,
+                                            g.events,
+                                            g.indices[i],
+                                        ),
+                                    )}
+                                </PreResponseWrapper>
+                            );
+                        })}
+                        {/* Bulk accept/reject + per-edit cards — below the
+                            response content, only after streaming stops,
+                            rendered above the download card. */}
+                        {!isStreaming &&
+                            (() => {
+                                const editedEvents = events.filter(
+                                    (e) =>
+                                        e.type === "doc_edited" &&
+                                        !e.isStreaming,
+                                ) as Extract<
+                                    AssistantEvent,
+                                    { type: "doc_edited" }
+                                >[];
+                                const pending: {
+                                    annotation: EditAnnotation;
+                                    filename: string;
+                                }[] = [];
+                                const filenameByDocId = new Map<
+                                    string,
+                                    string
+                                >();
+                                // Effective status = external override if any, else the annotation's DB status.
+                                const statusOf = (ann: EditAnnotation) =>
+                                    resolvedEditStatuses?.[ann.edit_id] ??
+                                    ann.status;
+                                for (const e of editedEvents) {
+                                    filenameByDocId.set(
+                                        e.document_id,
+                                        e.filename,
+                                    );
+                                    for (const ann of e.annotations) {
+                                        if (statusOf(ann) === "pending") {
+                                            pending.push({
+                                                annotation: ann,
+                                                filename: e.filename,
+                                            });
+                                        }
+                                    }
+                                }
+                                let cardIndex = 0;
+                                const cards = editedEvents.flatMap((e) =>
+                                    e.annotations.map((ann) => {
+                                        const changeNumber = ++cardIndex;
+                                        return (
+                                            <EditCard
+                                                key={`editcard-${ann.edit_id}`}
+                                                annotation={ann}
+                                                changeNumber={changeNumber}
+                                                resolvedStatus={
+                                                    resolvedEditStatuses?.[
+                                                        ann.edit_id
+                                                    ]
+                                                }
+                                                isReloading={
+                                                    isEditReloading?.(
+                                                        ann.edit_id,
+                                                    ) ?? false
+                                                }
+                                                onViewClick={(a) =>
+                                                    onEditViewClick?.(
+                                                        a,
+                                                        e.filename,
+                                                        changeNumber,
+                                                    )
+                                                }
+                                                onResolveStart={
+                                                    onEditResolveStart
+                                                }
+                                                onResolved={handleEditResolved}
+                                                onError={onEditError}
+                                            />
+                                        );
+                                    }),
+                                );
+                                const resolvedCount = editedEvents.reduce(
+                                    (acc, e) =>
+                                        acc +
+                                        e.annotations.filter(
+                                            (a) => statusOf(a) !== "pending",
+                                        ).length,
+                                    0,
+                                );
+                                // If there's only one edit total, skip the
+                                // minimisable wrapper / bulk-actions UI and
+                                // render the bare EditCard — no value in
+                                // bulk controls for a single item.
+                                if (cards.length <= 1) {
+                                    return cards;
+                                }
+                                return (
+                                    <EditCardsSection
+                                        pending={pending}
+                                        filenameByDocId={filenameByDocId}
+                                        cards={cards}
+                                        resolvedCount={resolvedCount}
+                                        onViewClick={onEditViewClick}
+                                        onResolveStart={onEditResolveStart}
+                                        onResolved={handleEditResolved}
+                                        onError={onEditError}
+                                    />
+                                );
+                            })()}
+                    </div>
+                ) : null}
+
+                {topLevelErrorMessage && (
+                    <p className="mt-2 text-base font-serif leading-7 text-red-700">
+                        {topLevelErrorMessage}
+                    </p>
+                )}
+
+                {/* Download card for each edited doc — only after streaming
+                    stops, and deduped per document (keep the latest edit). */}
+                {events &&
+                    !isStreaming &&
+                    (() => {
+                        const edited = events.filter(
+                            (
+                                e,
+                            ): e is Extract<
+                                AssistantEvent,
+                                { type: "doc_edited" }
+                            > =>
+                                e.type === "doc_edited" &&
+                                !e.isStreaming &&
+                                !!e.download_url,
+                        );
+                        const latestByDoc = new Map<
+                            string,
+                            (typeof edited)[number]
+                        >();
+                        for (const e of edited)
+                            latestByDoc.set(e.document_id, e);
+                        return Array.from(latestByDoc.values()).map((e) => (
+                            <div
+                                key={`edited-download-${e.document_id}`}
+                                className="flex flex-col gap-2 mt-2 mb-3"
+                            >
+                                <DocDownloadBlock
+                                    filename={e.filename}
+                                    download_url={
+                                        resolvedOverrides[e.document_id] ??
+                                        e.download_url
+                                    }
+                                    versionNumber={e.version_number ?? null}
+                                    onOpen={
+                                        onOpenDocument
+                                            ? () =>
+                                                  onOpenDocument({
+                                                      documentId: e.document_id,
+                                                      filename: e.filename,
+                                                      versionId:
+                                                          e.version_id ?? null,
+                                                      versionNumber:
+                                                          e.version_number ??
+                                                          null,
+                                                  })
+                                            : onEditViewClick &&
+                                                e.annotations[0]
+                                              ? () =>
+                                                    onEditViewClick(
+                                                        e.annotations[0],
+                                                        e.filename,
+                                                    )
+                                              : undefined
+                                    }
+                                    isReloading={
+                                        isDocReloading?.(e.document_id) ?? false
+                                    }
+                                />
+                            </div>
+                        ));
+                    })()}
+
+                {/* Download cards for created docs — generated docs now
+                    persist as first-class documents, so clicking opens
+                    them in the DocPanel (like edited docs). */}
+                {events &&
+                    !isStreaming &&
+                    events.some(
+                        (e) => e.type === "doc_created" && e.download_url,
+                    ) && (
+                        <div className="flex flex-col gap-2 mt-2 mb-3">
+                            {(
+                                events.filter(
+                                    (e) =>
+                                        e.type === "doc_created" &&
+                                        e.download_url,
+                                ) as Extract<
+                                    AssistantEvent,
+                                    { type: "doc_created" }
+                                >[]
+                            ).map((e, i) => {
+                                const documentId = e.document_id;
+                                const versionId = e.version_id ?? null;
+                                const versionNumber = e.version_number ?? null;
+                                const canOpen =
+                                    !!onOpenDocument && !!documentId;
+                                return (
+                                    <DocDownloadBlock
+                                        key={i}
+                                        filename={e.filename}
+                                        download_url={e.download_url}
+                                        versionNumber={versionNumber}
+                                        onOpen={
+                                            canOpen
+                                                ? () =>
+                                                      onOpenDocument!({
+                                                          documentId:
+                                                              documentId!,
+                                                          filename: e.filename,
+                                                          versionId,
+                                                          versionNumber,
+                                                      })
+                                                : undefined
+                                        }
+                                    />
+                                );
+                            })}
+                        </div>
+                    )}
+
+                {showCitationBlock && (
+                    <CitationsBlock
+                        citations={citations}
+                        onCitationClick={onCitationClick}
+                        onOpenSource={handleOpenCitationSource}
+                        canOpenSource={canOpenCitationSource}
+                        showWhenEmpty={!!citationStatus}
+                        isLoading={
+                            citationStatus === "started" ||
+                            citationStatus === "partial"
+                        }
+                    />
+                )}
+
+                {/* Copy button */}
+                <div className="flex items-center gap-2 py-2 font-sans justify-start">
+                    {!isStreaming && (
+                        <button
+                            className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                            onClick={handleCopy}
+                        >
+                            {isCopied ? (
+                                <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                            )}
+                        </button>
+                    )}
+                </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedCitation(null)}
-              className="text-gray-400 hover:text-gray-700"
-            >
-              {t("common.actions.close")}
-            </button>
-          </div>
-          <blockquote className="mt-2 border-l-2 border-blue-200 pl-3 font-serif leading-5">
-            {displayCitationQuote(selectedCitation)}
-          </blockquote>
         </div>
-      )}
-
-      {citations.length > 0 && !isStreaming && (
-        <div className="mb-4 rounded-xl border border-white/70 bg-white/55 p-3 shadow-sm backdrop-blur-xl">
-          <p className="mb-2 text-xs font-medium text-gray-500">
-            {t("assistant.sources")}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {citations.map((citation) => (
-              <button
-                key={`${citation.ref}-${citation.kind === "case" ? citation.cluster_id : citation.document_id}`}
-                type="button"
-                onClick={() => openCitation(citation)}
-                data-testid={`assistant-citation-open-${citation.ref}`}
-                className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-700 transition-colors hover:bg-gray-100"
-              >
-                [{citation.ref}]{" "}
-                {citation.kind === "case"
-                  ? (citation.case_name ?? citation.citation)
-                  : citation.filename}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(message.error || generation?.status === "cancelled") && (
-        <div
-          role={message.error ? "alert" : undefined}
-          className={`mb-3 rounded-lg px-3 py-2 text-sm ${
-            message.error
-              ? "border border-red-100 bg-red-50 text-red-700"
-              : "border border-gray-200 bg-gray-50 text-gray-600"
-          }`}
-        >
-          {message.error ?? t("assistant.cancelled")}
-        </div>
-      )}
-
-      {draftFailure && (
-        <p role="alert" className="mb-3 text-xs text-red-600">
-          {t("assistant.errors.studioDraft")}
-        </p>
-      )}
-
-      {!isStreaming &&
-        (content || canRetry || canRegenerate || canCreateDraft) && (
-          <div className="flex items-center gap-1 text-gray-400">
-            {content && (
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard
-                    .writeText(content)
-                    .then(() => setCopied(true));
-                }}
-                className="rounded-md p-1.5 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                title={t("assistant.copyAnswer")}
-                aria-label={t("assistant.copyAnswer")}
-              >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
-              </button>
-            )}
-            {canCreateDraft && (
-              <button
-                type="button"
-                disabled={creatingDraft}
-                onClick={() => void createStudioDraft()}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creatingDraft ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FilePenLine className="h-3.5 w-3.5" />
-                )}
-                {creatingDraft
-                  ? t("assistant.creatingStudioDraft")
-                  : t("assistant.createStudioDraft")}
-              </button>
-            )}
-            {canRetry && (
-              <button
-                type="button"
-                onClick={() => void onRetry()}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors hover:bg-gray-100 hover:text-gray-700"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                {t("common.actions.retry")}
-              </button>
-            )}
-            {canRegenerate && (
-              <button
-                type="button"
-                onClick={() => void onRegenerate()}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors hover:bg-gray-100 hover:text-gray-700"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                {t("assistant.regenerate")}
-              </button>
-            )}
-          </div>
-        )}
-
-      {citationSource && (
-        <ProjectCitationSourceViewer
-          source={citationSource}
-          onClose={() => setCitationSource(null)}
-        />
-      )}
-    </div>
-  );
+    );
 }

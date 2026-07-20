@@ -1,21 +1,22 @@
 "use client";
 
 import { useEffect } from "react";
+import { PillButton } from "@/app/components/ui/pill-button";
 
 export default function GlobalError({
-  error,
+    error,
 }: {
-  error: Error & { digest?: string };
+    error: Error & { digest?: string };
 }) {
-  useEffect(() => {
-    console.error("Global error:", error);
-  }, [error]);
+    useEffect(() => {
+        console.error("Global error:", error);
+    }, [error]);
 
-  return (
-    <html lang="en">
-      <head>
-        <title>Something went wrong - Vera</title>
-        <style>{`
+    return (
+        <html lang="en">
+            <head>
+                <title>Something went wrong – Mike</title>
+                <style>{`
                     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=EB+Garamond:wght@400;500&display=swap');
                     
                     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -51,44 +52,26 @@ export default function GlobalError({
                         margin-bottom: 2rem;
                     }
 
-                    .btn-back {
-                        display: inline-flex;
-                        align-items: center;
-                        gap: 0.5rem;
-                        padding: 0.625rem 1.25rem;
-                        border-radius: 0.5rem;
-                        font-size: 0.875rem;
-                        font-weight: 500;
-                        font-family: 'Inter', sans-serif;
-                        cursor: pointer;
-                        transition: all 0.15s ease;
-                        text-decoration: none;
-                        border: none;
-                        background-color: rgb(0, 136, 255);
-                        color: white;
-                    }
-
-                    .btn-back:hover {
-                        background-color: rgb(0, 120, 230);
-                    }
-
-                    .btn-back:active {
-                        transform: scale(0.98);
-                    }
+                    .btn-back { font-family: 'Inter', sans-serif; }
                 `}</style>
-      </head>
-      <body>
-        <div className="error-container">
-          <h1 className="error-title">Something went wrong</h1>
-          <p className="error-message">
-            We encountered an unexpected error. This has been logged and our
-            team will look into it.
-          </p>
-          <button className="btn-back" onClick={() => window.history.back()}>
-            Back
-          </button>
-        </div>
-      </body>
-    </html>
-  );
+            </head>
+            <body>
+                <div className="error-container">
+                    <h1 className="error-title">Something went wrong</h1>
+                    <p className="error-message">
+                        We encountered an unexpected error. This has been logged
+                        and our team will look into it.
+                    </p>
+                    <PillButton
+                        tone="blue"
+                        size="normal"
+                        className="btn-back"
+                        onClick={() => window.history.back()}
+                    >
+                        Back
+                    </PillButton>
+                </div>
+            </body>
+        </html>
+    );
 }

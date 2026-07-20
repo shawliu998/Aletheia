@@ -1,250 +1,748 @@
 "use client";
 
-// Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/tabular/TRSidePanel.tsx. Vera renders only the
-// persisted source records returned by the local runtime.
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Square, Trash2, X } from "lucide-react";
+import {
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useI18n } from "@/app/i18n";
-import type { VeraDocumentWire } from "@/app/lib/veraWireTypes";
-import type {
-  VeraTabularCell,
-  VeraTabularColumn,
-} from "@/app/lib/veraTabularApi";
 import {
-  sourceIdentity,
-  tabularSourceOffsetLabel,
-  tabularSourcePageLabel,
-} from "./citation-utils";
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    ChevronUp,
+    Loader2,
+    PanelLeft,
+    RefreshCw,
+    X,
+} from "lucide-react";
+import type { ColumnConfig, Document, TabularCell } from "../shared/types";
+import { isSpreadsheetFilename } from "../shared/types";
+import { preprocessCitations, type ParsedCitation } from "./citation-utils";
+import { getPillClass } from "./pillUtils";
+import { PdfView } from "../shared/views/PdfView";
+import { SpreadsheetView } from "../shared/views/SpreadsheetView";
+import { DocxView } from "../shared/views/DocxView";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { CitationQuotesHeader } from "../assistant/CitationQuotesHeader";
+import { cn } from "@/app/lib/utils";
+import {
+    APP_SURFACE_HOVER_CLASS,
+    APP_SURFACE_PRESSED_CLASS,
+    LIQUID_PANEL_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
-const FLAG_BADGE = {
-  green: "bg-emerald-100 text-emerald-800",
-  grey: "bg-slate-100 text-slate-700",
-  yellow: "bg-amber-100 text-amber-800",
-  red: "bg-red-100 text-red-800",
-} as const;
-
-function SafeMarkdown({ children }: { children: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ children: label }) => <span>{label}</span>,
-        img: ({ alt }) => <span>{alt ?? ""}</span>,
-        p: ({ children: value }) => <p className="mb-2 last:mb-0">{value}</p>,
-        ul: ({ children: value }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{value}</ul>,
-        ol: ({ children: value }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{value}</ol>,
-        code: ({ children: value }) => <code className="rounded bg-gray-100 px-1 font-mono text-[11px]">{value}</code>,
-      }}
-    >
-      {children}
-    </ReactMarkdown>
-  );
+function isDocxDocument(d: {
+    file_type?: string | null;
+    filename?: string;
+}): boolean {
+    const ft = (d.file_type ?? "").toLowerCase();
+    if (ft === "docx" || ft === "doc") return true;
+    const ext = d.filename?.split(".").pop()?.toLowerCase();
+    return ext === "docx" || ext === "doc";
 }
 
+interface Props {
+    cell: TabularCell;
+    document: Document;
+    documents: Document[];
+    column: ColumnConfig;
+    columns: ColumnConfig[];
+    onClose: () => void;
+    onNavigate: (documentId: string, columnIndex: number) => void;
+    onRegenerate?: () => Promise<void>;
+    /** If true, open the document panel immediately */
+    displayDocument?: boolean;
+    /** Quote to highlight when opening document panel */
+    citationQuote?: string;
+    /** Page to scroll to when opening document panel */
+    citationPage?: number;
+    /** Spreadsheet worksheet containing the cited cell */
+    citationSheet?: string;
+    /** Spreadsheet A1 cell address or range */
+    citationCell?: string;
+    /** One-based citation number shown in the cell content */
+    citationRef?: number;
+}
+
+type TRPanelCitation = {
+    quote: string;
+    page?: number;
+    sheet?: string;
+    cell?: string;
+    citationRef?: number;
+};
+
+const FLAG_BADGE: Record<string, string> = {
+    green: "bg-emerald-600 backdrop-blur-md border border-emerald-300/20 text-white shadow-md",
+    grey: "bg-slate-500 backdrop-blur-md border border-slate-300/20 text-white shadow-md",
+    yellow: "bg-amber-500 backdrop-blur-md border border-amber-300/20 text-white shadow-md",
+    red: "bg-red-600 backdrop-blur-md border border-red-300/20 text-white shadow-md",
+};
+
+const MIN_DOCUMENT_PANE_WIDTH = 420;
+const DEFAULT_DOCUMENT_PANE_WIDTH = 600;
+const MAX_DOCUMENT_PANE_WIDTH = 1000;
+const INFO_PANE_WIDTH = 300;
+
+// ---------------------------------------------------------------------------
+// TRSidePanel
+// ---------------------------------------------------------------------------
+
 export function TRSidePanel({
-  cell,
-  document,
-  column,
-  columns,
-  busy = false,
-  onClose,
-  onNavigate,
-  onRegenerate,
-  onCancel,
-  onClearDocument,
-}: {
-  cell: VeraTabularCell;
-  document: VeraDocumentWire;
-  column: VeraTabularColumn;
-  columns: VeraTabularColumn[];
-  busy?: boolean;
-  onClose: () => void;
-  onNavigate: (columnIndex: number) => void;
-  onRegenerate: () => Promise<void> | void;
-  onCancel: () => Promise<void> | void;
-  onClearDocument: () => Promise<void> | void;
-}) {
-  const { t, formatDate } = useI18n();
-  const ordered = [...columns].sort((left, right) => left.index - right.index);
-  const position = ordered.findIndex((item) => item.index === column.index);
-  const previous = position > 0 ? ordered[position - 1] : undefined;
-  const next = position >= 0 && position < ordered.length - 1
-    ? ordered[position + 1]
-    : undefined;
+    cell,
+    document: doc,
+    documents,
+    column,
+    columns,
+    onClose,
+    onNavigate,
+    onRegenerate,
+    displayDocument = false,
+    citationQuote,
+    citationPage,
+    citationSheet,
+    citationCell,
+    citationRef,
+}: Props) {
+    const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
+    const currentPos = sortedColumns.findIndex((c) => c.index === column.index);
+    const previousColumn =
+        currentPos > 0 ? sortedColumns[currentPos - 1] : null;
+    const nextColumn =
+        currentPos >= 0 && currentPos < sortedColumns.length - 1
+            ? sortedColumns[currentPos + 1]
+            : null;
+    const currentDocumentPos = documents.findIndex(
+        (candidate) => candidate.id === doc.id,
+    );
+    const previousDocument =
+        currentDocumentPos > 0 ? documents[currentDocumentPos - 1] : null;
+    const nextDocument =
+        currentDocumentPos >= 0 && currentDocumentPos < documents.length - 1
+            ? documents[currentDocumentPos + 1]
+            : null;
+    const [regenerating, setRegenerating] = useState(false);
+    const [documentPaneOpen, setDocumentPaneOpen] = useState(displayDocument);
+    const [documentPaneWidth, setDocumentPaneWidth] = useState(
+        DEFAULT_DOCUMENT_PANE_WIDTH,
+    );
+    const panelRef = useRef<HTMLDivElement>(null);
+    const resizePointerId = useRef<number | null>(null);
+    const resizeStartX = useRef(0);
+    const resizeStartWidth = useRef(DEFAULT_DOCUMENT_PANE_WIDTH);
 
-  return (
-    <aside
-      role="dialog"
-      aria-modal="false"
-      aria-label={t("tabular.cell.details")}
-      className="fixed bottom-3 right-3 top-3 z-[150] flex w-[min(92vw,390px)] flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/94 shadow-[-8px_0_30px_rgba(15,23,42,0.12)] backdrop-blur-2xl"
-    >
-      <header className="flex min-h-12 shrink-0 items-center gap-2 border-b border-gray-100 px-4">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => previous && onNavigate(previous.index)}
-            disabled={!previous}
-            title={previous?.name}
-            className="rounded-md p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="min-w-12 text-center text-xs tabular-nums text-gray-500">
-            {position + 1} / {ordered.length}
-          </span>
-          <button
-            type="button"
-            onClick={() => next && onNavigate(next.index)}
-            disabled={!next}
-            title={next?.name}
-            className="rounded-md p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-        <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">
-          {t(`tabular.status.${cell.status}`)}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t("common.actions.close")}
-          className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-800"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
+    // Internal state — initialised from props, also toggled by badge clicks inside the panel
+    const [docCitation, setDocCitation] = useState<TRPanelCitation | undefined>(
+        displayDocument && citationQuote
+            ? {
+                  quote: citationQuote,
+                  page: citationPage,
+                  sheet: citationSheet,
+                  cell: citationCell,
+                  citationRef,
+              }
+            : undefined,
+    );
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <h2 className="font-serif text-xl text-gray-950">{column.name}</h2>
-        <p className="mt-1 truncate text-xs text-gray-500" title={document.filename}>
-          {document.filename}
-        </p>
+    // Re-sync when the panel opens for a different cell or citation
+    useEffect(() => {
+        setDocCitation(
+            displayDocument && citationQuote
+                ? {
+                      quote: citationQuote,
+                      page: citationPage,
+                      sheet: citationSheet,
+                      cell: citationCell,
+                      citationRef,
+                  }
+                : undefined,
+        );
+        setDocumentPaneOpen(displayDocument);
+    }, [
+        cell.id,
+        displayDocument,
+        citationCell,
+        citationPage,
+        citationQuote,
+        citationRef,
+        citationSheet,
+    ]);
 
-        {cell.content?.flag && (
-          <span className={`mt-4 inline-flex rounded-full px-2.5 py-1 text-[10px] font-medium ${FLAG_BADGE[cell.content.flag]}`}>
-            {t(`tabular.flags.${cell.content.flag}`)}
-          </span>
-        )}
+    useEffect(
+        () => () => {
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+        },
+        [],
+    );
 
-        {cell.error && (
-          <section className="mt-5 rounded-xl border border-red-100 bg-red-50 p-3">
-            <h3 className="text-xs font-medium text-red-800">{cell.error.code}</h3>
-            <p className="mt-1 text-xs leading-relaxed text-red-700">
-              {cell.error.message}
-            </p>
-            <p className="mt-2 text-[10px] text-red-600">
-              {cell.error.retryable
-                ? t("tabular.cell.retryable")
-                : t("tabular.cell.notRetryable")}
-            </p>
-          </section>
-        )}
+    useEffect(() => {
+        const handleOutsidePointerDown = (event: PointerEvent) => {
+            const target = event.target;
+            if (
+                !(target instanceof Node) ||
+                panelRef.current?.contains(target)
+            ) {
+                return;
+            }
+            onClose();
+        };
 
-        <section className="mt-5">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            {t("tabular.cell.result")}
-          </h3>
-          <div className="mt-2 text-sm leading-relaxed text-gray-800">
-            {cell.content?.summary ? (
-              <SafeMarkdown>{cell.content.summary}</SafeMarkdown>
-            ) : (
-              <span className="text-gray-400">—</span>
+        document.addEventListener("pointerdown", handleOutsidePointerDown);
+        return () =>
+            document.removeEventListener(
+                "pointerdown",
+                handleOutsidePointerDown,
+            );
+    }, [onClose]);
+
+    function handleDocumentResizePointerDown(
+        event: ReactPointerEvent<HTMLDivElement>,
+    ) {
+        event.preventDefault();
+        resizePointerId.current = event.pointerId;
+        resizeStartX.current = event.clientX;
+        resizeStartWidth.current = documentPaneWidth;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+    }
+
+    function handleDocumentResizePointerMove(
+        event: ReactPointerEvent<HTMLDivElement>,
+    ) {
+        if (resizePointerId.current !== event.pointerId) return;
+
+        const viewportMax = window.innerWidth - INFO_PANE_WIDTH - 2 * 12 - 24;
+        const maxWidth = Math.max(
+            MIN_DOCUMENT_PANE_WIDTH,
+            Math.min(MAX_DOCUMENT_PANE_WIDTH, viewportMax),
+        );
+        const nextWidth =
+            resizeStartWidth.current + (resizeStartX.current - event.clientX);
+
+        setDocumentPaneWidth(
+            Math.min(maxWidth, Math.max(MIN_DOCUMENT_PANE_WIDTH, nextWidth)),
+        );
+    }
+
+    function handleDocumentResizePointerEnd(
+        event: ReactPointerEvent<HTMLDivElement>,
+    ) {
+        if (resizePointerId.current !== event.pointerId) return;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        resizePointerId.current = null;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+    }
+
+    function handleCitationOpen(citation: TRPanelCitation) {
+        setDocCitation(citation);
+        setDocumentPaneOpen(true);
+    }
+
+    const { processed: summaryText, citations: summaryCitations } =
+        preprocessCitations(cell.content?.summary ?? "");
+    const { processed: reasoningText, citations: reasoningCitations } =
+        preprocessCitations(cell.content?.reasoning ?? "");
+
+    return (
+        <div
+            ref={panelRef}
+            className={cn(
+                "fixed z-100 flex flex-row",
+                LIQUID_PANEL_SURFACE_CLASS,
+                "right-3 top-3 bottom-3 overflow-hidden",
             )}
-          </div>
-        </section>
-
-        {cell.content?.reasoning && (
-          <section className="mt-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-              {t("tabular.cell.reasoning")}
-            </h3>
-            <div className="mt-2 text-xs leading-relaxed text-gray-600">
-              <SafeMarkdown>{cell.content.reasoning}</SafeMarkdown>
-            </div>
-          </section>
-        )}
-
-        <section className="mt-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            {t("tabular.cell.sources", { count: cell.sources.length })}
-          </h3>
-          {cell.sources.length === 0 ? (
-            <p className="mt-2 text-xs text-gray-400">{t("tabular.cell.noSources")}</p>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {cell.sources.map((source, index) => {
-                const page = tabularSourcePageLabel(source);
-                const offsets = tabularSourceOffsetLabel(source);
-                return (
-                  <article
-                    key={`${sourceIdentity(source)}:${index}`}
-                    className="rounded-xl border border-gray-100 bg-gray-50/80 p-3"
-                  >
-                    <div className="flex items-center gap-2 text-[10px] font-medium text-gray-500">
-                      <span>{t("tabular.cell.sourceOrdinal", { index: index + 1 })}</span>
-                      {page && <span>{t("tabular.cell.page", { page })}</span>}
-                      {offsets && <span>{t("tabular.cell.offsets", { offsets })}</span>}
-                    </div>
-                    {source.quote && (
-                      <blockquote className="mt-2 border-l-2 border-gray-200 pl-2 text-xs leading-relaxed text-gray-700">
-                        {source.quote}
-                      </blockquote>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <dl className="mt-6 divide-y divide-gray-100 text-[11px] text-gray-500">
-          <div className="flex justify-between gap-4 py-2">
-            <dt>{t("tabular.cell.attempt")}</dt>
-            <dd>{cell.attempt}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-2">
-            <dt>{t("common.fields.updatedAt")}</dt>
-            <dd>{formatDate(cell.updated_at)}</dd>
-          </div>
-        </dl>
-      </div>
-
-      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-gray-100 p-3">
-        <button
-          type="button"
-          onClick={() => void onClearDocument()}
-          disabled={busy || cell.status === "generating"}
-          className="inline-flex items-center gap-1.5 px-2 py-1.5 text-xs text-red-600 hover:text-red-800 disabled:opacity-40"
         >
-          <Trash2 className="h-3.5 w-3.5" />
-          {t("tabular.cell.clearDocument")}
+            {/* Resizable document panel — left */}
+            {documentPaneOpen && (
+                <div
+                    className="relative flex shrink-0 flex-col border-r border-white/30 px-3 pb-3"
+                    style={{ width: documentPaneWidth }}
+                >
+                    <div
+                        onPointerDown={handleDocumentResizePointerDown}
+                        onPointerMove={handleDocumentResizePointerMove}
+                        onPointerUp={handleDocumentResizePointerEnd}
+                        onPointerCancel={handleDocumentResizePointerEnd}
+                        className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-blue-400/60"
+                        title="Resize document pane"
+                    />
+                    {/* Doc header */}
+                    <div className="flex min-h-11 shrink-0 items-center gap-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <FileTypeIcon
+                                fileType={doc.file_type ?? doc.filename}
+                                className="h-4 w-4"
+                            />
+                            <div
+                                className="min-w-0 truncate text-sm font-medium text-gray-700"
+                                title={doc.filename}
+                            >
+                                {doc.filename}
+                            </div>
+                        </div>
+                    </div>
+                    {/* Quote row */}
+                    {docCitation?.quote && (
+                        <div className="-mx-3 shrink-0 py-2">
+                            <CitationQuotesHeader
+                                quotes={[
+                                    {
+                                        id: citationKey(cell.id, docCitation),
+                                        quote: docCitation.quote,
+                                        inlineDetail:
+                                            formatCitationLocation(docCitation),
+                                        citationText: `${doc.filename}, ${formatCitationLocation(docCitation)}`,
+                                    },
+                                ]}
+                                activeQuoteId={citationKey(
+                                    cell.id,
+                                    docCitation,
+                                )}
+                                citationRef={docCitation.citationRef}
+                                citationText={`${doc.filename}, ${formatCitationLocation(docCitation)}`}
+                            />
+                        </div>
+                    )}
+                    {isDocxDocument(doc) && !doc.pdf_storage_path ? (
+                        <DocxView
+                            documentId={doc.id}
+                            quotes={
+                                docCitation
+                                    ? [
+                                          {
+                                              page: docCitation.page,
+                                              quote: docCitation.quote,
+                                          },
+                                      ]
+                                    : undefined
+                            }
+                        />
+                    ) : isSpreadsheetFilename(doc.filename ?? "") ? (
+                        <SpreadsheetView
+                            documentId={doc.id}
+                            highlightCells={
+                                docCitation?.sheet || docCitation?.cell
+                                    ? [
+                                          {
+                                              sheet: docCitation.sheet,
+                                              cell: docCitation.cell,
+                                          },
+                                      ]
+                                    : undefined
+                            }
+                        />
+                    ) : (
+                        <PdfView
+                            doc={{ document_id: doc.id }}
+                            quote={docCitation?.quote}
+                            fallbackPage={docCitation?.page}
+                        />
+                    )}
+                </div>
+            )}
+
+            {/* Info column — right, 300px fixed */}
+            <div className="flex w-[300px] shrink-0 flex-col overflow-hidden">
+                {/* Header */}
+                <div className="mb-2 flex min-h-11 shrink-0 items-center justify-end gap-1.5 border-b border-white/30 px-3">
+                    <button
+                        type="button"
+                        onClick={() => setDocumentPaneOpen((open) => !open)}
+                        className={cn(
+                            "mr-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-white/75 hover:text-gray-700",
+                            documentPaneOpen && "bg-white/55 text-gray-700",
+                        )}
+                        aria-label={
+                            documentPaneOpen
+                                ? "Collapse document pane"
+                                : "Expand document pane"
+                        }
+                        title={
+                            documentPaneOpen
+                                ? "Collapse document pane"
+                                : "Expand document pane"
+                        }
+                        aria-pressed={documentPaneOpen}
+                    >
+                        <PanelLeft className="h-4 w-4" />
+                    </button>
+                    {onRegenerate && (
+                        <button
+                            onClick={async () => {
+                                setRegenerating(true);
+                                try {
+                                    await onRegenerate();
+                                } finally {
+                                    setRegenerating(false);
+                                }
+                            }}
+                            disabled={regenerating}
+                            title="Regenerate"
+                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40"
+                        >
+                            {regenerating ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <RefreshCw className="h-4 w-4" />
+                            )}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700"
+                        aria-label="Close"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+
+                {/* Analysis panel */}
+                <div className="flex-1 overflow-y-auto">
+                    <div className="pb-2 px-5">
+                        {/* Document field */}
+                        <div className="mb-4">
+                            <div className="mb-3 text-xs font-medium text-gray-900">
+                                Document
+                            </div>
+                            <div className="flex min-h-6 items-center gap-1.5">
+                                <FileTypeIcon
+                                    fileType={doc.file_type ?? doc.filename}
+                                    className="h-3 w-3"
+                                />
+                                <div
+                                    className="min-w-0 flex-1 truncate text-xs leading-6 text-gray-800"
+                                    title={doc.filename}
+                                >
+                                    {doc.filename}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Column field */}
+                        <div className="mb-4">
+                            <div className="mb-3 text-xs font-medium text-gray-900">
+                                Column
+                            </div>
+                            <div className="min-h-6 truncate text-xs leading-6 text-gray-800">
+                                {column.name}
+                            </div>
+                        </div>
+
+                        {/* Flag section */}
+                        {cell.content?.flag && (
+                            <div className="mb-5">
+                                <h4 className="mb-2 text-xs font-medium text-gray-900">
+                                    Flag
+                                </h4>
+                                <span
+                                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${FLAG_BADGE[cell.content.flag] ?? FLAG_BADGE.grey}`}
+                                >
+                                    {cell.content.flag.charAt(0).toUpperCase() +
+                                        cell.content.flag.slice(1)}
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        <div className="mb-6">
+                            <h4 className="mb-2 text-xs font-medium text-gray-900">
+                                Results
+                            </h4>
+                            <div className="text-xs leading-relaxed text-slate-600">
+                                <MarkdownContent
+                                    citations={summaryCitations}
+                                    onCitationClick={handleCitationOpen}
+                                    column={column}
+                                >
+                                    {summaryText || "—"}
+                                </MarkdownContent>
+                            </div>
+                        </div>
+
+                        {/* Reasoning */}
+                        {cell.content?.reasoning && (
+                            <div>
+                                <h4 className="mb-2 text-xs font-medium text-gray-900">
+                                    Reasoning
+                                </h4>
+                                <div className="text-xs leading-relaxed text-slate-600">
+                                    <MarkdownContent
+                                        citations={reasoningCitations}
+                                        onCitationClick={handleCitationOpen}
+                                        citationOffset={summaryCitations.length}
+                                        column={column}
+                                        inline
+                                    >
+                                        {reasoningText}
+                                    </MarkdownContent>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <div className="flex shrink-0 justify-center bg-white/25 pb-7 pt-1">
+                    <div className="grid grid-cols-3 grid-rows-3 gap-0.5">
+                        <CellNavigatorButton
+                            className="col-start-2 row-start-1"
+                            label="Previous document"
+                            title={previousDocument?.filename}
+                            disabled={!previousDocument}
+                            onClick={() =>
+                                previousDocument &&
+                                onNavigate(previousDocument.id, column.index)
+                            }
+                        >
+                            <ChevronUp className="h-4 w-4" />
+                        </CellNavigatorButton>
+                        <CellNavigatorButton
+                            className="col-start-1 row-start-2"
+                            label="Previous column"
+                            title={previousColumn?.name}
+                            disabled={!previousColumn}
+                            onClick={() =>
+                                previousColumn &&
+                                onNavigate(doc.id, previousColumn.index)
+                            }
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </CellNavigatorButton>
+                        <div className="col-start-2 row-start-2 h-7 w-7 rounded-md bg-white/35" />
+                        <CellNavigatorButton
+                            className="col-start-3 row-start-2"
+                            label="Next column"
+                            title={nextColumn?.name}
+                            disabled={!nextColumn}
+                            onClick={() =>
+                                nextColumn &&
+                                onNavigate(doc.id, nextColumn.index)
+                            }
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </CellNavigatorButton>
+                        <CellNavigatorButton
+                            className="col-start-2 row-start-3"
+                            label="Next document"
+                            title={nextDocument?.filename}
+                            disabled={!nextDocument}
+                            onClick={() =>
+                                nextDocument &&
+                                onNavigate(nextDocument.id, column.index)
+                            }
+                        >
+                            <ChevronDown className="h-4 w-4" />
+                        </CellNavigatorButton>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function CellNavigatorButton({
+    label,
+    title,
+    disabled,
+    onClick,
+    className,
+    children,
+}: {
+    label: string;
+    title?: string;
+    disabled: boolean;
+    onClick: () => void;
+    className?: string;
+    children: ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={label}
+            title={title ? `${label}: ${title}` : label}
+            className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md text-gray-600 transition-colors disabled:cursor-default disabled:opacity-25",
+                APP_SURFACE_HOVER_CLASS,
+                APP_SURFACE_PRESSED_CLASS,
+                className,
+            )}
+        >
+            {children}
         </button>
-        {cell.status === "generating" ? (
-          <button
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Markdown renderer
+// ---------------------------------------------------------------------------
+
+function formatCitationLocation(citation: ParsedCitation): string {
+    if (citation.sheet && citation.cell) {
+        return `${citation.sheet}, cell ${citation.cell}`;
+    }
+    return `Page ${citation.page ?? 1}`;
+}
+
+function citationKey(cellId: string, citation: ParsedCitation): string {
+    const location = citation.sheet
+        ? `${citation.sheet}:${citation.cell ?? ""}`
+        : `page:${citation.page ?? 1}`;
+    return `tr-cell:${cellId}:${location}`;
+}
+
+function CitationBadge({
+    index,
+    citation,
+    onClick,
+}: {
+    index: number;
+    citation: ParsedCitation;
+    onClick: (citation: TRPanelCitation) => void;
+}) {
+    return (
+        <button
             type="button"
-            onClick={() => void onCancel()}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-          >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-            {t("tabular.cell.cancel")}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void onRegenerate()}
-            disabled={busy || (cell.status === "error" && !cell.error?.retryable)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gray-950 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-40"
-          >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            {cell.status === "error" ? t("tabular.retryCell") : t("tabular.cell.regenerate")}
-          </button>
-        )}
-      </footer>
-    </aside>
-  );
+            data-page={citation.page}
+            data-sheet={citation.sheet}
+            data-cell={citation.cell}
+            data-quote={citation.quote}
+            title={`${formatCitationLocation(citation)}: "${citation.quote}"`}
+            onClick={() =>
+                onClick({
+                    quote: citation.quote,
+                    page: citation.page,
+                    sheet: citation.sheet,
+                    cell: citation.cell,
+                    citationRef: index + 1,
+                })
+            }
+            className="inline-flex items-center justify-center rounded-full bg-gray-200 w-3.5 h-3.5 text-[9px] font-medium text-gray-700 align-super cursor-pointer hover:bg-gray-300 transition-colors"
+        >
+            {index + 1}
+        </button>
+    );
+}
+
+function MarkdownContent({
+    children,
+    citations,
+    onCitationClick,
+    citationOffset = 0,
+    column,
+    inline,
+}: {
+    children: string;
+    citations: ParsedCitation[];
+    onCitationClick: (citation: TRPanelCitation) => void;
+    inline?: boolean;
+    citationOffset?: number;
+    column?: ColumnConfig;
+}) {
+    if (!children) return null;
+
+    const pills: string[] = [];
+    let processed = children.replace(/\[\[([^\]]+)\]\]/g, (_, content) => {
+        const idx = pills.length;
+        pills.push(content);
+        return `\`§p${idx}§\``;
+    });
+    processed = processed.replace(/§(\d+)§/g, (_, idx) => `\`§c${idx}§\``);
+
+    return (
+        <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+                p: ({ node, ...props }) =>
+                    inline ? (
+                        <span {...props} />
+                    ) : (
+                        <p
+                            className="mb-1.5 last:mb-0 leading-relaxed"
+                            {...props}
+                        />
+                    ),
+                ul: ({ node, ...props }) => (
+                    <ul
+                        className="list-disc pl-4 space-y-0.5 mb-1.5 last:mb-0"
+                        {...props}
+                    />
+                ),
+                ol: ({ node, ...props }) => (
+                    <ol
+                        className="list-decimal pl-4 space-y-0.5 mb-1.5 last:mb-0"
+                        {...props}
+                    />
+                ),
+                li: ({ node, ...props }) => <li {...props} />,
+                strong: ({ node, ...props }) => (
+                    <strong className="font-semibold" {...props} />
+                ),
+                em: ({ node, ...props }) => (
+                    <em className="italic" {...props} />
+                ),
+                a: ({ node, href, children, ...props }) => (
+                    <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 underline"
+                        {...props}
+                    >
+                        {children}
+                    </a>
+                ),
+                code: ({ node, children: codeChildren, ...props }) => {
+                    const t = String(codeChildren);
+                    const citMatch = t.match(/^§c(\d+)§$/);
+                    if (citMatch) {
+                        const idx = parseInt(citMatch[1]);
+                        const citation = citations[idx];
+                        if (citation) {
+                            return (
+                                <CitationBadge
+                                    index={citationOffset + idx}
+                                    citation={citation}
+                                    onClick={onCitationClick}
+                                />
+                            );
+                        }
+                    }
+                    const pillMatch = t.match(/^§p(\d+)§$/);
+                    if (pillMatch) {
+                        const content = pills[parseInt(pillMatch[1])];
+                        if (content !== undefined) {
+                            return (
+                                <span
+                                    className={`inline-block rounded-full px-1.5 py-0.5 text-[11px] font-medium leading-none ${getPillClass(content, column)}`}
+                                >
+                                    {content}
+                                </span>
+                            );
+                        }
+                    }
+                    return (
+                        <code
+                            className="bg-gray-100 px-1 py-0.5 rounded text-[11px] font-mono"
+                            {...props}
+                        >
+                            {codeChildren}
+                        </code>
+                    );
+                },
+            }}
+        >
+            {processed}
+        </ReactMarkdown>
+    );
 }

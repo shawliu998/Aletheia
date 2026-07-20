@@ -1,101 +1,155 @@
 "use client";
 
-// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/shared/useDirectoryData.ts
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-    getVeraProject,
-    listVeraProjects,
-    listVeraStandaloneDocuments,
-} from "@/app/lib/veraApi";
-import type {
-    VeraDocumentWire,
-    VeraProjectWire,
-} from "@/app/lib/veraWireTypes";
+    getLibrary,
+    getProject,
+    listProjects,
+} from "@/app/lib/mikeApi";
+import type { Document, LibraryFolder, Project } from "./types";
 
-const CACHE_TTL_MS = 30_000;
+export type DirectoryTab = "files" | "templates" | "projects";
 
-interface DirectoryCache {
-    standaloneDocuments: VeraDocumentWire[];
-    projects: VeraProjectWire[];
-    fetchedAt: number;
+const EMPTY_LOADING: Record<DirectoryTab, boolean> = {
+    files: false,
+    templates: false,
+    projects: false,
+};
+
+const EMPTY_LOADED: Record<DirectoryTab, boolean> = {
+    files: false,
+    templates: false,
+    projects: false,
+};
+
+function sortDocuments(docs: Document[]) {
+    return [...docs].sort((a, b) =>
+        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+    );
 }
 
-let cache: DirectoryCache | null = null;
-
-export function invalidateDirectoryCache() {
-    cache = null;
+async function loadFiles() {
+    const files = await getLibrary("files");
+    return {
+        documents: sortDocuments(files.documents),
+        folders: files.folders,
+    };
 }
 
-export function useDirectoryData(enabled: boolean) {
-    const [loading, setLoading] = useState(enabled);
-    const [error, setError] = useState<unknown>(null);
-    const [standaloneDocuments, setStandaloneDocuments] = useState<
-        VeraDocumentWire[]
-    >([]);
-    const [projects, setProjects] = useState<VeraProjectWire[]>([]);
+async function loadTemplates() {
+    const templates = await getLibrary("templates");
+    return {
+        documents: sortDocuments(templates.documents),
+        folders: templates.folders,
+    };
+}
+
+async function loadProjects() {
+    const projects = await listProjects();
+    const fullProjects = await Promise.all(
+        projects.map((project) => getProject(project.id)),
+    );
+    const projectCounts = new Map(
+        projects.map((project) => [project.id, project.document_count ?? 0]),
+    );
+    return fullProjects.map((project) => ({
+        ...project,
+        document_count:
+            project.documents?.length ?? projectCounts.get(project.id) ?? 0,
+    }));
+}
+
+export function useDirectoryData(
+    enabled: boolean,
+    initialTab: DirectoryTab = "files",
+) {
+    const [standaloneDocuments, setStandaloneDocuments] = useState<Document[]>([]);
+    const [templateDocuments, setTemplateDocuments] = useState<Document[]>([]);
+    const [fileFolders, setFileFolders] = useState<LibraryFolder[]>([]);
+    const [templateFolders, setTemplateFolders] = useState<LibraryFolder[]>([]);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [loadingTabs, setLoadingTabs] =
+        useState<Record<DirectoryTab, boolean>>(EMPTY_LOADING);
+    const loadingTabsRef = useRef<Record<DirectoryTab, boolean>>({
+        ...EMPTY_LOADING,
+    });
+    const loadedTabsRef = useRef<Record<DirectoryTab, boolean>>({
+        ...EMPTY_LOADED,
+    });
+
+    const loadTab = useCallback(
+        async (tab: DirectoryTab) => {
+            if (
+                !enabled ||
+                loadingTabsRef.current[tab] ||
+                loadedTabsRef.current[tab]
+            ) {
+                return;
+            }
+
+            loadingTabsRef.current = {
+                ...loadingTabsRef.current,
+                [tab]: true,
+            };
+            setLoadingTabs((prev) => ({ ...prev, [tab]: true }));
+            try {
+                if (tab === "files") {
+                    const files = await loadFiles();
+                    setStandaloneDocuments(files.documents);
+                    setFileFolders(files.folders);
+                } else if (tab === "templates") {
+                    const templates = await loadTemplates();
+                    setTemplateDocuments(templates.documents);
+                    setTemplateFolders(templates.folders);
+                } else {
+                    setProjects(await loadProjects());
+                }
+                loadedTabsRef.current = {
+                    ...loadedTabsRef.current,
+                    [tab]: true,
+                };
+            } catch {
+                if (tab === "files") {
+                    setStandaloneDocuments([]);
+                    setFileFolders([]);
+                } else if (tab === "templates") {
+                    setTemplateDocuments([]);
+                    setTemplateFolders([]);
+                } else {
+                    setProjects([]);
+                }
+            } finally {
+                loadingTabsRef.current = {
+                    ...loadingTabsRef.current,
+                    [tab]: false,
+                };
+                setLoadingTabs((prev) => ({ ...prev, [tab]: false }));
+            }
+        },
+        [enabled],
+    );
 
     useEffect(() => {
-        if (!enabled) {
-            return;
-        }
-
-        const controller = new AbortController();
-        const cached = cache;
-        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-            queueMicrotask(() => {
-                if (controller.signal.aborted) return;
-                setStandaloneDocuments(cached.standaloneDocuments);
-                setProjects(cached.projects);
-                setError(null);
-                setLoading(false);
-            });
-            return () => controller.abort();
-        }
-
+        if (!enabled) return;
+        let cancelled = false;
         queueMicrotask(() => {
-            if (!controller.signal.aborted) setLoading(true);
+            if (cancelled) return;
+            void loadTab(initialTab);
         });
-        Promise.all([
-            listVeraProjects(controller.signal),
-            listVeraStandaloneDocuments({}, controller.signal),
-        ])
-            .then(async ([projectRows, documentRows]) => {
-                const fullProjects = await Promise.all(
-                    projectRows.map((project) =>
-                        getVeraProject(project.id, controller.signal),
-                    ),
-                );
-                if (controller.signal.aborted) return;
-                const sortedDocuments = [...documentRows].sort((a, b) =>
-                    (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-                );
-                cache = {
-                    standaloneDocuments: sortedDocuments,
-                    projects: fullProjects,
-                    fetchedAt: Date.now(),
-                };
-                setStandaloneDocuments(sortedDocuments);
-                setProjects(fullProjects);
-                setError(null);
-            })
-            .catch((reason: unknown) => {
-                if (controller.signal.aborted) return;
-                setStandaloneDocuments([]);
-                setProjects([]);
-                setError(reason);
-            })
-            .finally(() => {
-                if (!controller.signal.aborted) setLoading(false);
-            });
 
-        return () => controller.abort();
-    }, [enabled]);
+        return () => {
+            cancelled = true;
+        };
+    }, [enabled, initialTab, loadTab]);
 
     return {
-        loading: enabled && loading,
-        error,
+        loading: loadingTabs[initialTab],
+        loadingTabs,
         standaloneDocuments,
+        templateDocuments,
+        fileFolders,
+        templateFolders,
         projects,
+        loadTab,
     };
 }

@@ -1,176 +1,214 @@
 "use client";
 
-// Local Vera adaptation of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/contexts/ChatHistoryContext.tsx
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+    type ReactNode,
 } from "react";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
-  createVeraAssistantChat,
-  deleteVeraAssistantChat,
-  listVeraAssistantChats,
-  renameVeraAssistantChat,
-  type VeraAssistantChat,
-} from "@/app/lib/veraAssistantApi";
+    createChat,
+    deleteChat,
+    listChats,
+    renameChat,
+} from "@/app/lib/mikeApi";
+import type { Chat, Message } from "@/app/components/shared/types";
+
+interface ChatHistoryContextType {
+    chats: Chat[] | null;
+    hasMoreChats: boolean;
+    currentChatId: string | null;
+    setCurrentChatId: (chatId: string | null) => void;
+    loadChats: () => Promise<void>;
+    loadMoreChats: () => void;
+    saveChat: (projectId?: string) => Promise<string | null>;
+    renameChat: (chatId: string, title: string) => Promise<void>;
+    newChatMessages: Message[] | null;
+    setNewChatMessages: (messages: Message[] | null) => void;
+    replaceChatId: (
+        oldChatId: string,
+        newChatId: string,
+        title?: string,
+    ) => void;
+    deleteChat: (chatId: string) => Promise<void>;
+}
+
+const ChatHistoryContext = createContext<ChatHistoryContextType | undefined>(
+    undefined,
+);
 
 const INITIAL_CHAT_LIMIT = 20;
 const CHAT_LIMIT_INCREMENT = 10;
 
-interface ChatHistoryContextValue {
-  chats: VeraAssistantChat[] | null;
-  hasMoreChats: boolean;
-  loading: boolean;
-  error: unknown;
-  currentChatId: string | null;
-  setCurrentChatId: (chatId: string | null) => void;
-  loadChats: () => Promise<void>;
-  loadMoreChats: () => void;
-  saveChat: (input?: {
-    projectId?: string | null;
-    modelProfileId?: string | null;
-  }) => Promise<string>;
-  renameChat: (chatId: string, title: string) => Promise<void>;
-  deleteChat: (chatId: string) => Promise<void>;
-}
-
-const ChatHistoryContext = createContext<ChatHistoryContextValue | null>(null);
-
-function isAbort(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
 export function ChatHistoryProvider({ children }: { children: ReactNode }) {
-  const [chats, setChats] = useState<VeraAssistantChat[] | null>(null);
-  const [chatLimit, setChatLimit] = useState(INITIAL_CHAT_LIMIT);
-  const [hasMoreChats, setHasMoreChats] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<unknown>(null);
-  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
-  const requestSequence = useRef(0);
+    const { user } = useAuth();
+    const [chats, setChats] = useState<Chat[] | null>(null);
+    const [chatLimit, setChatLimit] = useState(INITIAL_CHAT_LIMIT);
+    const [hasMoreChats, setHasMoreChats] = useState(false);
+    const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+    const [newChatMessages, setNewChatMessages] = useState<Message[] | null>(
+        null,
+    );
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    const sequence = ++requestSequence.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await listVeraAssistantChats(
-        { limit: chatLimit + 1 },
-        signal,
-      );
-      if (signal?.aborted || sequence !== requestSequence.current) return;
-      setChats(data.slice(0, chatLimit));
-      setHasMoreChats(data.length > chatLimit);
-    } catch (reason) {
-      if (signal?.aborted || isAbort(reason)) return;
-      if (sequence !== requestSequence.current) return;
-      setChats([]);
-      setHasMoreChats(false);
-      setError(reason);
-    } finally {
-      if (!signal?.aborted && sequence === requestSequence.current) {
-        setLoading(false);
-      }
-    }
-  }, [chatLimit]);
+    const loadChats = useCallback(async () => {
+        if (!user) {
+            setChats([]);
+            setHasMoreChats(false);
+            return;
+        }
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+        try {
+            const data = await listChats({ limit: chatLimit + 1 });
+            setChats(data.slice(0, chatLimit));
+            setHasMoreChats(data.length > chatLimit);
+        } catch {
+            setChats([]);
+            setHasMoreChats(false);
+        }
+    }, [chatLimit, user]);
 
-  const loadChats = useCallback(async () => {
-    await load();
-  }, [load]);
+    useEffect(() => {
+        if (!user) {
+            setChats([]);
+            setChatLimit(INITIAL_CHAT_LIMIT);
+            setHasMoreChats(false);
+            setCurrentChatId(null);
+            return;
+        }
 
-  const loadMoreChats = useCallback(() => {
-    setChatLimit((current) => current + CHAT_LIMIT_INCREMENT);
-  }, []);
+        void loadChats();
+    }, [user, loadChats]);
 
-  const saveChat = useCallback(
-    async (input: {
-      projectId?: string | null;
-      modelProfileId?: string | null;
-    } = {}) => {
-      const { id } = await createVeraAssistantChat(input);
-      await loadChats();
-      setCurrentChatId(id);
-      return id;
-    },
-    [loadChats],
-  );
+    const loadMoreChats = useCallback(() => {
+        setChatLimit((prev) => prev + CHAT_LIMIT_INCREMENT);
+    }, []);
 
-  const renameChat = useCallback(
-    async (chatId: string, title: string) => {
-      await renameVeraAssistantChat(chatId, title);
-      setChats((current) =>
-        (current ?? []).map((chat) =>
-          chat.id === chatId ? { ...chat, title: title.trim() } : chat,
-        ),
-      );
-    },
-    [],
-  );
+    const replaceChatId = useCallback(
+        (oldChatId: string, newChatId: string, title?: string) => {
+            if (!oldChatId || !newChatId || oldChatId === newChatId) {
+                setCurrentChatId(newChatId || oldChatId || null);
+                return;
+            }
 
-  const deleteChat = useCallback(
-    async (chatId: string) => {
-      await deleteVeraAssistantChat(chatId);
-      setChats((current) =>
-        (current ?? []).filter((chat) => chat.id !== chatId),
-      );
-      setCurrentChatId((current) => (current === chatId ? null : current));
-    },
-    [],
-  );
+            setChats((prev) => {
+                if (!prev) return prev;
 
-  const value = useMemo<ChatHistoryContextValue>(
-    () => ({
-      chats,
-      hasMoreChats,
-      loading,
-      error,
-      currentChatId,
-      setCurrentChatId,
-      loadChats,
-      loadMoreChats,
-      saveChat,
-      renameChat,
-      deleteChat,
-    }),
-    [
-      chats,
-      currentChatId,
-      deleteChat,
-      error,
-      hasMoreChats,
-      loadChats,
-      loadMoreChats,
-      loading,
-      renameChat,
-      saveChat,
-    ],
-  );
+                const nextChats = prev.map((chat) =>
+                    chat.id === oldChatId
+                        ? { ...chat, id: newChatId, title: title ?? chat.title }
+                        : chat,
+                );
 
-  return (
-    <ChatHistoryContext.Provider value={value}>
-      {children}
-    </ChatHistoryContext.Provider>
-  );
+                const seen = new Set<string>();
+                return nextChats.filter((chat) => {
+                    if (seen.has(chat.id)) return false;
+                    seen.add(chat.id);
+                    return true;
+                });
+            });
+            setCurrentChatId(newChatId);
+        },
+        [],
+    );
+
+    const saveChat = useCallback(
+        async (projectId?: string): Promise<string | null> => {
+            try {
+                const { id } = await createChat(
+                    projectId ? { project_id: projectId } : undefined,
+                );
+                const now = new Date().toISOString();
+                const newChat: Chat = {
+                    id,
+                    project_id: projectId ?? null,
+                    user_id: user?.id ?? "",
+                    title: null,
+                    created_at: now,
+                };
+                setChats((prev) => [newChat, ...(prev ?? [])]);
+                return id;
+            } catch {
+                return null;
+            }
+        },
+        [user],
+    );
+
+    const renameChatFn = useCallback(
+        async (chatId: string, title: string) => {
+            setChats((prev) =>
+                (prev ?? []).map((c) =>
+                    c.id === chatId ? { ...c, title } : c,
+                ),
+            );
+            try {
+                await renameChat(chatId, title);
+            } catch {
+                void loadChats();
+            }
+        },
+        [loadChats],
+    );
+
+    const deleteChatFn = useCallback(
+        async (chatId: string) => {
+            setChats((prev) => (prev ?? []).filter((c) => c.id !== chatId));
+            if (currentChatId === chatId) setCurrentChatId(null);
+            try {
+                await deleteChat(chatId);
+            } catch {
+                void loadChats();
+            }
+        },
+        [currentChatId, loadChats],
+    );
+
+    const value = useMemo(
+        () => ({
+            chats,
+            hasMoreChats,
+            currentChatId,
+            setCurrentChatId,
+            loadChats,
+            loadMoreChats,
+            saveChat,
+            renameChat: renameChatFn,
+            newChatMessages,
+            setNewChatMessages,
+            replaceChatId,
+            deleteChat: deleteChatFn,
+        }),
+        [
+            chats,
+            hasMoreChats,
+            currentChatId,
+            loadChats,
+            loadMoreChats,
+            saveChat,
+            renameChatFn,
+            newChatMessages,
+            replaceChatId,
+            deleteChatFn,
+        ],
+    );
+
+    return (
+        <ChatHistoryContext.Provider value={value}>
+            {children}
+        </ChatHistoryContext.Provider>
+    );
 }
 
-export function useChatHistoryContext(): ChatHistoryContextValue {
-  const context = useContext(ChatHistoryContext);
-  if (!context) {
-    throw new Error(
-      "useChatHistoryContext must be used within ChatHistoryProvider",
-    );
-  }
-  return context;
+export function useChatHistoryContext() {
+    const context = useContext(ChatHistoryContext);
+    if (!context) {
+        throw new Error(
+            "useChatHistoryContext must be used within a ChatHistoryProvider",
+        );
+    }
+    return context;
 }

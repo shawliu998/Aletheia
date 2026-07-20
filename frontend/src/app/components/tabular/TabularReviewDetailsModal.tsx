@@ -1,174 +1,206 @@
 "use client";
 
-// Adapted from Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/tabular/TabularReviewDetailsModal.tsx
-import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { Modal } from "@/app/components/shared/Modal";
-import { useI18n } from "@/app/i18n";
-import type { VeraModelProfile } from "@/app/lib/veraModelSettingsApi";
-import type { VeraProjectWire } from "@/app/lib/veraWireTypes";
-import type { VeraTabularReview } from "@/app/lib/veraTabularApi";
+import { useEffect, useMemo, useState } from "react";
+import { Modal } from "../modals/Modal";
+import { ModalFieldLabel } from "../modals/ModalFieldLabel";
+import { ModalSelect } from "../modals/ModalSelect";
+import { ModalTextInput } from "../modals/ModalTextInput";
+import type { Project, TabularReview } from "../shared/types";
+
+interface TabularReviewDetailsModalProps {
+    open: boolean;
+    review: TabularReview | null;
+    projects: Project[];
+    canEdit: boolean;
+    lockProject?: boolean;
+    onClose: () => void;
+    onSave: (values: {
+        title: string;
+        projectId?: string | null;
+    }) => Promise<void>;
+}
 
 export function TabularReviewDetailsModal({
-  open,
-  review,
-  projects,
-  models,
-  busy = false,
-  lockProject = false,
-  onClose,
-  onSave,
-}: {
-  open: boolean;
-  review: VeraTabularReview | null;
-  projects: VeraProjectWire[];
-  models: VeraModelProfile[];
-  busy?: boolean;
-  lockProject?: boolean;
-  onClose: () => void;
-  onSave: (input: {
-    title: string;
-    project_id: string;
-    model_profile_id: string;
-  }) => Promise<void>;
-}) {
-  const { t, errorMessage } = useI18n();
-  const [title, setTitle] = useState("");
-  const [projectId, setProjectId] = useState("");
-  const [modelProfileId, setModelProfileId] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const formId = "vera-tabular-review-details";
+    open,
+    review,
+    projects,
+    canEdit,
+    lockProject = false,
+    onClose,
+    onSave,
+}: TabularReviewDetailsModalProps) {
+    const [titleDraft, setTitleDraft] = useState("");
+    const [underProject, setUnderProject] = useState(false);
+    const [selectedProjectId, setSelectedProjectId] = useState("");
+    const [saving, setSaving] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open || !review) return;
-    queueMicrotask(() => {
-      setTitle(review.title);
-      setProjectId(review.project_id ?? "");
-      setModelProfileId(review.model_profile_id ?? "");
-      setSaving(false);
-      setError(null);
-    });
-  }, [open, review]);
+    useEffect(() => {
+        if (!open || !review) return;
+        setTitleDraft(review.title ?? "");
+        setUnderProject(Boolean(review.project_id));
+        setSelectedProjectId(review.project_id ?? "");
+        setSaving(false);
+        setSaved(false);
+        setError(null);
+    }, [open, review]);
 
-  const projectIsValid = projects.some(
-    (project) => project.id === projectId && project.status === "active",
-  );
-  const modelIsValid = models.some((model) => model.id === modelProfileId);
+    const trimmedTitle = titleDraft.trim();
+    const nextProjectId = underProject ? selectedProjectId : null;
+    const projectOptions = useMemo(
+        () =>
+            projects.length
+                ? projects.map((project) => ({
+                      value: project.id,
+                      label:
+                          project.name +
+                          (project.cm_number ? ` (#${project.cm_number})` : ""),
+                  }))
+                : [{ value: "", label: "No projects found" }],
+        [projects],
+    );
+    const hasChanges = useMemo(() => {
+        if (!review) return false;
+        return (
+            trimmedTitle !== (review.title ?? "") ||
+            nextProjectId !== (review.project_id ?? null)
+        );
+    }, [nextProjectId, review, trimmedTitle]);
 
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (
-      !review ||
-      !title.trim() ||
-      !projectIsValid ||
-      !modelIsValid ||
-      saving ||
-      busy
-    ) {
-      return;
+    if (!review) return null;
+
+    async function handleSave() {
+        if (
+            !canEdit ||
+            saving ||
+            !hasChanges ||
+            !trimmedTitle ||
+            (underProject && !selectedProjectId)
+        ) {
+            return;
+        }
+        setSaving(true);
+        setSaved(false);
+        setError(null);
+        try {
+            await onSave({
+                title: trimmedTitle,
+                projectId: nextProjectId,
+            });
+            setSaved(true);
+        } catch {
+            setError("Could not update tabular review details.");
+        } finally {
+            setSaving(false);
+        }
     }
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave({
-        title: title.trim(),
-        project_id: projectId,
-        model_profile_id: modelProfileId,
-      });
-      onClose();
-    } catch (reason) {
-      setError(errorMessage(reason as Error));
-    } finally {
-      setSaving(false);
-    }
-  };
 
-  return (
-    <Modal
-      open={open}
-      onClose={() => {
-        if (!saving && !busy) onClose();
-      }}
-      breadcrumbs={[t("tabular.title"), t("tabular.details.title")]}
-      primaryAction={{
-        label: saving ? t("common.status.saving") : t("common.actions.save"),
-        type: "submit",
-        form: formId,
-        disabled:
-          !review ||
-          !title.trim() ||
-          !projectIsValid ||
-          !modelIsValid ||
-          saving ||
-          busy,
-        icon: saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined,
-      }}
-      cancelAction={{
-        label: t("common.actions.cancel"),
-        onClick: onClose,
-        disabled: saving || busy,
-      }}
-    >
-      <form id={formId} onSubmit={(event) => void save(event)} className="space-y-4 pb-5">
-        {error && (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </p>
-        )}
-        <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-          <span>{t("tabular.new.name")}</span>
-          <input
-            autoFocus
-            value={title}
-            maxLength={240}
-            onChange={(event) => setTitle(event.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-          />
-        </label>
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            breadcrumbs={[
+                "Tabular Reviews",
+                review.title || "Untitled Review",
+                "Details",
+            ]}
+            footerStatus={
+                error ? (
+                    <span className="text-sm text-red-600">{error}</span>
+                ) : saved ? (
+                    <span className="text-sm text-gray-400">Updated</span>
+                ) : null
+            }
+            primaryAction={
+                canEdit
+                    ? {
+                          label: saving ? "Saving..." : "Save changes",
+                          onClick: () => void handleSave(),
+                          disabled:
+                              saving ||
+                              !hasChanges ||
+                              !trimmedTitle ||
+                              (underProject && !selectedProjectId),
+                      }
+                    : undefined
+            }
+            cancelAction={canEdit ? undefined : false}
+        >
+            <div className="space-y-6">
+                <div>
+                    <ModalFieldLabel htmlFor="tabular-review-details-title">
+                        Review name
+                    </ModalFieldLabel>
+                    <ModalTextInput
+                        id="tabular-review-details-title"
+                        type="text"
+                        value={titleDraft}
+                        onChange={(event) => {
+                            setTitleDraft(event.target.value);
+                            setSaved(false);
+                            setError(null);
+                        }}
+                        placeholder="Review name"
+                        variant="minimal"
+                        className="placeholder:text-gray-400"
+                        disabled={!canEdit || saving}
+                        autoFocus
+                    />
+                </div>
 
-        <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-          <span>{t("tabular.new.project")}</span>
-          <select
-            value={projectId}
-            disabled={lockProject || saving || busy}
-            onChange={(event) => setProjectId(event.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
-          >
-            <option value="">{t("tabular.new.chooseProject")}</option>
-            {projects
-              .filter((project) => project.status === "active")
-              .map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-          </select>
-          {lockProject && (
-            <span className="block text-[11px] font-normal text-gray-400">
-              {t("tabular.details.projectLocked")}
-            </span>
-          )}
-        </label>
+                {!lockProject && (
+                    <div className="space-y-3">
+                        <ModalFieldLabel as="p">Project</ModalFieldLabel>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (!canEdit || saving) return;
+                                const next = !underProject;
+                                setUnderProject(next);
+                                if (!next) setSelectedProjectId("");
+                                setSaved(false);
+                                setError(null);
+                            }}
+                            className="flex w-fit items-center gap-2.5"
+                        >
+                            <span
+                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
+                                    underProject ? "bg-gray-900" : "bg-gray-100"
+                                }`}
+                            >
+                                <span
+                                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                                        underProject
+                                            ? "translate-x-4"
+                                            : "translate-x-0"
+                                    }`}
+                                />
+                            </span>
+                            <span className="text-sm text-gray-600">
+                                Move under a project
+                            </span>
+                        </button>
 
-        <label className="block space-y-1.5 text-xs font-medium text-gray-700">
-          <span>{t("tabular.new.model")}</span>
-          <select
-            value={modelProfileId}
-            disabled={saving || busy}
-            onChange={(event) => setModelProfileId(event.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-          >
-            <option value="">{t("tabular.new.chooseModel")}</option>
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name} · {model.model}
-              </option>
-            ))}
-          </select>
-        </label>
-      </form>
-    </Modal>
-  );
+                        {underProject && (
+                            <ModalSelect
+                                id="tabular-review-details-project"
+                                value={selectedProjectId}
+                                options={projectOptions}
+                                onChange={(value) => {
+                                    setSelectedProjectId(value);
+                                    setSaved(false);
+                                    setError(null);
+                                }}
+                                placeholder="Select project..."
+                                disabled={
+                                    !canEdit || saving || projects.length === 0
+                                }
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
+        </Modal>
+    );
 }

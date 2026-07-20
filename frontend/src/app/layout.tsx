@@ -1,42 +1,68 @@
 import type { Metadata } from "next";
+import { Inter, EB_Garamond } from "next/font/google";
 import "./globals.css";
+import { Providers } from "@/app/components/providers";
 
-// Desktop CSP nonces are generated per request by src/proxy.ts. Next can only
-// attach those nonces to framework and hydration scripts during dynamic render.
-export const dynamic = "force-dynamic";
+const inter = Inter({
+    variable: "--font-inter",
+    subsets: ["latin"],
+});
+
+const ebGaramond = EB_Garamond({
+    variable: "--font-eb-garamond",
+    subsets: ["latin"],
+    weight: ["400", "500", "600", "700"],
+});
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://vera.local"),
-  title: "Vera",
-  description: "Vera 本地法律工作空间。",
-  icons: {
-    icon: [{ url: "/vera-mark.png", type: "image/png" }],
-    apple: "/vera-mark.png",
-  },
-  openGraph: {
-    type: "website",
-    url: "https://vera.local",
-    siteName: "Vera",
-    title: "Vera",
-    description: "Vera 本地法律工作空间。",
-    images: [{ url: "/vera-mark.png", width: 208, height: 208, alt: "Vera" }],
-  },
-  twitter: {
-    card: "summary",
-    title: "Vera",
-    description: "Vera 本地法律工作空间。",
-    images: ["/vera-mark.png"],
-  },
+    metadataBase: new URL("https://app.mikeoss.com"),
+    title: "Mike - AI Legal Platform",
+    description:
+        "AI-powered legal document analysis and contract review platform.",
+    icons: {
+        icon: [
+            { url: "/icon.svg", type: "image/svg+xml" },
+            { url: "/favicon.ico" },
+        ],
+        apple: "/apple-touch-icon.png",
+    },
+    openGraph: {
+        type: "website",
+        url: "https://app.mikeoss.com",
+        siteName: "Mike",
+        title: "Mike - AI Legal Platform",
+        description:
+            "AI-powered legal document analysis and contract review platform.",
+        images: [
+            {
+                url: "/link-image.jpg",
+                width: 1200,
+                height: 651,
+                alt: "Mike",
+            },
+        ],
+    },
+    twitter: {
+        card: "summary_large_image",
+        title: "Mike - AI Legal Platform",
+        description:
+            "AI-powered legal document analysis and contract review platform.",
+        images: ["/link-image.jpg"],
+    },
 };
 
 export default function RootLayout({
-  children,
+    children,
 }: Readonly<{
-  children: React.ReactNode;
+    children: React.ReactNode;
 }>) {
-  return (
-    <html lang="zh-CN">
-      <body className="font-sans antialiased">{children}</body>
-    </html>
-  );
+    return (
+        <html lang="en">
+            <body
+                className={`${inter.variable} ${ebGaramond.variable} font-sans antialiased`}
+            >
+                <Providers>{children}</Providers>
+            </body>
+        </html>
+    );
 }

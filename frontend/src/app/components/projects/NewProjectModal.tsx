@@ -1,353 +1,329 @@
 "use client";
 
-// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/projects/NewProjectModal.tsx
-
+import { useRef, useState } from "react";
+import { Upload, User, X } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type FormEvent,
-} from "react";
-import { FileText, Upload, X } from "lucide-react";
-import { FileDirectory } from "@/app/components/shared/FileDirectory";
-import { Modal } from "@/app/components/shared/Modal";
-import { useDirectoryData } from "@/app/components/shared/useDirectoryData";
-import { useI18n } from "@/app/i18n";
-import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
-import {
-  attachVeraProjectDocument,
-  createVeraProject,
-  uploadVeraDocument,
-} from "@/app/lib/veraApi";
-import type { VeraProjectWire } from "@/app/lib/veraWireTypes";
-import { useProjectModalA11y } from "./useProjectModalA11y";
+    addDocumentToProject,
+    createProject,
+    uploadProjectDocument,
+} from "@/app/lib/mikeApi";
+import { FileDirectory } from "../shared/FileDirectory";
+import { AddUserInput } from "../shared/AddUserInput";
+import type { Document, Project } from "../shared/types";
+import type { UserLookupResult } from "@/app/lib/mikeApi";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { Modal } from "../modals/Modal";
+import { ModalFieldLabel } from "../modals/ModalFieldLabel";
+import { ModalTextInput } from "../modals/ModalTextInput";
+import { ProjectPracticeField } from "./ProjectPracticeField";
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
-  onCreated: (project: VeraProjectWire) => void;
+    open: boolean;
+    onClose: () => void;
+    onCreated: (project: Project) => void;
 }
 
 export function NewProjectModal({ open, onClose, onCreated }: Props) {
-  const [step, setStep] = useState<"details" | "documents">("details");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [createdProject, setCreatedProject] = useState<VeraProjectWire | null>(
-    null,
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestRef = useRef<AbortController | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const { t, formatNumber, errorMessage } = useI18n();
-  const formId = "vera-new-project-modal-form";
-  const {
-    loading: directoryLoading,
-    error: directoryError,
-    standaloneDocuments,
-  } = useDirectoryData(open && step === "documents");
+    const [step, setStep] = useState<"details" | "documents">("details");
+    const [name, setName] = useState("");
+    const [cmNumber, setCmNumber] = useState("");
+    const [practice, setPractice] = useState("");
+    const [sharedUsers, setSharedUsers] = useState<UserLookupResult[]>([]);
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const { user } = useAuth();
+    const ownEmail = user?.email?.trim().toLowerCase() ?? null;
+    const formId = "new-project-modal-form";
 
-  const resetForm = useCallback(() => {
-    requestRef.current?.abort();
-    requestRef.current = null;
-    setStep("details");
-    setName("");
-    setDescription("");
-    setSelectedDocIds(new Set());
-    setPendingFiles([]);
-    setCreatedProject(null);
-    setLoading(false);
-    setError(null);
-  }, []);
+    if (!open) return null;
 
-  const handleClose = useCallback(() => {
-    resetForm();
-    onClose();
-  }, [onClose, resetForm]);
-
-  useProjectModalA11y(
-    open,
-    handleClose,
-    contentRef,
-    t("projects.create"),
-    step,
-  );
-
-  useEffect(() => () => requestRef.current?.abort(), []);
-
-  if (!open) return null;
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
-    if (!files.length) return;
-    setPendingFiles((current) => [
-      ...current,
-      ...files.filter(
-        (file) =>
-          !current.some(
-            (candidate) =>
-              candidate.name === file.name &&
-              candidate.size === file.size &&
-              candidate.lastModified === file.lastModified,
-          ),
-      ),
-    ]);
-    setError(null);
-  }
-
-  function removePendingFile(file: File) {
-    setPendingFiles((current) =>
-      current.filter((candidate) => candidate !== file),
-    );
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!name.trim() || loading) return;
-    if (step === "details") {
-      setStep("documents");
-      return;
+    function submitterValue(e: React.FormEvent<HTMLFormElement>) {
+        return (
+            (e.nativeEvent as SubmitEvent).submitter as
+                | HTMLButtonElement
+                | null
+        )?.value;
     }
 
-    const controller = new AbortController();
-    requestRef.current?.abort();
-    requestRef.current = controller;
-    setLoading(true);
-    setError(null);
-    try {
-      const project =
-        createdProject ??
-        (await createVeraProject(
-          {
-            name: name.trim(),
-            description: description.trim() || null,
-          },
-          controller.signal,
-        ));
-      if (!createdProject) {
-        setCreatedProject(project);
-        onCreated(project);
-      }
-
-      const selectedIds = [...selectedDocIds];
-      const mutations = await Promise.allSettled([
-        ...selectedIds.map((documentId) =>
-          attachVeraProjectDocument(project.id, documentId, controller.signal),
-        ),
-        ...pendingFiles.map((file) =>
-          uploadVeraDocument(
-            { file, projectId: project.id },
-            controller.signal,
-          ),
-        ),
-      ]);
-      if (controller.signal.aborted) return;
-      const failedDocIds = new Set(
-        selectedIds.filter(
-          (_, index) => mutations[index]?.status === "rejected",
-        ),
-      );
-      const failedFiles = pendingFiles.filter(
-        (_, index) =>
-          mutations[selectedIds.length + index]?.status === "rejected",
-      );
-      const completedCount =
-        mutations.length - failedDocIds.size - failedFiles.length;
-      const updatedProject = {
-        ...project,
-        document_count: project.document_count + completedCount,
-      };
-      setCreatedProject(updatedProject);
-      onCreated(updatedProject);
-      setSelectedDocIds(failedDocIds);
-      setPendingFiles(failedFiles);
-      const failure = mutations.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
-      if (failure) {
-        setError(errorMessage(failure.reason as Error));
-        return;
-      }
-      resetForm();
-      onClose();
-    } catch (cause) {
-      if (controller.signal.aborted) return;
-      setError(errorMessage(cause as Error));
-    } finally {
-      if (requestRef.current === controller) requestRef.current = null;
-      if (!controller.signal.aborted) setLoading(false);
+    function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = "";
+        if (!files.length) return;
+        setPendingFiles((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name))]);
     }
-  }
 
-  return (
-    <Modal
-      open={open}
-      onClose={handleClose}
-      breadcrumbs={[
-        t("projects.title"),
-        t("projects.create"),
-        step === "details" ? t("common.fields.name") : t("documents.title"),
-      ]}
-      secondaryAction={
-        step === "documents"
-          ? {
-              label:
-                pendingFiles.length > 0
-                  ? `${t("common.actions.upload")} (${formatNumber(pendingFiles.length)})`
-                  : t("common.actions.upload"),
-              icon: <Upload className="h-3.5 w-3.5" />,
-              onClick: () => fileInputRef.current?.click(),
-              disabled: loading,
+    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!name.trim()) return;
+        if (step === "details" || submitterValue(e) !== "create-project") {
+            setStep("documents");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const project = await createProject(
+                name.trim(),
+                cmNumber.trim() || undefined,
+                practice.trim() && practice.trim() !== "Other"
+                    ? practice.trim()
+                    : undefined,
+                ownEmail
+                    ? sharedUsers
+                          .map((user) => user.email)
+                          .filter((email) => email !== ownEmail)
+                    : sharedUsers.map((user) => user.email),
+            );
+            await Promise.all([
+                ...selectedDocuments.map((document) =>
+                    addDocumentToProject(project.id, document.id).catch(() => {}),
+                ),
+                ...pendingFiles.map((f) => uploadProjectDocument(project.id, f).catch(() => {})),
+            ]);
+            onCreated({
+                ...project,
+                document_count: selectedDocuments.length + pendingFiles.length,
+            });
+            resetForm();
+            onClose();
+        } catch (err: unknown) {
+            setError((err as Error).message || "Failed to create project");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function resetForm() {
+        setStep("details");
+        setName("");
+        setCmNumber("");
+        setPractice("");
+        setSharedUsers([]);
+        setSelectedDocuments([]);
+        setPendingFiles([]);
+        setError("");
+    }
+
+    function handleClose() {
+        resetForm();
+        onClose();
+    }
+
+    function validateShareUser(email: string) {
+        if (ownEmail && email === ownEmail) {
+            return "You cannot share a project with yourself.";
+        }
+        if (
+            sharedUsers.some(
+                (user) => user.email.trim().toLowerCase() === email,
+            )
+        ) {
+            return `${email} already has access.`;
+        }
+        return null;
+    }
+
+    function handleAddShareUser(user: UserLookupResult) {
+        setSharedUsers((prev) => [
+            ...prev,
+            {
+                ...user,
+                email: user.email.trim().toLowerCase(),
+            },
+        ]);
+    }
+
+    function handleRemoveShareUser(email: string) {
+        setSharedUsers((prev) =>
+            prev.filter(
+                (user) =>
+                    user.email.trim().toLowerCase() !==
+                    email.trim().toLowerCase(),
+            ),
+        );
+    }
+
+    return (
+        <Modal
+            open={open}
+            onClose={handleClose}
+            breadcrumbs={[
+                "Projects",
+                "New project",
+                step === "details" ? "Details" : "Add Documents",
+            ]}
+            secondaryAction={
+                step === "documents"
+                    ? {
+                          label: `Upload${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ""}`,
+                          icon: <Upload className="h-3.5 w-3.5" />,
+                          onClick: () => fileInputRef.current?.click(),
+                          disabled: loading,
+                      }
+                    : undefined
             }
-          : undefined
-      }
-      cancelAction={
-        step === "documents" && !createdProject
-          ? {
-              label: t("common.actions.back"),
-              onClick: () => setStep("details"),
-              disabled: loading,
+            cancelAction={
+                step === "documents"
+                    ? {
+                          label: "Back",
+                          onClick: () => setStep("details"),
+                          disabled: loading,
+                      }
+                    : undefined
             }
-          : {
-              label: t("common.actions.cancel"),
-              onClick: handleClose,
-              disabled: loading,
+            primaryAction={
+                step === "details"
+                    ? {
+                          label: "Next",
+                          type: "button",
+                          onClick: (event) => {
+                              event.preventDefault();
+                              setStep("documents");
+                          },
+                          disabled: !name.trim() || loading,
+                      }
+                    : {
+                          label: loading ? "Creating…" : "Create project",
+                          type: "submit",
+                          form: formId,
+                          name: "modalAction",
+                          value: "create-project",
+                          disabled: !name.trim() || loading,
+                      }
             }
-      }
-      primaryAction={{
-        label:
-          step === "details"
-            ? t("common.actions.open")
-            : loading
-              ? t("common.status.processing")
-              : createdProject
-                ? t("common.actions.retry")
-                : t("projects.create"),
-        type: "submit",
-        form: formId,
-        disabled:
-          !name.trim() ||
-          loading ||
-          (Boolean(createdProject) &&
-            pendingFiles.length === 0 &&
-            selectedDocIds.size === 0),
-      }}
-    >
-      <div ref={contentRef} className="flex min-h-0 flex-1 flex-col">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={SUPPORTED_DOCUMENT_ACCEPT}
-          className="hidden"
-          onChange={handleFileChange}
-        />
-        <form
-          id={formId}
-          onSubmit={handleSubmit}
-          className="flex min-h-0 flex-1 flex-col"
         >
-          {step === "details" ? (
-            <div className="space-y-6 py-1">
-              <div>
-                <label
-                  htmlFor="vera-new-project-name"
-                  className="mb-1 block text-xs font-medium text-gray-500"
-                >
-                  {t("projects.nameLabel")}
-                </label>
-                <input
-                  id="vera-new-project-name"
-                  data-project-modal-autofocus
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setError(null);
-                  }}
-                  maxLength={240}
-                  placeholder={t("projects.namePlaceholder")}
-                  className="w-full border-0 border-b border-gray-100 bg-transparent px-0 py-2 text-2xl font-medium text-gray-900 outline-none transition-colors placeholder:text-gray-300 focus:border-gray-300"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="vera-new-project-description"
-                  className="mb-1 block text-xs font-medium text-gray-500"
-                >
-                  {t("projects.descriptionLabel")}
-                </label>
-                <textarea
-                  id="vera-new-project-description"
-                  value={description}
-                  onChange={(event) => {
-                    setDescription(event.target.value);
-                    setError(null);
-                  }}
-                  maxLength={2000}
-                  rows={5}
-                  placeholder={t("projects.descriptionPlaceholder")}
-                  className="w-full resize-none border-0 border-b border-gray-100 bg-transparent px-0 py-2 text-sm text-gray-600 outline-none transition-colors placeholder:text-gray-300 focus:border-gray-300"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 py-1">
-              <FileDirectory
-                standaloneDocs={standaloneDocuments}
-                directoryProjects={[]}
-                loading={directoryLoading}
-                selectedIds={selectedDocIds}
-                onChange={setSelectedDocIds}
-                searchable
-                searchAutoFocus
-                showProjectTabs={false}
-              />
-              {pendingFiles.length > 0 && (
-                <ul className="divide-y divide-gray-100">
-                  {pendingFiles.map((file) => (
-                    <li
-                      key={`${file.name}:${file.size}:${file.lastModified}`}
-                      className="flex items-center gap-3 py-3"
-                    >
-                      <FileText className="h-4 w-4 shrink-0 text-gray-400" />
-                      <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
-                        {file.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removePendingFile(file)}
-                        disabled={loading}
-                        aria-label={`${t("common.actions.delete")} ${file.name}`}
-                        className="rounded-full p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {Boolean(directoryError) && (
-                <p role="alert" className="text-sm text-red-500">
-                  {errorMessage(directoryError as Error)}
-                </p>
-              )}
-            </div>
-          )}
-          {error && (
-            <p role="alert" className="mt-3 text-sm text-red-500">
-              {error}
-            </p>
-          )}
-        </form>
-      </div>
-    </Modal>
-  );
+            <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+            />
+            <form
+                id={formId}
+                onSubmit={handleSubmit}
+                className="flex flex-col flex-1 min-h-0"
+            >
+                {step === "details" ? (
+                    <div className="space-y-6">
+                        <div>
+                            <ModalFieldLabel htmlFor="new-project-name">
+                                Project name
+                            </ModalFieldLabel>
+                            <ModalTextInput
+                                id="new-project-name"
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Add project name"
+                                variant="minimal"
+                                autoFocus
+                            />
+                        </div>
+
+                        <div>
+                            <ModalFieldLabel htmlFor="new-project-cm-number">
+                                CM number
+                            </ModalFieldLabel>
+                            <ModalTextInput
+                                id="new-project-cm-number"
+                                type="text"
+                                value={cmNumber}
+                                onChange={(e) => setCmNumber(e.target.value)}
+                                placeholder="Add a CM number..."
+                                variant="minimal"
+                                className="text-xl text-gray-600"
+                            />
+                        </div>
+
+                        <div>
+                            <ModalFieldLabel htmlFor="new-project-practice">
+                                Practice
+                            </ModalFieldLabel>
+                            <ProjectPracticeField
+                                id="new-project-practice"
+                                value={practice}
+                                onChange={setPractice}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <ModalFieldLabel as="p">
+                                Share with
+                            </ModalFieldLabel>
+                            <AddUserInput
+                                onAdd={handleAddShareUser}
+                                validateEmail={validateShareUser}
+                                placeholder="Add colleagues by email..."
+                            />
+                            {sharedUsers.length > 0 && (
+                                <ul className="space-y-1 pt-1">
+                                    {sharedUsers.map((entry) => {
+                                        const displayName =
+                                            entry.display_name?.trim();
+                                        const primary = displayName || "User";
+                                        const initial = displayName
+                                            ?.charAt(0)
+                                            .toUpperCase();
+                                        return (
+                                            <li
+                                                key={entry.email}
+                                                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100/70"
+                                            >
+                                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-gray-700 shadow-[0_4px_12px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.92),inset_0_-1px_0_rgba(255,255,255,0.64)]">
+                                                    {initial ? (
+                                                        <span className="font-serif text-[11px] leading-none">
+                                                            {initial}
+                                                        </span>
+                                                    ) : (
+                                                        <User className="h-2.5 w-2.5" />
+                                                    )}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="truncate text-xs text-gray-800">
+                                                        {primary}
+                                                        <span className="text-gray-400">
+                                                            {" "}
+                                                            · {entry.email}
+                                                        </span>
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        handleRemoveShareUser(
+                                                            entry.email,
+                                                        )
+                                                    }
+                                                    className="self-center inline-flex items-center rounded-full px-2 py-1 text-xs text-gray-500 transition-colors hover:text-red-600"
+                                                    aria-label={`Remove ${entry.email}`}
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                        <FileDirectory
+                            selectedDocuments={selectedDocuments}
+                            onChange={setSelectedDocuments}
+                            showTabs
+                        />
+                    </div>
+                )}
+
+                {error && (
+                    <p className="mt-3 text-sm text-red-500">{error}</p>
+                )}
+            </form>
+        </Modal>
+    );
 }

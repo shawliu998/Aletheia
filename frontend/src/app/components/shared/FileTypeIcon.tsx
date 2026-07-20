@@ -1,12 +1,15 @@
-// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/shared/FileTypeIcon.tsx
-import { File, FileChartPie, FileSpreadsheet, FileText } from "lucide-react";
+import Image from "next/image";
+import { File } from "lucide-react";
 
 export type FileTypeKind = "pdf" | "word" | "excel" | "ppt" | "other";
 
-export function fileTypeKind(
-    value: string | null | undefined,
-): FileTypeKind {
+/**
+ * Normalize a file_type value (e.g. "pdf") or a filename (e.g. "deck.pptx")
+ * into a coarse kind used to pick an icon. Accepts both because some call
+ * sites only have the filename (user-message files, citations) while others
+ * carry the document's `file_type` field.
+ */
+export function fileTypeKind(value: string | null | undefined): FileTypeKind {
     const raw = (value ?? "").toLowerCase().trim();
     const ext = raw.includes(".") ? (raw.split(".").pop() ?? "") : raw;
     if (ext === "pdf") return "pdf";
@@ -16,6 +19,11 @@ export function fileTypeKind(
     return "other";
 }
 
+/**
+ * Canonical document file-type icon. Size and any extra classes come from
+ * `className`; `shrink-0` is always applied. `muted` renders a neutral grey
+ * placeholder (used for loading/disabled rows).
+ */
 export function FileTypeIcon({
     fileType,
     className = "h-3.5 w-3.5",
@@ -26,16 +34,81 @@ export function FileTypeIcon({
     muted?: boolean;
 }) {
     const cls = `${className} shrink-0`;
-    if (muted) return <File className={`${cls} text-gray-300`} />;
-    switch (fileTypeKind(fileType)) {
+    const kind = fileTypeKind(fileType);
+    if (muted) {
+        const src =
+            kind === "pdf"
+                ? "/icons/file-types/pdf.svg"
+                : kind === "word"
+                  ? "/icons/file-types/word.svg"
+                  : kind === "excel"
+                    ? "/icons/file-types/excel.svg"
+                    : kind === "ppt"
+                      ? "/icons/file-types/ppt.svg"
+                      : null;
+        return src ? (
+            <Image
+                src={src}
+                alt=""
+                aria-hidden="true"
+                width={64}
+                height={64}
+                unoptimized
+                className={`${cls} object-contain grayscale opacity-35`}
+            />
+        ) : (
+            <File className={`${cls} text-gray-300`} />
+        );
+    }
+    switch (kind) {
         case "pdf":
-            return <FileText className={`${cls} text-red-500`} />;
+            return (
+                <Image
+                    src="/icons/file-types/pdf.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={64}
+                    height={64}
+                    unoptimized
+                    className={`${cls} object-contain`}
+                />
+            );
         case "word":
-            return <File className={`${cls} text-blue-500`} />;
+            return (
+                <Image
+                    src="/icons/file-types/word.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={64}
+                    height={64}
+                    unoptimized
+                    className={`${cls} object-contain`}
+                />
+            );
         case "excel":
-            return <FileSpreadsheet className={`${cls} text-emerald-500`} />;
+            return (
+                <Image
+                    src="/icons/file-types/excel.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={64}
+                    height={64}
+                    unoptimized
+                    className={`${cls} object-contain`}
+                />
+            );
         case "ppt":
-            return <FileChartPie className={`${cls} text-red-500`} />;
+            return (
+                <Image
+                    src="/icons/file-types/ppt.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={64}
+                    height={64}
+                    unoptimized
+                    className={`${cls} object-contain`}
+                />
+            );
         default:
             return <File className={`${cls} text-gray-500`} />;
     }

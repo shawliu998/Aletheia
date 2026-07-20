@@ -1,33 +1,42 @@
 "use client";
 
-// Direct page composition port of Mike
-// e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/(pages)/assistant/page.tsx
 import { useRouter } from "next/navigation";
-import { InitialView } from "@/app/components/assistant/InitialView";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
+import { InitialView } from "@/app/components/assistant/InitialView";
+import { ChatView } from "@/app/components/assistant/ChatView";
 import type { Message } from "@/app/components/shared/types";
-import { VeraApiError } from "@/app/lib/veraApi";
-import { useI18n } from "@/app/i18n";
 
 export default function AssistantPage() {
-  const router = useRouter();
-  const { errorMessage } = useI18n();
-  const { handleChat, streamError } = useAssistantChat();
+    const router = useRouter();
+    const {
+        messages,
+        isResponseLoading,
+        handleChat,
+        handleNewChat,
+        cancel,
+        chatId,
+    } = useAssistantChat();
 
-  const submit = async (message: Message) => {
-    const id = await handleChat(message);
-    if (id) router.push(`/assistant/chat/${id}`);
-    return id;
-  };
+    async function handleInitialSubmit(message: Message) {
+        const chatId = await handleNewChat(message);
+        if (chatId) router.push(`/assistant/chat/${chatId}`);
+    }
 
-  const visibleError = streamError
-    ? errorMessage(
-        streamError instanceof VeraApiError
-          ? streamError
-          : { code: "NETWORK_ERROR" },
-      )
-    : null;
+    if (messages.length === 0) {
+        return (
+            <InitialView
+                onSubmit={(message) => void handleInitialSubmit(message)}
+            />
+        );
+    }
 
-  return <InitialView onSubmit={submit} error={visibleError} />;
+    return (
+        <ChatView
+            chatId={chatId}
+            messages={messages}
+            isResponseLoading={isResponseLoading}
+            handleChat={handleChat}
+            cancel={cancel}
+        />
+    );
 }

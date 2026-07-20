@@ -1,5 +1,3 @@
-// Direct port of Mike e32daad5a4c64a5561e04c53ee12411e3c5e7238:
-// frontend/src/app/components/shared/VersionChip.tsx
 /**
  * Small "V3" badge for document rows/listings, rendered when the doc has
  * at least one assistant-edit version. Matches the chip in the side
