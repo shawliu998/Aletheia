@@ -24,6 +24,13 @@ import {
 import { createServerSupabase } from "../lib/supabase";
 import { requireAuth } from "../middleware/auth";
 import { DEFAULT_MAIN_MODEL, isSupportedModel } from "../lib/llm";
+import {
+  captureApprovedArtifacts,
+  getReviewBlockers,
+  loadApprovedExport,
+} from "../lib/agentTaskReviews";
+import { buildContentDisposition } from "../lib/storage";
+import { contentTypeForDocumentType } from "../lib/documentTypes";
 
 export const agentTasksRouter = Router();
 
@@ -151,6 +158,140 @@ agentTasksRouter.get("/:taskId", requireAuth, async (req, res) => {
   }
 });
 
+agentTasksRouter.post(
+  "/:taskId/review-decisions",
+  requireAuth,
+  async (req, res) => {
+    const status =
+      req.body?.status === "approved" ||
+      req.body?.status === "changes_requested"
+        ? req.body.status
+        : null;
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!status) {
+      return void res.status(400).json({
+        detail: "status must be approved or changes_requested",
+      });
+    }
+    if (note.length > 4000) {
+      return void res.status(400).json({ detail: "note is too long" });
+    }
+    if (status === "changes_requested" && !note) {
+      return void res
+        .status(400)
+        .json({ detail: "A note is required when requesting changes" });
+    }
+
+    try {
+      const db = createServerSupabase();
+      const userId = res.locals.userId as string;
+      const snapshot = await getAgentTaskSnapshot(
+        db,
+        req.params.taskId,
+        userId,
+      );
+      if (!snapshot) {
+        return void res.status(404).json({ detail: "Agent task not found" });
+      }
+      if (snapshot.task.status !== "completed") {
+        return void res.status(409).json({
+          detail: "Lawyer review is available only after task completion",
+        });
+      }
+
+      let artifactSnapshot: unknown[] = [];
+      if (status === "approved") {
+        const { blockers } = await getReviewBlockers(db, snapshot);
+        if (blockers.length) {
+          return void res.status(409).json({
+            detail: `Approval is blocked: ${blockers.join(" ")}`,
+            blockers,
+          });
+        }
+        artifactSnapshot = await captureApprovedArtifacts(db, snapshot);
+      }
+
+      const { data: profile } = await db
+        .from("user_profiles")
+        .select("display_name")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const { error } = await db.from("agent_task_review_decisions").insert({
+        task_id: req.params.taskId,
+        status,
+        reviewer_id: userId,
+        reviewer_email:
+          (res.locals.userEmail as string | undefined)?.toLowerCase() || null,
+        reviewer_name:
+          typeof profile?.display_name === "string" &&
+          profile.display_name.trim()
+            ? profile.display_name.trim()
+            : null,
+        note,
+        artifact_snapshot: artifactSnapshot,
+      });
+      if (error) throw error;
+
+      res.json(await getAgentTaskSnapshot(db, req.params.taskId, userId));
+    } catch (error) {
+      routeError(res, error);
+    }
+  },
+);
+
+agentTasksRouter.get(
+  "/:taskId/final-export/:artifactId",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const db = createServerSupabase();
+      const userId = res.locals.userId as string;
+      const snapshot = await getAgentTaskSnapshot(
+        db,
+        req.params.taskId,
+        userId,
+      );
+      if (!snapshot) {
+        return void res.status(404).json({ detail: "Agent task not found" });
+      }
+      const { blockers } = await getReviewBlockers(db, snapshot);
+      if (blockers.length) {
+        return void res.status(409).json({
+          detail: `Final export is blocked: ${blockers.join(" ")}`,
+          blockers,
+        });
+      }
+      const exported = await loadApprovedExport(
+        db,
+        req.params.taskId,
+        userId,
+        req.params.artifactId,
+      );
+      if (!exported) {
+        return void res.status(404).json({ detail: "Agent task not found" });
+      }
+      const extension = exported.artifact.filename.includes(".")
+        ? (exported.artifact.filename.split(".").pop() ?? "")
+        : (exported.artifact.file_type ?? "");
+      res.setHeader("Content-Type", contentTypeForDocumentType(extension));
+      res.setHeader(
+        "Content-Disposition",
+        buildContentDisposition("attachment", exported.artifact.filename),
+      );
+      res.setHeader("X-Vera-Approved-Version", exported.artifact.version_id);
+      res.setHeader("X-Vera-Approved-SHA256", exported.artifact.sha256);
+      res.send(exported.bytes);
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "Final export failed";
+      if (/blocked|not part|no longer|unavailable|integrity/i.test(detail)) {
+        return void res.status(409).json({ detail });
+      }
+      routeError(res, error);
+    }
+  },
+);
+
 agentTasksRouter.post("/:taskId/advance", requireAuth, async (req, res) => {
   try {
     const db = createServerSupabase();
@@ -236,12 +377,10 @@ agentTasksRouter.post("/:taskId/advance", requireAuth, async (req, res) => {
           .join("; ");
         if (verifierRepairAlreadyAttempted(current.task)) {
           const detail = `Verification blocked after one repair pass: ${reasons}.`;
-          const failed = await stopAgentTask(
-            db,
-            req.params.taskId,
-            userId,
-            { status: "failed", summary: detail },
-          );
+          const failed = await stopAgentTask(db, req.params.taskId, userId, {
+            status: "failed",
+            summary: detail,
+          });
           return void res.status(409).json({ detail, task: failed });
         }
         await recordAgentTaskCheckpoint(

@@ -45,6 +45,7 @@ export type AgentTask = {
   latest_checkpoint: AgentCheckpoint | null;
   created_at: string;
   updated_at: string;
+  review_status?: AgentReviewStatus | null;
 };
 
 export type AgentStep = {
@@ -74,7 +75,41 @@ export type ArtifactLink = {
 
 export type AgentArtifactLink = ArtifactLink;
 
+export type AgentReviewStatus =
+  | "review_required"
+  | "changes_requested"
+  | "approved";
+
+export type ApprovedArtifactSnapshot = {
+  artifact_type: "draft" | "tabular_review";
+  artifact_id: string;
+  purpose: string;
+  document_id: string;
+  version_id: string;
+  version_number: number | null;
+  filename: string;
+  file_type: string | null;
+  size_bytes: number;
+  sha256: string;
+};
+
+export type AgentReviewDecision = {
+  id: string;
+  task_id: string;
+  status: AgentReviewStatus;
+  reviewer_id: string | null;
+  reviewer_email: string | null;
+  reviewer_name: string | null;
+  note: string;
+  artifact_snapshot: ApprovedArtifactSnapshot[];
+  created_at: string;
+};
+
 export type AgentTaskSnapshot = {
   task: AgentTask;
   artifacts: ArtifactLink[];
+  review: {
+    status: AgentReviewStatus | null;
+    decisions: AgentReviewDecision[];
+  };
 };

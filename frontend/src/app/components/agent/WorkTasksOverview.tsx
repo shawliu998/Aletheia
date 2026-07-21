@@ -30,7 +30,11 @@ import type { Project } from "@/app/components/shared/types";
 import { listAgentTasks } from "@/app/lib/agentClient";
 import { listProjects } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
-import type { AgentTask, AgentTaskStatus } from "@/app/types/agent";
+import type {
+    AgentReviewStatus,
+    AgentTask,
+    AgentTaskStatus,
+} from "@/app/types/agent";
 
 type TaskFilter = "all" | "active" | "attention" | "review";
 
@@ -99,6 +103,41 @@ function taskProgress(task: AgentTask) {
     const plan = task.current_plan ?? [];
     const completed = plan.filter((step) => step.status === "completed").length;
     return { completed, total: plan.length };
+}
+
+const REVIEW_STATUS_META: Record<
+    AgentReviewStatus,
+    { label: string; badge: string; icon: typeof Circle }
+> = {
+    review_required: {
+        label: "Review required",
+        badge: "bg-amber-50 text-amber-900",
+        icon: Clock3,
+    },
+    changes_requested: {
+        label: "Changes requested",
+        badge: "bg-red-50 text-red-800",
+        icon: AlertCircle,
+    },
+    approved: {
+        label: "Approved · locked",
+        badge: "bg-emerald-50 text-emerald-800",
+        icon: CheckCircle2,
+    },
+};
+
+function matchesFilter(task: AgentTask, filter: TaskFilter) {
+    if (filter === "all") return true;
+    if (filter === "active") return FILTERS.active.includes(task.status);
+    if (filter === "attention") {
+        return (
+            FILTERS.attention.includes(task.status) ||
+            task.review_status === "changes_requested"
+        );
+    }
+    return (
+        task.status === "completed" && task.review_status === "review_required"
+    );
 }
 
 export function WorkTasksOverview() {
@@ -182,20 +221,17 @@ export function WorkTasksTable({
     );
     const counts = useMemo(
         () => ({
-            active: tasks.filter((task) => FILTERS.active.includes(task.status))
+            active: tasks.filter((task) => matchesFilter(task, "active")).length,
+            attention: tasks.filter((task) => matchesFilter(task, "attention"))
                 .length,
-            attention: tasks.filter((task) =>
-                FILTERS.attention.includes(task.status),
-            ).length,
-            review: tasks.filter((task) => FILTERS.review.includes(task.status))
-                .length,
+            review: tasks.filter((task) => matchesFilter(task, "review")).length,
         }),
         [tasks],
     );
     const visibleTasks = useMemo(() => {
         const query = search.trim().toLocaleLowerCase();
         return tasks.filter((task) => {
-            if (FILTERS[filter].length && !FILTERS[filter].includes(task.status)) {
+            if (!matchesFilter(task, filter)) {
                 return false;
             }
             if (!query) return true;
@@ -300,7 +336,10 @@ export function WorkTasksTable({
                 ) : (
                     <TableBody>
                         {visibleTasks.map((task) => {
-                            const status = STATUS_META[task.status];
+                            const status =
+                                task.status === "completed" && task.review_status
+                                    ? REVIEW_STATUS_META[task.review_status]
+                                    : STATUS_META[task.status];
                             const StatusIcon = status.icon;
                             const progress = taskProgress(task);
                             const providerQueued =

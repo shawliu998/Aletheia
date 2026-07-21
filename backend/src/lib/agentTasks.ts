@@ -37,6 +37,18 @@ export type AgentArtifactLinkInput = {
   purpose: string;
 };
 
+export type AgentReviewDecision = {
+  id: string;
+  task_id: string;
+  status: "review_required" | "changes_requested" | "approved";
+  reviewer_id: string | null;
+  reviewer_email: string | null;
+  reviewer_name: string | null;
+  note: string;
+  artifact_snapshot: unknown[];
+  created_at: string;
+};
+
 export const DEFAULT_WORK_PLAN: StepDefinition[] = [
   {
     title: "Read the matter documents",
@@ -171,6 +183,7 @@ export async function getAgentTaskSnapshot(
   const [
     { data: steps, error: stepsError },
     { data: artifacts, error: artifactsError },
+    { data: reviewDecisions, error: reviewError },
   ] = await Promise.all([
     db
       .from("agent_steps")
@@ -184,10 +197,23 @@ export async function getAgentTaskSnapshot(
       .select("task_id,artifact_type,artifact_id,purpose")
       .eq("task_id", taskId)
       .order("created_at", { ascending: true }),
+    db
+      .from("agent_task_review_decisions")
+      .select(
+        "id,task_id,status,reviewer_id,reviewer_email,reviewer_name,note,artifact_snapshot,created_at",
+      )
+      .eq("task_id", taskId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
   ]);
   if (stepsError) throw dbError(stepsError, "Failed to load task plan");
   if (artifactsError)
     throw dbError(artifactsError, "Failed to load task artifacts");
+  if (reviewError)
+    throw dbError(reviewError, "Failed to load lawyer review decisions");
+
+  const decisions = (reviewDecisions ?? []) as AgentReviewDecision[];
+  const latestReview = decisions.at(-1) ?? null;
 
   const { user_id: _userId, ...publicTask } = task;
   return {
@@ -198,6 +224,12 @@ export async function getAgentTaskSnapshot(
       ),
     },
     artifacts: artifacts ?? [],
+    review: {
+      status:
+        latestReview?.status ??
+        (task.status === "completed" ? "review_required" : null),
+      decisions,
+    },
   };
 }
 
@@ -220,17 +252,33 @@ export async function listAgentTasks(
   const tasks = data ?? [];
   if (!tasks.length) return [];
 
-  const { data: steps, error: stepsError } = await db
-    .from("agent_steps")
-    .select(
-      "id,task_id,title,status,expected_output,attempt,result_summary,position",
-    )
-    .in(
-      "task_id",
-      tasks.map((task) => task.id),
-    )
-    .order("position", { ascending: true });
+  const [
+    { data: steps, error: stepsError },
+    { data: reviewDecisions, error: reviewError },
+  ] = await Promise.all([
+    db
+      .from("agent_steps")
+      .select(
+        "id,task_id,title,status,expected_output,attempt,result_summary,position",
+      )
+      .in(
+        "task_id",
+        tasks.map((task) => task.id),
+      )
+      .order("position", { ascending: true }),
+    db
+      .from("agent_task_review_decisions")
+      .select("id,task_id,status,created_at")
+      .in(
+        "task_id",
+        tasks.map((task) => task.id),
+      )
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
+  ]);
   if (stepsError) throw dbError(stepsError, "Failed to load task progress");
+  if (reviewError)
+    throw dbError(reviewError, "Failed to load task review status");
 
   const stepsByTask = new Map<string, typeof steps>();
   for (const step of steps ?? []) {
@@ -238,9 +286,19 @@ export async function listAgentTasks(
     taskSteps.push(step);
     stepsByTask.set(step.task_id, taskSteps);
   }
+  const reviewByTask = new Map<string, AgentReviewDecision["status"]>();
+  for (const decision of reviewDecisions ?? []) {
+    reviewByTask.set(
+      decision.task_id as string,
+      decision.status as AgentReviewDecision["status"],
+    );
+  }
 
   return tasks.map((task) => ({
     ...task,
+    review_status:
+      reviewByTask.get(task.id) ??
+      (task.status === "completed" ? "review_required" : null),
     current_plan: (stepsByTask.get(task.id) ?? []).map(
       ({ position: _position, ...step }) => step,
     ),
@@ -405,6 +463,17 @@ export async function advanceAgentTask(
     .eq("user_id", userId);
   if (taskUpdateError)
     throw dbError(taskUpdateError, "Failed to update task state");
+  if (isComplete) {
+    const { error: reviewError } = await db
+      .from("agent_task_review_decisions")
+      .insert({
+        task_id: taskId,
+        status: "review_required",
+        note: "Execution and automated verification completed. Lawyer review is required before final export.",
+        artifact_snapshot: [],
+      });
+    if (reviewError) throw dbError(reviewError, "Failed to open lawyer review");
+  }
   return getAgentTaskSnapshot(db, taskId, userId);
 }
 
@@ -581,9 +650,7 @@ export async function updateAgentTaskExecutionModel(
     .maybeSingle();
   if (taskError) throw dbError(taskError, "Failed to load task");
   if (!task) return null;
-  if (
-    ["running", "verifying", "completed"].includes(task.status)
-  ) {
+  if (["running", "verifying", "completed"].includes(task.status)) {
     throw new Error(
       `Only a queued, paused, failed, or input-blocked task can switch models (current: ${task.status})`,
     );

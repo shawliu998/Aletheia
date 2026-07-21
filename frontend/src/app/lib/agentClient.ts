@@ -116,3 +116,44 @@ export function attachAgentTaskDocuments(
     },
   );
 }
+
+export function createAgentReviewDecision(
+  taskId: string,
+  input: { status: "approved" | "changes_requested"; note: string },
+) {
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/review-decisions`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function downloadApprovedAgentArtifact(
+  taskId: string,
+  artifactId: string,
+) {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Authentication required");
+  const response = await fetch(
+    `${API_BASE}/agent-tasks/${encodeURIComponent(taskId)}/final-export/${encodeURIComponent(artifactId)}`,
+    {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      payload?.detail || `Final export failed (${response.status})`,
+    );
+  }
+  return response.blob();
+}
