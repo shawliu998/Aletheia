@@ -2,13 +2,13 @@ const HIGHLIGHT_CLASS = "docx-text-highlight";
 const IGNORED_TEXT_SELECTOR = ".star-pagination,.case-page-number";
 
 function onlyLetters(s: string): string {
-    return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+    return s.replace(/[^\p{L}\p{N}]/gu, "").toLocaleLowerCase();
 }
 
 function toOrigPos(text: string, strippedPos: number): number {
     let count = 0;
     for (let k = 0; k < text.length; k++) {
-        if (/[a-zA-Z0-9]/.test(text[k])) {
+        if (/[\p{L}\p{N}]/u.test(text[k])) {
             if (count === strippedPos) return k;
             count++;
         }

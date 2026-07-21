@@ -31,6 +31,7 @@ import {
 } from "../lib/agentTaskReviews";
 import { buildContentDisposition } from "../lib/storage";
 import { contentTypeForDocumentType } from "../lib/documentTypes";
+import { getAgentTaskEvidence } from "../lib/agentTaskEvidence";
 
 export const agentTasksRouter = Router();
 
@@ -157,6 +158,26 @@ agentTasksRouter.get("/:taskId", requireAuth, async (req, res) => {
     routeError(res, error);
   }
 });
+
+agentTasksRouter.get(
+  "/:taskId/evidence/:artifactId",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const evidence = await getAgentTaskEvidence(createServerSupabase(), {
+        taskId: req.params.taskId,
+        userId: res.locals.userId as string,
+        artifactId: req.params.artifactId,
+      });
+      if (!evidence) {
+        return void res.status(404).json({ detail: "Evidence not found" });
+      }
+      res.json(evidence);
+    } catch (error) {
+      routeError(res, error);
+    }
+  },
+);
 
 agentTasksRouter.post(
   "/:taskId/review-decisions",

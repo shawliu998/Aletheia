@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -17,6 +17,7 @@ import {
   FileText,
   Grid2X2,
   Loader2,
+  MapPin,
   Pause,
   Play,
   ShieldCheck,
@@ -33,6 +34,7 @@ import {
   createAgentReviewDecision,
   downloadApprovedAgentArtifact,
   getAgentTask,
+  getAgentTaskEvidence,
   pauseAgentTask,
   resumeAgentTask,
   retryAgentTask,
@@ -47,6 +49,8 @@ import {
 import type { ModelProvider } from "@/app/lib/modelAvailability";
 import type {
   AgentArtifactType,
+  AgentEvidenceCitation,
+  AgentEvidenceSnapshot,
   AgentReviewStatus,
   AgentStepStatus,
   AgentTaskSnapshot,
@@ -137,6 +141,16 @@ const ARTIFACT_META: Record<
   },
 };
 
+const EVIDENCE_STATUS_META = {
+  exact: { label: "Located", className: "text-emerald-700" },
+  version_mismatch: {
+    label: "Cited version",
+    className: "text-amber-800",
+  },
+  drifted: { label: "Anchor drifted", className: "text-red-700" },
+  missing: { label: "Citation missing", className: "text-red-700" },
+} as const;
+
 export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
   const router = useRouter();
   const { profile } = useUserProfile();
@@ -156,6 +170,14 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
   const [downloadingArtifact, setDownloadingArtifact] = useState<string | null>(
     null,
   );
+  const [evidenceByArtifact, setEvidenceByArtifact] = useState<
+    Record<string, AgentEvidenceSnapshot>
+  >({});
+  const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
+  const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(
+    null,
+  );
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void getAgentTask(taskId)
@@ -166,6 +188,20 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
       .catch(() => setSnapshot(null))
       .finally(() => setLoaded(true));
   }, [taskId]);
+
+  useEffect(() => {
+    if (!loaded || !scrollContainerRef.current) return;
+    const restore = new URLSearchParams(window.location.search).has("restore");
+    if (!restore) return;
+    const saved = window.sessionStorage.getItem(
+      `vera:agent-task-scroll:${taskId}`,
+    );
+    const scrollTop = Number(saved);
+    if (!Number.isFinite(scrollTop)) return;
+    window.requestAnimationFrame(() => {
+      scrollContainerRef.current?.scrollTo({ top: scrollTop });
+    });
+  }, [loaded, taskId]);
 
   useEffect(() => {
     if (!autoRun || !snapshot) return;
@@ -377,26 +413,110 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
         artifact.artifact_id === document.id,
     ),
   );
-  const chatArtifact = artifacts.find(
-    (artifact) => artifact.artifact_type === "chat",
-  );
   const executionModel = task.execution_model || "gemini-3-flash-preview";
   const executionModelLabel =
     MODELS.find((model) => model.id === executionModel)?.label ??
     executionModel;
   const reviewStatus = snapshot.review.status;
 
-  function openArtifact(artifact: AgentTaskSnapshot["artifacts"][number]) {
+  function rememberTaskContext() {
+    window.sessionStorage.setItem(
+      `vera:agent-task-scroll:${taskId}`,
+      String(scrollContainerRef.current?.scrollTop ?? 0),
+    );
+  }
+
+  function openCitation(citation: AgentEvidenceCitation) {
+    if (!citation.openable || !citation.document_id) return;
+    rememberTaskContext();
+    const query = new URLSearchParams({
+      open_document: citation.document_id,
+      return_task: taskId,
+      citation_status: citation.status,
+      citation_detail: citation.detail,
+    });
+    if (citation.version_id) query.set("version_id", citation.version_id);
+    if (citation.page != null) query.set("page", String(citation.page));
+    if (citation.quote) query.set("quote", citation.quote.slice(0, 1200));
+    if (citation.sheet) query.set("sheet", citation.sheet);
+    if (citation.cell) query.set("cell", citation.cell);
+    router.push(`/projects/${task.matter_id}?${query.toString()}`);
+  }
+
+  async function showEvidenceArtifact(
+    artifactId: string,
+    options: { focus?: boolean } = {},
+  ) {
+    if (expandedEvidenceId === artifactId && !options.focus) {
+      setExpandedEvidenceId(null);
+      return;
+    }
+    setExpandedEvidenceId(artifactId);
+    if (!evidenceByArtifact[artifactId]) {
+      setEvidenceLoading(artifactId);
+      try {
+        const evidence = await getAgentTaskEvidence(taskId, artifactId);
+        setEvidenceByArtifact((current) => ({
+          ...current,
+          [artifactId]: evidence,
+        }));
+      } catch (error) {
+        setExecutionError(
+          error instanceof Error
+            ? error.message
+            : "Evidence could not be loaded",
+        );
+      } finally {
+        setEvidenceLoading(null);
+      }
+    }
+    if (options.focus) {
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(`evidence-${artifactId}`);
+        target?.scrollIntoView({
+          block: "nearest",
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "auto"
+            : "smooth",
+        });
+      });
+    }
+  }
+
+  function openArtifact(
+    artifact: AgentTaskSnapshot["artifacts"][number],
+    options: { versionId?: string | null } = {},
+  ) {
+    rememberTaskContext();
     if (artifact.artifact_type === "chat") {
+      const query = new URLSearchParams({ return_task: taskId });
       router.push(
-        `/projects/${task.matter_id}/assistant/chat/${artifact.artifact_id}`,
+        `/projects/${task.matter_id}/assistant/chat/${artifact.artifact_id}?${query}`,
       );
       return;
     }
-    if (artifact.artifact_type === "citation_snapshot" && chatArtifact) {
-      router.push(
-        `/projects/${task.matter_id}/assistant/chat/${chatArtifact.artifact_id}`,
-      );
+    if (artifact.artifact_type === "citation_snapshot") {
+      void showEvidenceArtifact(artifact.artifact_id, { focus: true });
+      return;
+    }
+    if (
+      artifact.artifact_type === "document" ||
+      artifact.artifact_type === "draft" ||
+      artifact.artifact_type === "tabular_review"
+    ) {
+      const lockedVersionId = snapshot?.review.decisions
+        .at(-1)
+        ?.artifact_snapshot.find(
+          (locked) => locked.artifact_id === artifact.artifact_id,
+        )?.version_id;
+      const query = new URLSearchParams({
+        open_document: artifact.artifact_id,
+        return_task: taskId,
+      });
+      const versionId = options.versionId ?? lockedVersionId;
+      if (versionId) query.set("version_id", versionId);
+      router.push(`/projects/${task.matter_id}?${query.toString()}`);
       return;
     }
     router.push(`/projects/${task.matter_id}`);
@@ -456,7 +576,10 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
         ]}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6"
+      >
         <div className="mx-auto max-w-[1420px]">
           <section className="mb-3 px-1 py-3 md:px-2">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -566,8 +689,19 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
               providerQueued={providerQueued}
               onRetry={retryTask}
               onAttachDocuments={attachNewMatterDocuments}
+              onOpenArtifact={openArtifact}
             />
-            <EvidencePanel snapshot={snapshot} onOpenArtifact={openArtifact} />
+            <EvidencePanel
+              snapshot={snapshot}
+              onOpenArtifact={openArtifact}
+              evidenceByArtifact={evidenceByArtifact}
+              evidenceLoading={evidenceLoading}
+              expandedEvidenceId={expandedEvidenceId}
+              onToggleEvidence={(artifactId) =>
+                void showEvidenceArtifact(artifactId)
+              }
+              onOpenCitation={openCitation}
+            />
           </div>
         </div>
       </div>
@@ -601,7 +735,10 @@ function DeliverablesPanel({
   downloadingArtifact: string | null;
   onDecision: (status: "approved" | "changes_requested") => Promise<void>;
   onDownload: (artifact: ApprovedArtifactSnapshot) => Promise<void>;
-  onOpenArtifact: (artifact: AgentTaskSnapshot["artifacts"][number]) => void;
+  onOpenArtifact: (
+    artifact: AgentTaskSnapshot["artifacts"][number],
+    options?: { versionId?: string | null },
+  ) => void;
 }) {
   const reviewStatus = snapshot.review.status ?? "review_required";
   const latestDecision = snapshot.review.decisions.at(-1) ?? null;
@@ -638,11 +775,10 @@ function DeliverablesPanel({
             ) ??
             [...snapshot.artifacts]
               .reverse()
-              .find(
-                (linked) =>
-                  (deliverable.key === "risk-matrix"
-                    ? linked.purpose === "Risk matrix"
-                    : linked.purpose === "Review memo draft"),
+              .find((linked) =>
+                deliverable.key === "risk-matrix"
+                  ? linked.purpose === "Risk matrix"
+                  : linked.purpose === "Review memo draft",
               ) ??
             null,
         }));
@@ -694,51 +830,65 @@ function DeliverablesPanel({
               const canDownload = output.artifact !== null;
               const canOpen = output.linkedArtifact !== null;
               return (
-                <button
+                <div
                   key={output.key}
-                  type="button"
-                  onClick={() => {
-                    if (output.artifact) void onDownload(output.artifact);
-                    else if (output.linkedArtifact)
-                      onOpenArtifact(output.linkedArtifact);
-                  }}
-                  disabled={
-                    (!canDownload && !canOpen) || downloadingArtifact !== null
-                  }
-                  title={
-                    canDownload
-                      ? `Export ${output.detail}`
-                      : canOpen
-                        ? `Open ${output.label} for review`
-                        : "Output is not available yet"
-                  }
-                  className="flex min-w-[250px] max-w-[390px] flex-1 items-center gap-3 rounded-lg bg-white/70 px-3 py-2 text-left outline-none ring-1 ring-gray-900/[0.07] transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-500/70 disabled:cursor-default disabled:opacity-70"
+                  className="flex min-w-[250px] max-w-[390px] flex-1 items-stretch overflow-hidden rounded-lg bg-white/70 ring-1 ring-gray-900/[0.07]"
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-600">
-                    {downloadingArtifact === output.artifact?.artifact_id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : output.artifact ? (
-                      <Download className="h-3.5 w-3.5" />
-                    ) : output.linkedArtifact ? (
-                      <ArrowUpRight className="h-3.5 w-3.5" />
-                    ) : (
-                      <FileText className="h-3.5 w-3.5" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (output.linkedArtifact) {
+                        onOpenArtifact(output.linkedArtifact, {
+                          versionId: output.artifact?.version_id ?? null,
+                        });
+                      }
+                    }}
+                    disabled={!canOpen}
+                    title={
+                      canOpen
+                        ? `Open ${output.label} at ${output.artifact ? "the approved version" : "its current version"}`
+                        : "Output is not available yet"
+                    }
+                    className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:cursor-default disabled:opacity-60"
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-600">
+                      {canOpen ? (
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium text-gray-800">
+                        {output.label}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-gray-500">
+                        {output.detail}
+                      </span>
+                    </span>
+                    {output.version && (
+                      <span className="shrink-0 text-[10px] text-gray-400">
+                        V{output.version}
+                      </span>
                     )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium text-gray-800">
-                      {output.label}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[10px] text-gray-500">
-                      {output.detail}
-                    </span>
-                  </span>
-                  {output.version && (
-                    <span className="shrink-0 text-[10px] text-gray-400">
-                      V{output.version}
-                    </span>
+                  </button>
+                  {canDownload && output.artifact && (
+                    <button
+                      type="button"
+                      onClick={() => void onDownload(output.artifact!)}
+                      disabled={downloadingArtifact !== null}
+                      title={`Export locked ${output.detail}`}
+                      aria-label={`Export locked ${output.detail}`}
+                      className="flex w-10 shrink-0 items-center justify-center border-l border-gray-900/[0.06] text-gray-500 outline-none transition-colors hover:bg-white hover:text-gray-800 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:opacity-50"
+                    >
+                      {downloadingArtifact === output.artifact.artifact_id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                    </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -995,12 +1145,14 @@ function ExecutionPanel({
   providerQueued,
   onRetry,
   onAttachDocuments,
+  onOpenArtifact,
 }: {
   snapshot: AgentTaskSnapshot;
   executionError: string | null;
   providerQueued: boolean;
   onRetry: () => Promise<void>;
   onAttachDocuments: () => Promise<void>;
+  onOpenArtifact: (artifact: AgentTaskSnapshot["artifacts"][number]) => void;
 }) {
   const latest = [...snapshot.task.current_plan]
     .reverse()
@@ -1141,21 +1293,54 @@ function ExecutionPanel({
           <div className="mt-2 divide-y divide-gray-900/[0.055]">
             {snapshot.task.current_plan
               .filter((step) => step.status === "completed")
-              .map((step) => (
-                <div key={step.id} className="flex gap-3 py-3 first:pt-2">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
-                    <Check className="h-3 w-3" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-gray-800">
-                      {step.title}
-                    </p>
-                    {step.result_summary && (
-                      <TaskResult>{step.result_summary}</TaskResult>
-                    )}
+              .map((step) => {
+                const stepPosition = snapshot.task.current_plan.findIndex(
+                  (candidate) => candidate.id === step.id,
+                );
+                const relatedArtifacts = snapshot.artifacts.filter(
+                  (artifact) =>
+                    artifact.purpose ===
+                      `Step ${stepPosition + 1} evidence citations` ||
+                    (/risk matrix/i.test(step.title) &&
+                      artifact.purpose === "Risk matrix") ||
+                    (/review memo/i.test(step.title) &&
+                      artifact.purpose === "Review memo draft"),
+                );
+                return (
+                  <div key={step.id} className="flex gap-3 py-3 first:pt-2">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                      <Check className="h-3 w-3" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-800">
+                        {step.title}
+                      </p>
+                      {step.result_summary && (
+                        <TaskResult>{step.result_summary}</TaskResult>
+                      )}
+                      {relatedArtifacts.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {relatedArtifacts.map((artifact) => (
+                            <button
+                              key={`${step.id}:${artifact.artifact_type}:${artifact.artifact_id}`}
+                              type="button"
+                              onClick={() => onOpenArtifact(artifact)}
+                              className="inline-flex max-w-full items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-gray-600 outline-none hover:bg-gray-900/[0.04] hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500/70"
+                            >
+                              <MapPin className="h-3 w-3 shrink-0" />
+                              <span className="truncate">
+                                {artifact.artifact_type === "citation_snapshot"
+                                  ? "Check sources"
+                                  : artifact.purpose}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             {!latest && (
               <p className="py-5 text-xs text-gray-400">
                 No steps have completed yet.
@@ -1207,9 +1392,19 @@ function TaskResult({
 function EvidencePanel({
   snapshot,
   onOpenArtifact,
+  evidenceByArtifact,
+  evidenceLoading,
+  expandedEvidenceId,
+  onToggleEvidence,
+  onOpenCitation,
 }: {
   snapshot: AgentTaskSnapshot;
   onOpenArtifact: (artifact: AgentTaskSnapshot["artifacts"][number]) => void;
+  evidenceByArtifact: Record<string, AgentEvidenceSnapshot>;
+  evidenceLoading: string | null;
+  expandedEvidenceId: string | null;
+  onToggleEvidence: (artifactId: string) => void;
+  onOpenCitation: (citation: AgentEvidenceCitation) => void;
 }) {
   const verifyStarted =
     snapshot.task.status === "verifying" ||
@@ -1228,32 +1423,104 @@ function EvidencePanel({
           {snapshot.artifacts.map((artifact) => {
             const meta = ARTIFACT_META[artifact.artifact_type];
             const Icon = meta.icon;
+            const isEvidence = artifact.artifact_type === "citation_snapshot";
+            const evidence = evidenceByArtifact[artifact.artifact_id];
+            const expanded = expandedEvidenceId === artifact.artifact_id;
             return (
-              <button
+              <div
                 key={artifact.artifact_id}
-                type="button"
-                onClick={() => onOpenArtifact(artifact)}
-                title={`Open ${artifact.purpose || meta.label}`}
-                className="group flex w-full items-center gap-3 rounded-lg py-3 text-left outline-none transition-colors hover:bg-white/55 focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2"
+                id={isEvidence ? `evidence-${artifact.artifact_id}` : undefined}
+                className="min-w-0"
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-900/[0.06] bg-white/75 text-gray-500">
-                  <Icon className="h-3.5 w-3.5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium text-gray-800">
-                    {artifact.purpose || meta.label}
-                  </span>
-                  <span
-                    className={cn(
-                      "mt-1 inline-flex rounded px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em]",
-                      meta.badgeClass,
+                <button
+                  type="button"
+                  onClick={() =>
+                    isEvidence
+                      ? onToggleEvidence(artifact.artifact_id)
+                      : onOpenArtifact(artifact)
+                  }
+                  title={`${isEvidence ? "Check" : "Open"} ${artifact.purpose || meta.label}`}
+                  aria-expanded={isEvidence ? expanded : undefined}
+                  className="group flex w-full items-center gap-3 rounded-lg py-3 text-left outline-none transition-colors hover:bg-white/55 focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-900/[0.06] bg-white/75 text-gray-500">
+                    {evidenceLoading === artifact.artifact_id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Icon className="h-3.5 w-3.5" />
                     )}
-                  >
-                    {meta.badge}
                   </span>
-                </span>
-                <ArrowUpRight className="h-3.5 w-3.5 text-gray-300 transition-colors group-hover:text-gray-600" />
-              </button>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-gray-800">
+                      {artifact.purpose || meta.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "mt-1 inline-flex rounded px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em]",
+                        meta.badgeClass,
+                      )}
+                    >
+                      {meta.badge}
+                    </span>
+                  </span>
+                  {isEvidence ? (
+                    <ChevronRight
+                      className={cn(
+                        "h-3.5 w-3.5 text-gray-300 transition-transform",
+                        expanded && "rotate-90",
+                      )}
+                    />
+                  ) : (
+                    <ArrowUpRight className="h-3.5 w-3.5 text-gray-300 transition-colors group-hover:text-gray-600" />
+                  )}
+                </button>
+                {isEvidence && expanded && (
+                  <div className="mb-2 ml-11 space-y-1.5 pr-1">
+                    {(evidence?.citations ?? []).map((citation) => {
+                      const status = EVIDENCE_STATUS_META[citation.status];
+                      const locator = citation.cell
+                        ? [citation.sheet, citation.cell]
+                            .filter(Boolean)
+                            .join("!")
+                        : citation.page != null
+                          ? `Page ${citation.page}`
+                          : "Source";
+                      return (
+                        <button
+                          key={citation.id}
+                          type="button"
+                          disabled={!citation.openable}
+                          onClick={() => onOpenCitation(citation)}
+                          title={citation.quote || citation.detail}
+                          className="block w-full rounded-md px-2 py-1.5 text-left outline-none hover:bg-gray-900/[0.035] focus-visible:ring-2 focus-visible:ring-blue-500/70 disabled:cursor-default disabled:opacity-65"
+                        >
+                          <span className="flex min-w-0 items-center justify-between gap-2 text-[10px]">
+                            <span className="min-w-0 truncate font-medium text-gray-700">
+                              {citation.filename} · {locator}
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 font-medium",
+                                status.className,
+                              )}
+                            >
+                              {status.label}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 line-clamp-2 break-words text-[10px] leading-4 text-gray-500 [overflow-wrap:anywhere]">
+                            {citation.quote || citation.detail}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {evidence && evidence.citations.length === 0 && (
+                      <p className="px-2 py-2 text-[10px] leading-4 text-red-700">
+                        Citation missing — no source anchor was recorded.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
           {snapshot.artifacts.length === 0 && (

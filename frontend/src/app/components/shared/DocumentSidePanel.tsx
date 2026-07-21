@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
     AlertCircle,
+    ArrowLeft,
     Check,
     Download,
     Eye,
@@ -13,6 +14,7 @@ import {
     Upload,
     X,
 } from "lucide-react";
+import Link from "next/link";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
 import { PdfView } from "@/app/components/shared/views/PdfView";
@@ -29,6 +31,7 @@ import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 import { formatBytes } from "@/app/components/projects/ProjectPageParts";
+import type { DocumentDeepLinkTarget } from "@/app/components/documents/DocTable";
 
 const MIN_DOC_COLUMN_WIDTH = 420;
 const DEFAULT_DOC_COLUMN_WIDTH = 620;
@@ -40,6 +43,7 @@ const MAX_PANEL_WIDTH = 1180;
 interface DocumentSidePanelProps {
     doc: Document | null;
     versionId?: string | null;
+    citationTarget?: DocumentDeepLinkTarget | null;
     currentVersionId?: string | null;
     versions: DocumentVersion[];
     versionsLoading: boolean;
@@ -77,6 +81,7 @@ interface DocumentSidePanelProps {
 export function DocumentSidePanel({
     doc,
     versionId,
+    citationTarget = null,
     currentVersionId,
     versions,
     versionsLoading,
@@ -259,6 +264,30 @@ export function DocumentSidePanel({
         replaceFileType === "pdf" ? ".pdf" : ".docx,.doc";
     const ownerLabel =
         doc.owner_display_name?.trim() || doc.owner_email?.trim() || "—";
+    const citationQuotes =
+        citationTarget?.quote && citationTarget.status !== "missing"
+            ? [
+                  {
+                      page:
+                          typeof citationTarget.page === "number"
+                              ? citationTarget.page
+                              : Number.parseInt(
+                                    String(citationTarget.page ?? "1"),
+                                    10,
+                                ) || 1,
+                      quote: citationTarget.quote,
+                  },
+              ]
+            : undefined;
+    const citationCells =
+        citationTarget?.cell || citationTarget?.sheet
+            ? [
+                  {
+                      sheet: citationTarget.sheet ?? undefined,
+                      cell: citationTarget.cell ?? undefined,
+                  },
+              ]
+            : undefined;
 
     async function handleSaveName() {
         if (!selectedVersionId) return;
@@ -481,6 +510,43 @@ export function DocumentSidePanel({
                     </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                    {citationTarget?.returnTaskId && (
+                        <Link
+                            href={`/agent-tasks/${encodeURIComponent(citationTarget.returnTaskId)}?restore=1`}
+                            className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-[10px] font-medium text-gray-600 outline-none hover:bg-white/60 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500/70"
+                        >
+                            <ArrowLeft className="h-3 w-3" />
+                            Task
+                        </Link>
+                    )}
+                    {citationTarget?.status && (
+                        <span
+                            title={citationTarget.detail ?? undefined}
+                            className={cn(
+                                "hidden max-w-56 items-center gap-1 truncate rounded-full px-2 py-1 text-[10px] font-medium sm:inline-flex",
+                                citationTarget.status === "exact"
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : citationTarget.status ===
+                                        "version_mismatch"
+                                      ? "bg-amber-50 text-amber-800"
+                                      : "bg-red-50 text-red-700",
+                            )}
+                        >
+                            {citationTarget.status === "exact" ? (
+                                <Check className="h-3 w-3 shrink-0" />
+                            ) : (
+                                <AlertCircle className="h-3 w-3 shrink-0" />
+                            )}
+                            <span className="truncate">
+                                {citationTarget.status === "exact"
+                                    ? "Citation located"
+                                    : citationTarget.status ===
+                                        "version_mismatch"
+                                      ? "Cited version"
+                                      : "Anchor drifted"}
+                            </span>
+                        </span>
+                    )}
                     <div className="flex h-7 items-center rounded-full bg-gray-200/70 p-0.5 md:hidden">
                         <button
                             type="button"
@@ -538,12 +604,14 @@ export function DocumentSidePanel({
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                highlightCells={citationCells}
                             />
                         ) : selectedIsDocx ? (
                             <DocxView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                quotes={citationQuotes}
                             />
                         ) : (
                             <PdfView
@@ -552,6 +620,7 @@ export function DocumentSidePanel({
                                     document_id: doc.id,
                                     version_id: selectedVersionId,
                                 }}
+                                quotes={citationQuotes}
                             />
                         )}
                     </div>

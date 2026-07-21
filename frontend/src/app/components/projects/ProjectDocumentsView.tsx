@@ -9,7 +9,9 @@ import {
     useRef,
     useState,
 } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ArrowLeft, ChevronDown, Plus } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
     createProjectFolder,
     deleteProjectFolder,
@@ -26,6 +28,7 @@ import {
     DocTable,
     type DocTableSelectionActions,
     type DocTableFolder,
+    type DocumentDeepLinkTarget,
 } from "@/app/components/documents/DocTable";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { ProjectSectionToolbar, useProjectWorkspace } from "./ProjectWorkspace";
@@ -36,6 +39,7 @@ interface Props {
 }
 
 export function ProjectDocumentsView({ projectId }: Props) {
+    const searchParams = useSearchParams();
     const workspace = useProjectWorkspace();
     const {
         project,
@@ -54,6 +58,31 @@ export function ProjectDocumentsView({ projectId }: Props) {
         useState<DocTableSelectionActions | null>(null);
     const [actionsOpen, setActionsOpen] = useState(false);
     const actionsRef = useRef<HTMLDivElement>(null);
+    const returnTaskId = searchParams.get("return_task");
+    const deepLinkTarget = useMemo<DocumentDeepLinkTarget | null>(() => {
+        const documentId = searchParams.get("open_document");
+        if (!documentId) return null;
+        const rawStatus = searchParams.get("citation_status");
+        const status =
+            rawStatus === "exact" ||
+            rawStatus === "drifted" ||
+            rawStatus === "missing" ||
+            rawStatus === "version_mismatch"
+                ? rawStatus
+                : null;
+        const rawPage = searchParams.get("page");
+        return {
+            documentId,
+            returnTaskId,
+            versionId: searchParams.get("version_id"),
+            status,
+            detail: searchParams.get("citation_detail"),
+            page: rawPage,
+            quote: searchParams.get("quote"),
+            sheet: searchParams.get("sheet"),
+            cell: searchParams.get("cell"),
+        };
+    }, [returnTaskId, searchParams]);
 
     useEffect(() => {
         if (!projectLoading) prefetchProjectSections();
@@ -188,6 +217,32 @@ export function ProjectDocumentsView({ projectId }: Props) {
 
     return (
         <>
+            {returnTaskId && (
+                <div className="flex min-h-9 items-center gap-3 border-b border-gray-900/[0.055] px-4 text-[11px] text-gray-600 md:px-6">
+                    <Link
+                        href={`/agent-tasks/${encodeURIComponent(returnTaskId)}?restore=1`}
+                        className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-1 font-medium text-gray-800 outline-none hover:bg-gray-900/[0.04] focus-visible:ring-2 focus-visible:ring-blue-500/70"
+                    >
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                        Work task
+                    </Link>
+                    <span className="h-3 w-px bg-gray-200" aria-hidden="true" />
+                    <span
+                        className="min-w-0 truncate"
+                        title={deepLinkTarget?.detail ?? undefined}
+                    >
+                        {deepLinkTarget?.status === "exact"
+                            ? "Citation located in the referenced version"
+                            : deepLinkTarget?.status === "version_mismatch"
+                              ? "Viewing the cited version; the source has since changed"
+                              : deepLinkTarget?.status === "drifted"
+                                ? "Source opened; the citation anchor has drifted"
+                                : deepLinkTarget
+                                  ? "Opened from task evidence"
+                                  : "Opened from work task"}
+                    </span>
+                </div>
+            )}
             <ProjectSectionToolbar actions={toolbarActions} />
             <DocTable
                 scopeKey={projectId}
@@ -224,6 +279,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
                     ) : null
                 }
                 onOwnerOnlyAction={setOwnerOnlyAction}
+                deepLinkTarget={deepLinkTarget}
             />
         </>
     );

@@ -10,11 +10,7 @@ export type AgentTaskStatus =
   | "failed";
 
 export type AgentStepStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "blocked"
-  | "skipped";
+  "pending" | "running" | "completed" | "blocked" | "skipped";
 
 export type AgentDeliverable = {
   key: string;
@@ -76,9 +72,7 @@ export type ArtifactLink = {
 export type AgentArtifactLink = ArtifactLink;
 
 export type AgentReviewStatus =
-  | "review_required"
-  | "changes_requested"
-  | "approved";
+  "review_required" | "changes_requested" | "approved";
 
 export type ApprovedArtifactSnapshot = {
   artifact_type: "draft" | "tabular_review";
@@ -103,6 +97,32 @@ export type AgentReviewDecision = {
   note: string;
   artifact_snapshot: ApprovedArtifactSnapshot[];
   created_at: string;
+};
+
+export type AgentEvidenceStatus =
+  "exact" | "drifted" | "missing" | "version_mismatch";
+
+export type AgentEvidenceCitation = {
+  id: string;
+  ref: number | null;
+  document_id: string | null;
+  version_id: string | null;
+  current_version_id: string | null;
+  version_number: number | null;
+  filename: string;
+  file_type: string | null;
+  page: number | string | null;
+  quote: string;
+  sheet: string | null;
+  cell: string | null;
+  status: AgentEvidenceStatus;
+  detail: string;
+  openable: boolean;
+};
+
+export type AgentEvidenceSnapshot = {
+  artifact_id: string;
+  citations: AgentEvidenceCitation[];
 };
 
 export type AgentTaskSnapshot = {

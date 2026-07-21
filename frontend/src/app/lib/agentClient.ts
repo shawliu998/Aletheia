@@ -1,5 +1,9 @@
 import { supabase } from "@/app/lib/supabase";
-import type { AgentTask, AgentTaskSnapshot } from "@/app/types/agent";
+import type {
+  AgentEvidenceSnapshot,
+  AgentTask,
+  AgentTaskSnapshot,
+} from "@/app/types/agent";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
@@ -55,6 +59,12 @@ export function listAgentTasks(matterId?: string) {
 export function getAgentTask(taskId: string) {
   return request<AgentTaskSnapshot>(
     `/agent-tasks/${encodeURIComponent(taskId)}`,
+  );
+}
+
+export function getAgentTaskEvidence(taskId: string, artifactId: string) {
+  return request<AgentEvidenceSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/evidence/${encodeURIComponent(artifactId)}`,
   );
 }
 
