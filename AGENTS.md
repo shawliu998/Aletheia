@@ -11,3 +11,5 @@ These rules apply to the entire repository.
 7. Do not change APIs, permissions, security boundaries, authentication, export gates, or legal disclaimers merely to support a UI adjustment.
 8. Preserve unknown and unrelated untracked files. Do not clean, move, stage, or delete them.
 9. UI acceptance must cover same-size Mike/Vera screenshots, keyboard operation and visible focus, long Chinese text, 125% and 150% zoom, and responsive behavior. Keep the primary workflow recognizable as Mike.
+10. Without a defined threat model or explicit user need, do not add encryption, permission, audit, security state, or security pages. Do not remove existing authentication, authorization, Keychain storage, Matter ownership, or file-path validation.
+11. Do not promote hashes, internal IDs, `local-first`, or encryption in ordinary UI. Keep factual notices when selected cloud models send content off-device.

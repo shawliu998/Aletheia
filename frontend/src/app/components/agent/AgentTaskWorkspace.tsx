@@ -305,9 +305,7 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
   ): Promise<boolean> {
     if (reviewSubmitting) return false;
     if (status === "changes_requested" && !reviewNote.trim()) {
-      setReviewError(
-        "Describe the required changes so the decision is auditable.",
-      );
+      setReviewError("Describe the required changes before continuing.");
       return false;
     }
     setReviewSubmitting(status);
@@ -1105,9 +1103,9 @@ function DeliverablesPanel({
             {latestApprovedDecision?.artifact_snapshot.map((artifact) => (
               <p
                 key={artifact.version_id}
-                className="mt-2 break-all font-mono text-[9px] text-gray-400"
+                className="mt-2 break-words text-[10px] text-gray-500 [overflow-wrap:anywhere]"
               >
-                {artifact.filename} · {artifact.sha256}
+                {artifact.filename} · V{artifact.version_number}
               </p>
             ))}
             <p className="mt-2">

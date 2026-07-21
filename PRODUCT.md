@@ -15,12 +15,17 @@ Default screen priority is:
 1. Matter and work objective;
 2. Word, Excel, and conclusion outputs;
 3. one-action source verification;
-4. approval or requested changes when necessary;
-5. collapsed audit, version, hash, and execution detail.
+4. approval or requested changes when necessary.
+
+Technical detail appears only when it helps resolve a failure or explains a controlled export. It is not a regular product layer.
 
 The execution layer stays thin: show the objective, three to six steps, outputs, and blockers requiring user action. Do not expose chain of thought, tool-call streams, or developer controls.
 
-Evidence is core but restrained. Prefer precise source deep links and brief location states over a separate evidence workspace. Human review appears according to risk, principally for final, external, or controlled outputs; ordinary drafts and internal viewing should remain frictionless. Local storage, encryption, permissions, and hashes are quiet infrastructure, visible in settings, on data egress, during failures, or when the user opens audit detail.
+Evidence is core but restrained. Prefer precise source deep links and brief location states over a separate evidence workspace. Human review appears according to risk, principally for final, external, or controlled outputs; ordinary drafts and internal viewing should remain frictionless.
+
+Vera does not claim to be fully offline. When a user chooses a cloud model such as DeepSeek or Kimi, relevant content leaves the device for model processing; the product must state that fact at the point of configuration or egress. Existing SQLCipher support may remain for compatibility, but it is not a product claim and should not be expanded without a concrete need.
+
+System Keychain storage for API keys, localhost binding, Matter ownership checks, file-path validation, and factual cloud-model data notices are necessary engineering baselines. SHA-256 is an internal integrity check for approved-version exports, not normal UI content. The single-user stage does not add roles or RBAC.
 
 ## Decision filter
 
@@ -41,4 +46,5 @@ If none apply, do not build it. Reuse existing Mike routes, objects, and compone
 - approval at every step or on routine drafts;
 - promoting `local-first` on every page;
 - technical IDs, hashes, or internal state on primary screens;
+- security centers, encryption dashboards, or enterprise RBAC without a defined need;
 - a Vera-specific visual system that diverges from Mike.
