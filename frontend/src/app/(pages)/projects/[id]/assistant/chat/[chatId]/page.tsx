@@ -58,6 +58,10 @@ import type {
     Project,
 } from "@/app/components/shared/types";
 import {
+    applyResolvedEditVersionToTabs,
+    type ResolvedEditVersionArgs,
+} from "@/app/components/assistant/editResolutionTabs";
+import {
     expandCitationToEntries,
     isDocxFilename,
     isSpreadsheetFilename,
@@ -532,18 +536,8 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         });
     };
 
-    const handleEditResolved = (_args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => {
-        // Re-render after accept/reject is disabled while we verify the
-        // client-side optimistic mutation works on its own. Re-enable by
-        // bumping versionId + refetchKey on the matching tab and marking
-        // it reloading like before.
-        void _args;
+    const handleEditResolved = (args: ResolvedEditVersionArgs) => {
+        setTabs((prev) => applyResolvedEditVersionToTabs(prev, args));
     };
 
     const patchTab = (documentId: string, patch: Partial<DocTab>) => {

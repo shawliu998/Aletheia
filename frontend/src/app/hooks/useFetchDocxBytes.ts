@@ -119,10 +119,8 @@ export function useFetchDocxBytes(
 }
 
 /**
- * Evict cache entries for a given document (e.g. after accept/reject
- * writes new bytes at the same storage path, or the user uploads a new
- * version). Pass a versionId to scope eviction; omit to clear every
- * cached version for that document.
+ * Evict cache entries for a given document. Pass a versionId to scope
+ * eviction; omit to clear every cached version for that document.
  */
 export function invalidateDocxBytes(
     documentId: string,

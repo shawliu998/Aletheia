@@ -4,6 +4,7 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { supabase } from "@/app/lib/supabase";
 import type { EditAnnotation } from "../../shared/types";
 import { applyOptimisticResolution } from "../EditCard";
+import type { ResolvedEditVersionArgs } from "../editResolutionTabs";
 
 /**
  * Card rendered above the per-edit EditCards when a message produced
@@ -33,13 +34,7 @@ function BulkEditActions({
         documentId: string;
         verb: "accept" | "reject";
     }) => void;
-    onResolved?: (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => void;
+    onResolved?: (args: ResolvedEditVersionArgs) => void;
     onError?: (args: {
         editId: string;
         documentId: string;
@@ -102,6 +97,7 @@ function BulkEditActions({
                         ok: boolean;
                         status?: "accepted" | "rejected";
                         version_id: string | null;
+                        version_number?: number | null;
                         download_url: string | null;
                     };
                     const nextStatus =
@@ -112,6 +108,12 @@ function BulkEditActions({
                         documentId: annotation.document_id,
                         status: nextStatus,
                         versionId: data.version_id,
+                        versionNumber:
+                            typeof data.version_number === "number"
+                                ? data.version_number
+                                : data.version_number === null
+                                  ? null
+                                  : undefined,
                         downloadUrl: data.download_url,
                     });
                 } catch (e) {
@@ -221,13 +223,7 @@ export function EditCardsSection({
         documentId: string;
         verb: "accept" | "reject";
     }) => void;
-    onResolved?: (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => void;
+    onResolved?: (args: ResolvedEditVersionArgs) => void;
     onError?: (args: {
         editId: string;
         documentId: string;

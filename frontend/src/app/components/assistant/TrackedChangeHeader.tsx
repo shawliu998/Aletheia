@@ -5,6 +5,7 @@ import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { applyOptimisticResolution } from "./EditCard";
 import type { EditAnnotation } from "../shared/types";
+import type { ResolvedEditVersionArgs } from "./editResolutionTabs";
 
 const PANEL_GLASS_SURFACE =
     "rounded-2xl bg-white/58 shadow-[0_5px_15px_rgba(15,23,42,0.095),inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-8px_16px_rgba(255,255,255,0.16)] backdrop-blur-2xl";
@@ -14,14 +15,6 @@ type ResolveArgs = {
     editId: string;
     documentId: string;
     verb: "accept" | "reject";
-};
-
-type ResolvedArgs = {
-    editId: string;
-    documentId: string;
-    status: "accepted" | "rejected";
-    versionId: string | null;
-    downloadUrl: string | null;
 };
 
 type ErrorArgs = {
@@ -44,7 +37,7 @@ export function TrackedChangeHeader({
     changeNumber?: number;
     isEditReloading?: boolean;
     onResolveStart?: (args: ResolveArgs) => void;
-    onResolved?: (args: ResolvedArgs) => void;
+    onResolved?: (args: ResolvedEditVersionArgs) => void;
     onError?: (args: ErrorArgs) => void;
     onHighlight?: () => void;
 }) {
@@ -111,7 +104,7 @@ function EditResolveButtons({
     edit: EditAnnotation;
     isReloading?: boolean;
     onResolveStart?: (args: ResolveArgs) => void;
-    onResolved?: (args: ResolvedArgs) => void;
+    onResolved?: (args: ResolvedEditVersionArgs) => void;
     onError?: (args: ErrorArgs) => void;
 }) {
     const [busy, setBusy] = useState(false);
@@ -166,6 +159,7 @@ function EditResolveButtons({
                     ok: boolean;
                     status?: "accepted" | "rejected";
                     version_id: string | null;
+                    version_number?: number | null;
                     download_url: string | null;
                 };
                 const nextStatus =
@@ -177,6 +171,12 @@ function EditResolveButtons({
                     documentId: edit.document_id,
                     status: nextStatus,
                     versionId: data.version_id,
+                    versionNumber:
+                        typeof data.version_number === "number"
+                            ? data.version_number
+                            : data.version_number === null
+                              ? null
+                              : undefined,
                     downloadUrl: data.download_url,
                 });
             } catch (e) {

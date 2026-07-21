@@ -26,6 +26,7 @@ import {
     WorkflowAppliedBlock,
     type CourtListenerBlockItem,
 } from "./message/EventBlocks";
+import type { ResolvedEditVersionArgs } from "./editResolutionTabs";
 
 interface Props {
     events?: AssistantEvent[];
@@ -69,13 +70,7 @@ interface Props {
         documentId: string;
         verb: "accept" | "reject";
     }) => void;
-    onEditResolved?: (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => void;
+    onEditResolved?: (args: ResolvedEditVersionArgs) => void;
     onEditError?: (args: {
         editId: string;
         documentId: string;
@@ -127,13 +122,7 @@ export function AssistantMessage({
         Record<string, string>
     >({});
 
-    const handleEditResolved = (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => {
+    const handleEditResolved = (args: ResolvedEditVersionArgs) => {
         if (args.downloadUrl) {
             setResolvedOverrides((prev) => ({
                 ...prev,

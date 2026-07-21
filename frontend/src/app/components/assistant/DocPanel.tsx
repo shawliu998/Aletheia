@@ -27,6 +27,7 @@ import type {
     DocumentCitation,
     EditAnnotation,
 } from "../shared/types";
+import type { ResolvedEditVersionArgs } from "./editResolutionTabs";
 
 /**
  * Discriminated-union describing what the panel is showing above the viewer.
@@ -52,13 +53,7 @@ export type DocPanelMode =
               documentId: string;
               verb: "accept" | "reject";
           }) => void;
-          onResolved?: (args: {
-              editId: string;
-              documentId: string;
-              status: "accepted" | "rejected";
-              versionId: string | null;
-              downloadUrl: string | null;
-          }) => void;
+          onResolved?: (args: ResolvedEditVersionArgs) => void;
           onError?: (args: {
               editId: string;
               documentId: string;

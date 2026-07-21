@@ -4,6 +4,7 @@ import { useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
 import type { EditAnnotation } from "../shared/types";
+import type { ResolvedEditVersionArgs } from "./editResolutionTabs";
 
 function normalizeText(s: string) {
     return s.replace(/\s+/g, " ").trim();
@@ -158,13 +159,7 @@ interface Props {
         documentId: string;
         verb: "accept" | "reject";
     }) => void;
-    onResolved?: (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => void;
+    onResolved?: (args: ResolvedEditVersionArgs) => void;
     /**
      * Fires when the backend accept/reject call fails. The optimistic
      * DOM mutation has already been reverted. Parent should surface a
@@ -244,6 +239,7 @@ export function EditCard({
                 already_resolved?: boolean;
                 status?: "accepted" | "rejected";
                 version_id: string | null;
+                version_number?: number | null;
                 download_url: string | null;
             };
             const nextStatus =
@@ -254,6 +250,12 @@ export function EditCard({
                 documentId: annotation.document_id,
                 status: nextStatus,
                 versionId: data.version_id,
+                versionNumber:
+                    typeof data.version_number === "number"
+                        ? data.version_number
+                        : data.version_number === null
+                          ? null
+                          : undefined,
                 downloadUrl: data.download_url,
             });
         } catch (e) {

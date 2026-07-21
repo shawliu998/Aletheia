@@ -415,6 +415,9 @@ async function buildEditResolutionCurrentPayload(
     ...(options.alreadyResolved ? { already_resolved: true } : {}),
     ...(options.status ? { status: options.status } : {}),
     version_id: active?.id ?? currentVersionId,
+    version_number: active?.version_number ?? null,
+    current_version_id: active?.id ?? currentVersionId,
+    current_version_number: active?.version_number ?? null,
     download_url: active
       ? buildDownloadUrl(
           active.storage_path,
@@ -1439,6 +1442,9 @@ async function handleEditResolution(
     ok: true,
     status,
     version_id: committed.version.id,
+    version_number: committed.version.version_number,
+    current_version_id: committed.version.id,
+    current_version_number: committed.version.version_number,
     download_url: buildDownloadUrl(
       committed.version.storage_path,
       downloadFilenameForVersion(

@@ -17,6 +17,7 @@ import {
     CaseLawPanel,
     type CaseTab,
 } from "./CaseLawPanel";
+import type { ResolvedEditVersionArgs } from "./editResolutionTabs";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 
@@ -84,13 +85,7 @@ interface Props {
         documentId: string;
         verb: "accept" | "reject";
     }) => void;
-    onEditResolved?: (args: {
-        editId: string;
-        documentId: string;
-        status: "accepted" | "rejected";
-        versionId: string | null;
-        downloadUrl: string | null;
-    }) => void;
+    onEditResolved?: (args: ResolvedEditVersionArgs) => void;
     onEditError?: (args: {
         editId: string;
         documentId: string;

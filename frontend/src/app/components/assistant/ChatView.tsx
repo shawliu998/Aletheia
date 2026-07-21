@@ -19,6 +19,10 @@ import type {
     EditAnnotation,
     Message,
 } from "../shared/types";
+import {
+    applyResolvedEditVersionToTabs,
+    type ResolvedEditVersionArgs,
+} from "./editResolutionTabs";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 
@@ -355,13 +359,7 @@ export function ChatView({
     );
 
     const handleEditResolved = useCallback(
-        (args: {
-            editId: string;
-            documentId: string;
-            status: "accepted" | "rejected";
-            versionId: string | null;
-            downloadUrl: string | null;
-        }) => {
+        (args: ResolvedEditVersionArgs) => {
             setResolvedEditStatuses((prev) => ({
                 ...prev,
                 [args.editId]: args.status,
@@ -378,24 +376,7 @@ export function ChatView({
                 next.delete(args.editId);
                 return next;
             });
-            // Propagate the new status onto any open edit-tab for this
-            // edit so DocPanel's Accept/Reject buttons flip and disable
-            // (their sync effect keys off edit.status). Without this, a
-            // resolve triggered from the inline EditCard or BulkEditActions
-            // leaves the panel buttons looking live.
-            setTabs((prev) =>
-                prev.map((t) =>
-                    t.kind === "edit" && t.edit.edit_id === args.editId
-                        ? {
-                              ...t,
-                              edit: { ...t.edit, status: args.status },
-                          }
-                        : t,
-                ),
-            );
-            // Accept/reject mutates bytes for this document's current
-            // version; drop the cache so the next DocxView render (or an
-            // explicit re-open) fetches the fresh file.
+            setTabs((prev) => applyResolvedEditVersionToTabs(prev, args));
             invalidateDocxBytes(args.documentId);
         },
         [],

@@ -39,9 +39,8 @@ interface Props {
     } | null;
     /**
      * Forces a byte re-fetch when it changes, even if documentId/versionId
-     * are stable. Used after accept/reject: the backend overwrites bytes at
-     * the same storage path (no new version row), so the hook has no other
-     * signal that the file changed.
+     * are stable. Most accept/reject paths now switch versionId; this remains
+     * for callers that need an explicit retry.
      */
     refetchKey?: number;
     /**
