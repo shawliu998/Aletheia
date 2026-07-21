@@ -49,6 +49,12 @@ export type AgentReviewDecision = {
   created_at: string;
 };
 
+export type AgentTaskRetryCheckpoint = {
+  attempt: number;
+  retry_at: string;
+  classification: "rate_limit" | "provider_unavailable" | "network";
+};
+
 export const DEFAULT_WORK_PLAN: StepDefinition[] = [
   {
     title: "Read the matter documents",
@@ -537,6 +543,73 @@ export async function recordAgentTaskCheckpoint(
     .eq("id", taskId)
     .eq("user_id", userId);
   if (error) throw dbError(error, "Failed to record task checkpoint");
+  return getAgentTaskSnapshot(db, taskId, userId);
+}
+
+export function readAgentTaskRetryCheckpoint(task: {
+  latest_checkpoint?: unknown;
+}): AgentTaskRetryCheckpoint | null {
+  const checkpoint = task.latest_checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return null;
+  const retry = (checkpoint as { runner_retry?: unknown }).runner_retry;
+  if (!retry || typeof retry !== "object") return null;
+  const row = retry as Record<string, unknown>;
+  if (
+    typeof row.attempt !== "number" ||
+    !Number.isInteger(row.attempt) ||
+    row.attempt < 1 ||
+    typeof row.retry_at !== "string" ||
+    !["rate_limit", "provider_unavailable", "network"].includes(
+      String(row.classification),
+    )
+  ) {
+    return null;
+  }
+  return {
+    attempt: row.attempt,
+    retry_at: row.retry_at,
+    classification:
+      row.classification as AgentTaskRetryCheckpoint["classification"],
+  };
+}
+
+export async function recordAgentTaskRetryCheckpoint(
+  db: Db,
+  taskId: string,
+  userId: string,
+  input: AgentTaskRetryCheckpoint,
+) {
+  const snapshot = await getAgentTaskSnapshot(db, taskId, userId);
+  if (!snapshot) return null;
+  const current = snapshot.task.current_plan.find(
+    (step: { status: AgentStepStatus }) => step.status === "running",
+  );
+  const updatedAt = now();
+  const retryTime = new Date(input.retry_at);
+  const retryLabel = Number.isNaN(retryTime.getTime())
+    ? "soon"
+    : retryTime.toLocaleTimeString("en", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+  const { error } = await db
+    .from("agent_tasks")
+    .update({
+      latest_checkpoint: current
+        ? {
+            step_id: current.id,
+            iteration: current.attempt,
+            summary: `Model is busy. Retrying automatically at ${retryLabel}.`,
+            created_at: updatedAt,
+            runner_retry: input,
+          }
+        : snapshot.task.latest_checkpoint,
+      updated_at: updatedAt,
+    })
+    .eq("id", taskId)
+    .eq("user_id", userId);
+  if (error) throw dbError(error, "Failed to schedule task retry");
   return getAgentTaskSnapshot(db, taskId, userId);
 }
 

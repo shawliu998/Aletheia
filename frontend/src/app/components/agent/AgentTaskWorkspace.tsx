@@ -28,7 +28,6 @@ import { ModelToggle, MODELS } from "@/app/components/assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "@/app/components/popups/ApiKeyMissingPopup";
 import { getProject } from "@/app/lib/mikeApi";
 import {
-  advanceAgentTask,
   attachAgentTaskDocuments,
   createAgentReviewDecision,
   downloadApprovedAgentArtifact,
@@ -113,7 +112,6 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
   const { profile } = useUserProfile();
   const [snapshot, setSnapshot] = useState<AgentTaskSnapshot | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [autoRun, setAutoRun] = useState(false);
   const [matter, setMatter] = useState<Project | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [missingKeyProvider, setMissingKeyProvider] =
@@ -161,32 +159,28 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     });
   }, [loaded, taskId]);
 
+  const taskStatus = snapshot?.task.status;
+
   useEffect(() => {
-    if (!autoRun || !snapshot) return;
     if (
-      ["completed", "failed", "paused", "waiting_input"].includes(
-        snapshot.task.status,
-      )
+      !taskStatus ||
+      !["queued", "running", "verifying"].includes(taskStatus)
     ) {
       return;
     }
-    const timer = window.setTimeout(
-      async () => {
-        try {
-          const next = await advanceAgentTask(taskId);
-          setSnapshot({ ...next });
-        } catch (error) {
-          setAutoRun(false);
-          setExecutionError(
-            error instanceof Error ? error.message : "Task execution failed",
-          );
-          setSnapshot(await getAgentTask(taskId));
-        }
-      },
-      snapshot.task.status === "verifying" ? 1250 : 900,
-    );
-    return () => window.clearTimeout(timer);
-  }, [autoRun, snapshot, taskId]);
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getAgentTask(taskId)
+        .then((next) => {
+          if (!cancelled) setSnapshot(next);
+        })
+        .catch(() => undefined);
+    }, 4_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [taskId, taskStatus]);
 
   const completedSteps = useMemo(
     () =>
@@ -195,38 +189,18 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     [snapshot],
   );
 
-  async function runTask() {
-    if (!snapshot) return;
-    if (snapshot.task.status === "paused") {
-      setSnapshot(await resumeAgentTask(taskId));
-    }
+  async function resumeTask() {
     setExecutionError(null);
-    setAutoRun(true);
+    setSnapshot(await resumeAgentTask(taskId));
   }
 
   async function pauseTask() {
-    setAutoRun(false);
     setSnapshot(await pauseAgentTask(taskId));
-  }
-
-  async function runNextStep() {
-    if (!snapshot) return;
-    setExecutionError(null);
-    try {
-      const next = await advanceAgentTask(taskId);
-      setSnapshot({ ...next });
-    } catch (error) {
-      setExecutionError(
-        error instanceof Error ? error.message : "Task execution failed",
-      );
-      setSnapshot(await getAgentTask(taskId));
-    }
   }
 
   async function retryTask() {
     setExecutionError(null);
     setSnapshot(await retryAgentTask(taskId));
-    setAutoRun(true);
   }
 
   async function startRevision() {
@@ -235,7 +209,6 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     setReviewError(null);
     try {
       setSnapshot(await reviseAgentTask(taskId));
-      setAutoRun(true);
     } catch (error) {
       setReviewError(
         error instanceof Error
@@ -265,7 +238,6 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     }
     setExecutionError(null);
     setSnapshot(await attachAgentTaskDocuments(taskId, newDocumentIds));
-    setAutoRun(true);
   }
 
   async function handleModelChange(modelId: string) {
@@ -375,13 +347,9 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
   }
 
   const { task, artifacts } = snapshot;
-  const executable =
-    task.status === "queued" ||
-    task.status === "running" ||
-    task.status === "verifying";
   const providerQueued = Boolean(
-    task.status === "paused" &&
-    task.latest_checkpoint?.summary.startsWith("Provider queue:"),
+    ["running", "verifying"].includes(task.status) &&
+    task.latest_checkpoint?.runner_retry,
   );
   const matterName = matter?.name ?? "Matter";
   const sourceDocuments = (matter?.documents ?? []).filter((document) =>
@@ -530,11 +498,9 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
                 ) : (
                   <Clock3 className="h-3 w-3" />
                 )}
-                {providerQueued
-                  ? "Provider queue"
-                  : task.status === "completed" && reviewStatus
-                    ? REVIEW_LABELS[reviewStatus]
-                    : STATUS_LABELS[task.status]}
+                {task.status === "completed" && reviewStatus
+                  ? REVIEW_LABELS[reviewStatus]
+                  : STATUS_LABELS[task.status]}
               </span>
             ),
           },
@@ -548,7 +514,7 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
               ? {
                   icon: <Play className="h-3.5 w-3.5" />,
                   label: "Resume",
-                  onClick: runTask,
+                  onClick: resumeTask,
                 }
               : null,
         ]}
@@ -626,33 +592,6 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
                     </span>
                   )}
                 </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                {executable && (
-                  <button
-                    type="button"
-                    onClick={runNextStep}
-                    disabled={autoRun || task.status === "paused"}
-                    className="h-8 rounded-full bg-white px-3.5 text-xs font-medium text-gray-700 shadow-sm outline-none transition-colors hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-blue-500/70 disabled:cursor-default disabled:opacity-40"
-                  >
-                    Run next step
-                  </button>
-                )}
-                {executable && (
-                  <button
-                    type="button"
-                    onClick={runTask}
-                    disabled={autoRun}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-gray-950 px-4 text-xs font-medium text-white shadow-sm outline-none transition-colors hover:bg-black focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2 disabled:cursor-default disabled:opacity-45"
-                  >
-                    {autoRun ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Play className="h-3.5 w-3.5" />
-                    )}
-                    {autoRun ? "Running" : "Run task"}
-                  </button>
-                )}
               </div>
             </div>
           </header>

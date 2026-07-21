@@ -202,6 +202,20 @@ export async function verifyTaskCitationLinks(
 }
 
 export function isTransientModelError(error: unknown) {
+  if (error && typeof error === "object") {
+    const row = error as {
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { status?: unknown };
+    };
+    if (
+      [row.status, row.statusCode, row.response?.status].some(
+        (status) => status === 429 || status === 503,
+      )
+    ) {
+      return true;
+    }
+  }
   const message = error instanceof Error ? error.message : String(error);
   return /\b429\b|\b503\b|overloaded|queue|temporarily unavailable|resource exhausted|timed out|fetch failed|econnreset|etimedout|enetunreach|eai_again|socket hang up/i.test(
     message,
@@ -232,12 +246,19 @@ function queueRetryAttempts(selectedModel: string) {
 async function runStepWithQueueRetry(
   args: Parameters<typeof runLLMStream>[0],
   selectedModel: string,
+  shouldContinue?: () => Promise<boolean>,
 ) {
   const attempts = queueRetryAttempts(selectedModel);
   let lastError: unknown;
   for (const attempt of attempts) {
+    if (shouldContinue && !(await shouldContinue())) {
+      throw new AgentTaskExecutionInterruptedError();
+    }
     if (attempt.waitMs) {
       await new Promise((resolve) => setTimeout(resolve, attempt.waitMs));
+      if (shouldContinue && !(await shouldContinue())) {
+        throw new AgentTaskExecutionInterruptedError();
+      }
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 70_000);
@@ -258,6 +279,17 @@ async function runStepWithQueueRetry(
     }
   }
   throw lastError;
+}
+
+export class AgentTaskExecutionInterruptedError extends Error {
+  constructor() {
+    super("Agent task execution was paused or blocked");
+    this.name = "AgentTaskExecutionInterruptedError";
+  }
+}
+
+export function isAgentTaskExecutionInterrupted(error: unknown) {
+  return error instanceof AgentTaskExecutionInterruptedError;
 }
 
 function artifactFromCreatedEvent(
@@ -293,6 +325,7 @@ export async function executeAgentStep(input: {
   userId: string;
   userEmail?: string;
   instructionOverride?: string;
+  shouldContinue?: () => Promise<boolean>;
 }): Promise<AgentStepExecutionResult> {
   const { db, snapshot, userId, userEmail } = input;
   const stepIndex = snapshot.task.current_plan.findIndex(
@@ -403,8 +436,16 @@ export async function executeAgentStep(input: {
       disableTools: verifierOnly,
       apiKeys,
       projectId: snapshot.task.matter_id,
+      beforeToolBatch: input.shouldContinue
+        ? async () => {
+            if (!(await input.shouldContinue?.())) {
+              throw new AgentTaskExecutionInterruptedError();
+            }
+          }
+        : undefined,
     },
     executionModel,
+    input.shouldContinue,
   );
   const persistedEvents = stripTransientAssistantEvents(events);
   const { data: assistantMessage, error: assistantError } = await db

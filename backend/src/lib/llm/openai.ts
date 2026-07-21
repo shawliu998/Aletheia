@@ -197,7 +197,11 @@ async function createResponse(params: {
     const err = new Error(
       `OpenAI request failed (${response.status}): ${text || response.statusText}`,
     );
-    (err as { status?: number }).status = response.status;
+    (err as { status?: number; retryAfter?: string }).status = response.status;
+    const retryAfter = response.headers.get("retry-after");
+    if (retryAfter) {
+      (err as { retryAfter?: string }).retryAfter = retryAfter;
+    }
     throw err;
   }
 

@@ -171,6 +171,7 @@ export async function runLLMStream(params: {
   model?: string;
   apiKeys?: import("../llm").UserApiKeys;
   signal?: AbortSignal;
+  beforeToolBatch?: () => Promise<void>;
   /**
    * If set, generate_docx will attach created docs to this project so
    * they appear in the project sidebar. Leave null for general chats —
@@ -198,6 +199,7 @@ export async function runLLMStream(params: {
     model,
     apiKeys,
     signal,
+    beforeToolBatch,
     projectId,
   } = params;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
@@ -394,6 +396,7 @@ export async function runLLMStream(params: {
       },
       runTools: async (calls) => {
         throwIfAborted(signal);
+        await beforeToolBatch?.();
         // Emit any text the model produced before this tool turn so the
         // UI sees it before the tool results stream in.
         flushText();
@@ -432,6 +435,7 @@ export async function runLLMStream(params: {
           courtlistenerTurnState,
           apiKeys,
         );
+        await beforeToolBatch?.();
         throwIfAborted(signal);
         for (const r of docsRead) {
           events.push({

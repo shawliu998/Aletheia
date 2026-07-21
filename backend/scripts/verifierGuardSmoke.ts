@@ -48,6 +48,20 @@ function main() {
   );
   assert.equal(
     verifierRepairAlreadyAttempted({
+      latest_checkpoint: {
+        summary: "Model is busy. Retrying automatically at 12:00:00 PM.",
+        runner_retry: {
+          attempt: 2,
+          retry_at: "2026-07-21T12:00:00.000Z",
+          classification: "provider_unavailable",
+        },
+      },
+    }),
+    false,
+    "a transient runner retry must not consume the verifier repair allowance",
+  );
+  assert.equal(
+    verifierRepairAlreadyAttempted({
       latest_checkpoint: { summary: "Verifier completed with four PASS." },
     }),
     false,

@@ -26,6 +26,11 @@ export type AgentCheckpoint = {
   iteration: number;
   summary: string;
   created_at: string;
+  runner_retry?: {
+    attempt: number;
+    retry_at: string;
+    classification: "rate_limit" | "provider_unavailable" | "network";
+  };
 };
 
 export type AgentTask = {

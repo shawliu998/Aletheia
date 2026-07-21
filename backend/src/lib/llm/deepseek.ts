@@ -64,7 +64,11 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw abortError();
 }
 
-function responseError(status: number, body: string) {
+function responseError(
+  status: number,
+  body: string,
+  retryAfter?: string | null,
+) {
   let detail = body.trim();
   try {
     const parsed = JSON.parse(body) as {
@@ -77,11 +81,16 @@ function responseError(status: number, body: string) {
   } catch {
     // Preserve a bounded provider response when it is not JSON.
   }
-  return new Error(
+  const error = new Error(
     detail.startsWith("DeepSeek error")
       ? detail.slice(0, 2_000)
       : `DeepSeek request failed (${status}): ${detail.slice(0, 2_000) || "Unknown error"}`,
   );
+  (error as Error & { status?: number; retryAfter?: string }).status = status;
+  if (retryAfter) {
+    (error as Error & { retryAfter?: string }).retryAfter = retryAfter;
+  }
+  return error;
 }
 
 function extractSseJson(buffer: string): { events: unknown[]; rest: string } {
@@ -170,7 +179,11 @@ async function createChatCompletion(input: {
     );
   }
   if (!response.ok) {
-    throw responseError(response.status, await response.text().catch(() => ""));
+    throw responseError(
+      response.status,
+      await response.text().catch(() => ""),
+      response.headers.get("retry-after"),
+    );
   }
   return response;
 }
