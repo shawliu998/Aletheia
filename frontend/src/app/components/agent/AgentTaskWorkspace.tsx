@@ -472,6 +472,7 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     artifact: AgentTaskSnapshot["artifacts"][number],
     options: { versionId?: string | null } = {},
   ) {
+    if (!snapshot) return;
     rememberTaskContext();
     if (artifact.artifact_type === "chat") {
       const query = new URLSearchParams({ return_task: taskId });
@@ -489,16 +490,22 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
       artifact.artifact_type === "draft" ||
       artifact.artifact_type === "tabular_review"
     ) {
-      const lockedVersionId = snapshot?.review.decisions
-        .at(-1)
-        ?.artifact_snapshot.find(
-          (locked) => locked.artifact_id === artifact.artifact_id,
-        )?.version_id;
+      const lockedVersionId =
+        snapshot.review.status === "approved"
+          ? [...snapshot.review.decisions]
+              .reverse()
+              .find((decision) => decision.status === "approved")
+              ?.artifact_snapshot.find(
+                (locked) => locked.artifact_id === artifact.artifact_id,
+              )?.version_id
+          : undefined;
       const query = new URLSearchParams({
         open_document: artifact.artifact_id,
         return_task: taskId,
       });
-      const versionId = options.versionId ?? lockedVersionId;
+      const versionId = Object.hasOwn(options, "versionId")
+        ? options.versionId
+        : lockedVersionId;
       if (versionId) query.set("version_id", versionId);
       router.push(`/projects/${task.matter_id}?${query.toString()}`);
       return;
@@ -738,60 +745,72 @@ function DeliverablesPanel({
   const [reviewAction, setReviewAction] = useState<
     "approved" | "changes_requested" | null
   >(null);
-  const latestDecision = snapshot.review.decisions.at(-1) ?? null;
-  const approvedArtifacts =
-    reviewStatus === "approved" && latestDecision
-      ? latestDecision.artifact_snapshot
-      : [];
-  const outputRows = approvedArtifacts.length
-    ? approvedArtifacts.map((artifact) => ({
-        key: `${artifact.artifact_id}:${artifact.version_id}`,
-        label: artifact.purpose,
-        detail: artifact.filename,
-        version: artifact.version_number,
-        artifact,
-        linkedArtifact:
-          snapshot.artifacts.find(
-            (linked) => linked.artifact_id === artifact.artifact_id,
-          ) ?? null,
-      }))
-    : snapshot.task.deliverables
-        .filter((deliverable) => deliverable.required)
-        .map((deliverable) => ({
-          key: deliverable.key,
-          label: deliverable.title,
-          detail:
-            deliverable.artifact_type === "tabular_review"
-              ? "Excel workbook"
-              : "Word document",
-          version: null,
-          artifact: null,
-          linkedArtifact:
-            snapshot.artifacts.find(
-              (linked) => linked.artifact_id === deliverable.artifact_id,
-            ) ??
-            [...snapshot.artifacts]
-              .reverse()
-              .find(
-                (linked) =>
-                  linked.purpose ===
-                    (deliverable.purpose ??
-                      (deliverable.key === "risk-matrix"
-                        ? "Risk matrix"
-                        : deliverable.key === "review-memo"
-                          ? "Review memo draft"
-                          : deliverable.title)) &&
-                  (!deliverable.artifact_type ||
-                    linked.artifact_type === deliverable.artifact_type),
-              ) ??
-            null,
-        }));
+  const latestApprovedDecision = [...snapshot.review.decisions]
+    .reverse()
+    .find((decision) => decision.status === "approved");
+  const approvedByArtifact = new Map(
+    (latestApprovedDecision?.artifact_snapshot ?? []).map((artifact) => [
+      artifact.artifact_id,
+      artifact,
+    ]),
+  );
+  const versionByArtifact = new Map(
+    snapshot.review.version_state.current_artifacts.map((artifact) => [
+      artifact.artifact_id,
+      artifact,
+    ]),
+  );
+  const outputRows = snapshot.task.deliverables
+    .filter((deliverable) => deliverable.required)
+    .map((deliverable) => {
+      const linkedArtifact =
+        snapshot.artifacts.find(
+          (linked) => linked.artifact_id === deliverable.artifact_id,
+        ) ??
+        [...snapshot.artifacts]
+          .reverse()
+          .find(
+            (linked) =>
+              linked.purpose ===
+                (deliverable.purpose ??
+                  (deliverable.key === "risk-matrix"
+                    ? "Risk matrix"
+                    : deliverable.key === "review-memo"
+                      ? "Review memo draft"
+                      : deliverable.title)) &&
+              (!deliverable.artifact_type ||
+                linked.artifact_type === deliverable.artifact_type),
+          ) ??
+        null;
+      const currentVersion = linkedArtifact
+        ? (versionByArtifact.get(linkedArtifact.artifact_id) ?? null)
+        : null;
+      return {
+        key: deliverable.key,
+        label: deliverable.title,
+        detail:
+          currentVersion?.current_filename ??
+          (deliverable.artifact_type === "tabular_review"
+            ? "Excel workbook"
+            : "Word document"),
+        version: currentVersion?.current_version_number ?? null,
+        currentVersion,
+        approvedArtifact: linkedArtifact
+          ? (approvedByArtifact.get(linkedArtifact.artifact_id) ?? null)
+          : null,
+        linkedArtifact,
+      };
+    });
+  const hasEditedVersions =
+    snapshot.review.version_state.has_unapproved_changes;
   const releaseCopy =
     reviewStatus === "approved"
       ? "Approved versions are ready to export."
       : reviewStatus === "changes_requested"
         ? "Update the deliverables, then approve the current versions."
-        : "Review the outputs once, then release the current versions.";
+        : hasEditedVersions
+          ? "Current files changed after approval. Review the edited versions."
+          : "Review the outputs once, then release the current versions.";
 
   return (
     <section className="border-b border-gray-900/[0.07] py-5">
@@ -853,8 +872,10 @@ function DeliverablesPanel({
           </div>
           <div className="mt-3 divide-y divide-gray-900/[0.06] border-y border-gray-900/[0.06]">
             {outputRows.map((output) => {
-              const canDownload = output.artifact !== null;
-              const canOpen = output.linkedArtifact !== null;
+              const canDownload = output.approvedArtifact !== null;
+              const canOpen =
+                output.linkedArtifact !== null &&
+                output.currentVersion?.current_version_available !== false;
               return (
                 <div key={output.key} className="flex min-w-0 items-stretch">
                   <button
@@ -862,14 +883,15 @@ function DeliverablesPanel({
                     onClick={() => {
                       if (output.linkedArtifact) {
                         onOpenArtifact(output.linkedArtifact, {
-                          versionId: output.artifact?.version_id ?? null,
+                          versionId:
+                            output.currentVersion?.current_version_id ?? null,
                         });
                       }
                     }}
                     disabled={!canOpen}
                     title={
                       canOpen
-                        ? `Open ${output.label} at ${output.artifact ? "the approved version" : "its current version"}`
+                        ? `Open ${output.label} at its current version`
                         : "Output is not available yet"
                     }
                     className="flex min-h-12 min-w-0 flex-1 items-center gap-3 px-1 py-2 text-left outline-none transition-colors hover:bg-white/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:cursor-default disabled:opacity-60"
@@ -885,9 +907,15 @@ function DeliverablesPanel({
                       <span className="block truncate text-xs font-medium text-gray-800">
                         {output.label}
                       </span>
-                      <span className="mt-0.5 block truncate text-xs text-gray-500">
-                        {output.detail}
-                      </span>
+                      {output.currentVersion?.edited_after_approval ? (
+                        <span className="mt-0.5 block truncate text-xs text-amber-700">
+                          Edited after approval · review current version
+                        </span>
+                      ) : (
+                        <span className="mt-0.5 block truncate text-xs text-gray-500">
+                          {output.detail}
+                        </span>
+                      )}
                     </span>
                     {output.version && (
                       <span className="shrink-0 text-[10px] text-gray-400">
@@ -895,16 +923,17 @@ function DeliverablesPanel({
                       </span>
                     )}
                   </button>
-                  {canDownload && output.artifact && (
+                  {canDownload && output.approvedArtifact && (
                     <button
                       type="button"
-                      onClick={() => void onDownload(output.artifact!)}
+                      onClick={() => void onDownload(output.approvedArtifact!)}
                       disabled={downloadingArtifact !== null}
-                      title={`Export locked ${output.detail}`}
-                      aria-label={`Export locked ${output.detail}`}
+                      title={`${output.currentVersion?.edited_after_approval ? "Export previously approved" : "Export locked"} ${output.approvedArtifact.filename}`}
+                      aria-label={`${output.currentVersion?.edited_after_approval ? "Export previously approved" : "Export locked"} ${output.approvedArtifact.filename}`}
                       className="flex w-10 shrink-0 items-center justify-center text-gray-500 outline-none transition-colors hover:bg-white/60 hover:text-gray-800 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:opacity-50"
                     >
-                      {downloadingArtifact === output.artifact.artifact_id ? (
+                      {downloadingArtifact ===
+                      output.approvedArtifact.artifact_id ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <Download className="h-3.5 w-3.5" />
@@ -922,7 +951,9 @@ function DeliverablesPanel({
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-medium text-gray-800">
                 {reviewAction === "approved"
-                  ? "Approve current files"
+                  ? hasEditedVersions
+                    ? "Review current versions"
+                    : "Approve current files"
                   : "Describe required changes"}
               </p>
               <button
@@ -947,6 +978,13 @@ function DeliverablesPanel({
               }
               className="mt-2 w-full resize-none rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-900 outline-none ring-1 ring-gray-900/[0.08] placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500/70"
             />
+            {reviewAction === "approved" && hasEditedVersions && (
+              <p className="mt-2 text-[10px] leading-4 text-gray-500">
+                Approval checks the current versions, Matter ownership, and
+                source links. Vera has not rerun model verification on manual
+                edits.
+              </p>
+            )}
             <button
               type="button"
               onClick={async () => {
@@ -1064,15 +1102,14 @@ function DeliverablesPanel({
               Vera records the signed-in account identity; it does not verify
               professional licensing or credentials.
             </p>
-            {latestDecision?.status === "approved" &&
-              latestDecision.artifact_snapshot.map((artifact) => (
-                <p
-                  key={artifact.version_id}
-                  className="mt-2 break-all font-mono text-[9px] text-gray-400"
-                >
-                  {artifact.filename} · {artifact.sha256}
-                </p>
-              ))}
+            {latestApprovedDecision?.artifact_snapshot.map((artifact) => (
+              <p
+                key={artifact.version_id}
+                className="mt-2 break-all font-mono text-[9px] text-gray-400"
+              >
+                {artifact.filename} · {artifact.sha256}
+              </p>
+            ))}
             <p className="mt-2">
               Vera output remains subject to professional judgment and is not
               legal advice.

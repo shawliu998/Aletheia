@@ -5,6 +5,11 @@ import type {
   AgentTaskPlanningRequest,
   GoalAwareTaskPlan,
 } from "./agentTaskPlanner";
+import {
+  deriveAgentReviewStatus,
+  getAgentReviewVersionState,
+} from "./agentTaskReviewVersions";
+import type { ApprovedArtifactSnapshot } from "./agentTaskReviews";
 
 export type AgentTaskStatus =
   | "queued"
@@ -16,11 +21,7 @@ export type AgentTaskStatus =
   | "failed";
 
 export type AgentStepStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "blocked"
-  | "skipped";
+  "pending" | "running" | "completed" | "blocked" | "skipped";
 
 export type AgentArtifactType =
   | "chat"
@@ -456,7 +457,7 @@ export async function getAgentTaskSnapshot(
   const latestReview = decisions.at(-1) ?? null;
 
   const { user_id: _userId, ...publicTask } = task;
-  return {
+  const snapshot = {
     task: {
       ...publicTask,
       current_plan: (steps ?? []).map(
@@ -465,10 +466,20 @@ export async function getAgentTaskSnapshot(
     },
     artifacts: artifacts ?? [],
     review: {
-      status:
-        latestReview?.status ??
-        (task.status === "completed" ? "review_required" : null),
       decisions,
+    },
+  };
+  const versionState = await getAgentReviewVersionState(db, snapshot);
+  return {
+    ...snapshot,
+    review: {
+      ...snapshot.review,
+      status: deriveAgentReviewStatus(
+        task.status as AgentTaskStatus,
+        latestReview?.status ?? null,
+        versionState,
+      ),
+      version_state: versionState,
     },
   };
 }
@@ -508,7 +519,7 @@ export async function listAgentTasks(
       .order("position", { ascending: true }),
     db
       .from("agent_task_review_decisions")
-      .select("id,task_id,status,created_at")
+      .select("id,task_id,status,artifact_snapshot,created_at")
       .in(
         "task_id",
         tasks.map((task) => task.id),
@@ -526,19 +537,68 @@ export async function listAgentTasks(
     taskSteps.push(step);
     stepsByTask.set(step.task_id, taskSteps);
   }
-  const reviewByTask = new Map<string, AgentReviewDecision["status"]>();
+  const reviewByTask = new Map<
+    string,
+    {
+      status: AgentReviewDecision["status"];
+      artifactSnapshot: ApprovedArtifactSnapshot[];
+    }
+  >();
   for (const decision of reviewDecisions ?? []) {
-    reviewByTask.set(
-      decision.task_id as string,
-      decision.status as AgentReviewDecision["status"],
-    );
+    reviewByTask.set(decision.task_id as string, {
+      status: decision.status as AgentReviewDecision["status"],
+      artifactSnapshot: Array.isArray(decision.artifact_snapshot)
+        ? (decision.artifact_snapshot as ApprovedArtifactSnapshot[])
+        : [],
+    });
   }
+
+  const approvedCurrentVersionPairs = [...reviewByTask.values()]
+    .filter((review) => review.status === "approved")
+    .flatMap((review) => review.artifactSnapshot)
+    .map((artifact) => ({
+      documentId: artifact.document_id,
+      approvedVersionId: artifact.version_id,
+    }));
+  const { data: approvedDocuments, error: documentError } =
+    approvedCurrentVersionPairs.length
+      ? await db
+          .from("documents")
+          .select("id,current_version_id")
+          .in(
+            "id",
+            Array.from(
+              new Set(
+                approvedCurrentVersionPairs.map((pair) => pair.documentId),
+              ),
+            ),
+          )
+      : { data: [], error: null };
+  if (documentError)
+    throw dbError(documentError, "Failed to load current output versions");
+  const currentVersionByDocument = new Map(
+    (approvedDocuments ?? []).map((document) => [
+      document.id as string,
+      (document.current_version_id as string | null) ?? null,
+    ]),
+  );
 
   return tasks.map((task) => ({
     ...task,
-    review_status:
-      reviewByTask.get(task.id) ??
-      (task.status === "completed" ? "review_required" : null),
+    review_status: (() => {
+      const review = reviewByTask.get(task.id);
+      const changedAfterApproval =
+        review?.status === "approved" &&
+        review.artifactSnapshot.some(
+          (artifact) =>
+            currentVersionByDocument.get(artifact.document_id) !==
+            artifact.version_id,
+        );
+      return changedAfterApproval
+        ? "review_required"
+        : (review?.status ??
+            (task.status === "completed" ? "review_required" : null));
+    })(),
     current_plan: (stepsByTask.get(task.id) ?? []).map(
       ({ position: _position, ...step }) => step,
     ),

@@ -3,19 +3,16 @@ import { verifyTaskCitationLinks } from "./agentStepExecutor";
 import type { AgentArtifactLinkInput } from "./agentTasks";
 import { createServerSupabase } from "./supabase";
 import { downloadFile } from "./storage";
+import { evaluateTaskDeliverables } from "./agentTaskDeliverables";
 import {
-  evaluateTaskDeliverables,
-  findDeliverableArtifact,
-  requiredTaskDeliverables,
-  taskDeliverablePurpose,
-} from "./agentTaskDeliverables";
+  controlledAgentReviewArtifactLinks,
+  getAgentReviewVersionState,
+} from "./agentTaskReviewVersions";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
 export type AgentReviewStatus =
-  | "review_required"
-  | "changes_requested"
-  | "approved";
+  "review_required" | "changes_requested" | "approved";
 
 type TaskSnapshot = {
   task: {
@@ -37,6 +34,14 @@ type TaskSnapshot = {
     }>;
   };
   artifacts: AgentArtifactLinkInput[];
+  review?: {
+    decisions?: Array<{
+      id: string;
+      status: AgentReviewStatus;
+      artifact_snapshot: unknown[];
+      created_at: string;
+    }>;
+  };
 };
 
 export type ApprovedArtifactSnapshot = {
@@ -54,6 +59,31 @@ export type ApprovedArtifactSnapshot = {
 
 function sha256(bytes: Uint8Array) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+export function approvedArtifactBytesMatch(
+  artifact: Pick<ApprovedArtifactSnapshot, "sha256">,
+  bytes: Uint8Array,
+) {
+  return sha256(bytes) === artifact.sha256;
+}
+
+export async function getApprovalBlockers(db: Db, snapshot: TaskSnapshot) {
+  const base = await getReviewBlockers(db, snapshot);
+  const versionState = await getAgentReviewVersionState(db, snapshot);
+  const unavailable = versionState.current_artifacts.filter(
+    (artifact) => !artifact.current_version_available,
+  );
+  return {
+    ...base,
+    versionState,
+    blockers: [
+      ...base.blockers,
+      ...unavailable.map(
+        (artifact) => `The current ${artifact.purpose} version is unavailable.`,
+      ),
+    ],
+  };
 }
 
 export async function getReviewBlockers(db: Db, snapshot: TaskSnapshot) {
@@ -109,33 +139,7 @@ export async function captureApprovedArtifacts(
   db: Db,
   snapshot: TaskSnapshot,
 ): Promise<ApprovedArtifactSnapshot[]> {
-  const generatedLinks = snapshot.artifacts.filter(
-    (
-      artifact,
-    ): artifact is AgentArtifactLinkInput & {
-      artifact_type: "draft" | "tabular_review";
-    } =>
-      artifact.artifact_type === "draft" ||
-      artifact.artifact_type === "tabular_review",
-  );
-  const links = requiredTaskDeliverables(snapshot.task).flatMap(
-    (deliverable) => {
-      if (
-        !["draft", "tabular_review"].includes(deliverable.artifact_type ?? "")
-      ) {
-        return [];
-      }
-      const found = findDeliverableArtifact(deliverable, generatedLinks);
-      return found
-        ? [
-            {
-              ...found,
-              purpose: taskDeliverablePurpose(deliverable),
-            },
-          ]
-        : [];
-    },
-  );
+  const links = controlledAgentReviewArtifactLinks(snapshot);
   const documentIds = Array.from(
     new Set(links.map((artifact) => artifact.artifact_id)),
   );
@@ -207,12 +211,13 @@ export async function loadApprovedExport(
     .from("agent_task_review_decisions")
     .select("id,status,artifact_snapshot,created_at")
     .eq("task_id", taskId)
+    .eq("status", "approved")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (decisionError) throw new Error(decisionError.message);
-  if (!decision || decision.status !== "approved") {
+  if (!decision) {
     throw new Error(
       "Final export is blocked until the authenticated task owner records an approval.",
     );
@@ -242,7 +247,7 @@ export async function loadApprovedExport(
   const raw = await downloadFile(version.storage_path as string);
   if (!raw) throw new Error("The approved artifact bytes are unavailable.");
   const bytes = Buffer.from(raw);
-  if (sha256(bytes) !== locked.sha256) {
+  if (!approvedArtifactBytesMatch(locked, bytes)) {
     throw new Error(
       "The approved artifact failed its SHA-256 integrity check.",
     );

@@ -112,6 +112,29 @@ export type AgentReviewDecision = {
   created_at: string;
 };
 
+export type AgentCurrentArtifactVersion = {
+  artifact_type: "draft" | "tabular_review";
+  artifact_id: string;
+  purpose: string;
+  current_version_id: string | null;
+  current_version_number: number | null;
+  current_filename: string | null;
+  current_file_type: string | null;
+  current_version_available: boolean;
+  approved_version_id: string | null;
+  approved_version_number: number | null;
+  edited_after_approval: boolean;
+  review_current_required: boolean;
+};
+
+export type AgentReviewVersionState = {
+  latest_approved_decision_id: string | null;
+  latest_approved_at: string | null;
+  has_previous_approval: boolean;
+  has_unapproved_changes: boolean;
+  current_artifacts: AgentCurrentArtifactVersion[];
+};
+
 export type AgentEvidenceStatus =
   "exact" | "drifted" | "missing" | "version_mismatch";
 
@@ -144,5 +167,6 @@ export type AgentTaskSnapshot = {
   review: {
     status: AgentReviewStatus | null;
     decisions: AgentReviewDecision[];
+    version_state: AgentReviewVersionState;
   };
 };

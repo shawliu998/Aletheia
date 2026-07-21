@@ -26,6 +26,7 @@ import {
 } from "../lib/agentTaskPlanner";
 import {
   captureApprovedArtifacts,
+  getApprovalBlockers,
   getReviewBlockers,
   loadApprovedExport,
 } from "../lib/agentTaskReviews";
@@ -244,7 +245,7 @@ agentTasksRouter.post(
 
       let artifactSnapshot: unknown[] = [];
       if (status === "approved") {
-        const { blockers } = await getReviewBlockers(db, snapshot);
+        const { blockers } = await getApprovalBlockers(db, snapshot);
         if (blockers.length) {
           return void res.status(409).json({
             detail: `Approval is blocked: ${blockers.join(" ")}`,

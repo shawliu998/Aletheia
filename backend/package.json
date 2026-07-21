@@ -9,6 +9,7 @@
     "test:agent-task-model": "tsx scripts/agentTaskModelSmoke.ts",
     "test:agent-task-planner": "tsx scripts/agentTaskPlannerSmoke.ts",
     "test:agent-task-input": "tsx scripts/agentTaskInputSmoke.ts",
+    "test:agent-task-review-version": "tsx scripts/agentTaskReviewVersionSmoke.ts",
     "test:agent-task-runner": "tsx scripts/agentTaskRunnerSmoke.ts",
     "test:verifier-guards": "tsx scripts/verifierGuardSmoke.ts",
     "start": "node dist/index.js"
