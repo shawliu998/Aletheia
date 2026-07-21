@@ -10,6 +10,7 @@ import {
   listAgentTasks,
   pauseAgentTask,
   recordAgentTaskCheckpoint,
+  reviseAgentTask,
   resumeAgentTask,
   retryAgentTask,
   stopAgentTask,
@@ -259,6 +260,22 @@ agentTasksRouter.post(
     }
   },
 );
+
+agentTasksRouter.post("/:taskId/revise", requireAuth, async (req, res) => {
+  try {
+    const snapshot = await reviseAgentTask(
+      createServerSupabase(),
+      req.params.taskId,
+      res.locals.userId as string,
+    );
+    if (!snapshot) {
+      return void res.status(404).json({ detail: "Agent task not found" });
+    }
+    res.json(snapshot);
+  } catch (error) {
+    routeError(res, error);
+  }
+});
 
 agentTasksRouter.get(
   "/:taskId/final-export/:artifactId",

@@ -577,6 +577,72 @@ export async function retryAgentTask(db: Db, taskId: string, userId: string) {
   return getAgentTaskSnapshot(db, taskId, userId);
 }
 
+export async function reviseAgentTask(db: Db, taskId: string, userId: string) {
+  const snapshot = await getAgentTaskSnapshot(db, taskId, userId);
+  if (!snapshot) return null;
+  if (snapshot.task.status !== "completed") {
+    throw new Error("Only a completed task can start a revision");
+  }
+  const latestDecision = snapshot.review.decisions.at(-1) ?? null;
+  if (latestDecision?.status !== "changes_requested") {
+    throw new Error(
+      "Only a task with requested changes can start a revision",
+    );
+  }
+
+  const { data: revisionSteps, error: stepsError } = await db
+    .from("agent_steps")
+    .select("id,attempt,position")
+    .eq("task_id", taskId)
+    .gte("position", 2)
+    .order("position", { ascending: true });
+  if (stepsError) throw dbError(stepsError, "Failed to load revision steps");
+  const first = revisionSteps?.[0];
+  if (!first) throw new Error("Task has no revisable deliverable steps");
+
+  const updatedAt = now();
+  const { error: resetError } = await db
+    .from("agent_steps")
+    .update({
+      status: "pending",
+      result_summary: null,
+      updated_at: updatedAt,
+    })
+    .eq("task_id", taskId)
+    .gte("position", 2);
+  if (resetError) throw dbError(resetError, "Failed to reset revision steps");
+
+  const { error: startError } = await db
+    .from("agent_steps")
+    .update({
+      status: "running",
+      attempt: ((first.attempt as number | null) ?? 0) + 1,
+      updated_at: updatedAt,
+    })
+    .eq("id", first.id)
+    .eq("task_id", taskId);
+  if (startError) throw dbError(startError, "Failed to start task revision");
+
+  const note = latestDecision.note.trim();
+  const { error: taskError } = await db
+    .from("agent_tasks")
+    .update({
+      status: "running",
+      current_step: first.id,
+      latest_checkpoint: {
+        step_id: first.id,
+        iteration: ((first.attempt as number | null) ?? 0) + 1,
+        summary: `Revision requested: ${note}`.slice(0, 4000),
+        created_at: updatedAt,
+      },
+      updated_at: updatedAt,
+    })
+    .eq("id", taskId)
+    .eq("user_id", userId);
+  if (taskError) throw dbError(taskError, "Failed to start task revision");
+  return getAgentTaskSnapshot(db, taskId, userId);
+}
+
 export async function attachAgentTaskDocuments(
   db: Db,
   taskId: string,

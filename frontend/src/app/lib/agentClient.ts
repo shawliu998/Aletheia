@@ -104,6 +104,15 @@ export function retryAgentTask(taskId: string) {
   );
 }
 
+export function reviseAgentTask(taskId: string) {
+  return request<AgentTaskSnapshot>(
+    `/agent-tasks/${encodeURIComponent(taskId)}/revise`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export function updateAgentTaskModel(taskId: string, model: string) {
   return request<AgentTaskSnapshot>(
     `/agent-tasks/${encodeURIComponent(taskId)}/model`,

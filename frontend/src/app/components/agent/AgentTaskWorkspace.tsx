@@ -20,6 +20,7 @@ import {
   MapPin,
   Pause,
   Play,
+  RotateCcw,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import {
   pauseAgentTask,
   resumeAgentTask,
   retryAgentTask,
+  reviseAgentTask,
   updateAgentTaskModel,
 } from "@/app/lib/agentClient";
 import { cn } from "@/app/lib/utils";
@@ -167,6 +169,7 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     "approved" | "changes_requested" | null
   >(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [revisionStarting, setRevisionStarting] = useState(false);
   const [downloadingArtifact, setDownloadingArtifact] = useState<string | null>(
     null,
   );
@@ -269,6 +272,24 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
     setExecutionError(null);
     setSnapshot(await retryAgentTask(taskId));
     setAutoRun(true);
+  }
+
+  async function startRevision() {
+    if (revisionStarting) return;
+    setRevisionStarting(true);
+    setReviewError(null);
+    try {
+      setSnapshot(await reviseAgentTask(taskId));
+      setAutoRun(true);
+    } catch (error) {
+      setReviewError(
+        error instanceof Error
+          ? error.message
+          : "The requested revision could not be started.",
+      );
+    } finally {
+      setRevisionStarting(false);
+    }
   }
 
   async function attachNewMatterDocuments() {
@@ -673,9 +694,11 @@ export function AgentTaskWorkspace({ taskId }: { taskId: string }) {
               note={reviewNote}
               onNoteChange={setReviewNote}
               submitting={reviewSubmitting}
+              revisionStarting={revisionStarting}
               error={reviewError}
               downloadingArtifact={downloadingArtifact}
               onDecision={submitReviewDecision}
+              onRevise={startRevision}
               onDownload={downloadApprovedArtifact}
               onOpenArtifact={openArtifact}
             />
@@ -720,9 +743,11 @@ function DeliverablesPanel({
   note,
   onNoteChange,
   submitting,
+  revisionStarting,
   error,
   downloadingArtifact,
   onDecision,
+  onRevise,
   onDownload,
   onOpenArtifact,
 }: {
@@ -731,9 +756,11 @@ function DeliverablesPanel({
   note: string;
   onNoteChange: (value: string) => void;
   submitting: "approved" | "changes_requested" | null;
+  revisionStarting: boolean;
   error: string | null;
   downloadingArtifact: string | null;
   onDecision: (status: "approved" | "changes_requested") => Promise<void>;
+  onRevise: () => Promise<void>;
   onDownload: (artifact: ApprovedArtifactSnapshot) => Promise<void>;
   onOpenArtifact: (
     artifact: AgentTaskSnapshot["artifacts"][number],
@@ -917,12 +944,33 @@ function DeliverablesPanel({
             className="mt-2 w-full resize-none rounded-lg bg-white/75 px-3 py-2 text-xs leading-4 text-gray-900 outline-none ring-1 ring-gray-900/[0.08] placeholder:text-gray-500 focus:ring-2 focus:ring-blue-500/70"
           />
           <div className="mt-2.5 flex flex-wrap gap-2">
+            {reviewStatus === "changes_requested" && (
+              <button
+                type="button"
+                onClick={() => void onRevise()}
+                disabled={revisionStarting || submitting !== null}
+                title="Rebuild the risk matrix and review memo, then rerun verification"
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-gray-950 px-3.5 text-xs font-medium text-white outline-none transition-colors hover:bg-black focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2 disabled:opacity-45"
+              >
+                {revisionStarting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                {revisionStarting ? "Starting revision" : "Revise outputs"}
+              </button>
+            )}
             {reviewStatus !== "approved" && (
               <button
                 type="button"
                 onClick={() => void onDecision("approved")}
                 disabled={submitting !== null}
-                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-gray-950 px-3.5 text-xs font-medium text-white outline-none transition-colors hover:bg-black focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2 disabled:opacity-45"
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500/70 focus-visible:ring-offset-2 disabled:opacity-45",
+                  reviewStatus === "changes_requested"
+                    ? "bg-white/80 text-gray-700 ring-1 ring-gray-900/[0.08] hover:bg-white"
+                    : "bg-gray-950 text-white hover:bg-black",
+                )}
               >
                 {submitting === "approved" ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -932,21 +980,23 @@ function DeliverablesPanel({
                 Approve for export
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => void onDecision("changes_requested")}
-              disabled={submitting !== null}
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white/80 px-3.5 text-xs font-medium text-red-700 outline-none ring-1 ring-red-200 transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-red-500/60 focus-visible:ring-offset-2 disabled:opacity-45"
-            >
-              {submitting === "changes_requested" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <XCircle className="h-3.5 w-3.5" />
-              )}
-              {reviewStatus === "approved"
-                ? "Reopen review"
-                : "Request changes"}
-            </button>
+            {reviewStatus !== "changes_requested" && (
+              <button
+                type="button"
+                onClick={() => void onDecision("changes_requested")}
+                disabled={submitting !== null}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white/80 px-3.5 text-xs font-medium text-red-700 outline-none ring-1 ring-red-200 transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-red-500/60 focus-visible:ring-offset-2 disabled:opacity-45"
+              >
+                {submitting === "changes_requested" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5" />
+                )}
+                {reviewStatus === "approved"
+                  ? "Reopen review"
+                  : "Request changes"}
+              </button>
+            )}
           </div>
           {error && (
             <p

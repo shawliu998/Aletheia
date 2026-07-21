@@ -40,9 +40,15 @@ function taskPrompt(
       (step: { title: string; result_summary: string | null }) =>
         `- ${step.title}: ${step.result_summary ?? "Completed"}`,
     );
+  const latestReview = snapshot.review.decisions.at(-1) ?? null;
+  const requestedChanges =
+    latestReview?.status === "changes_requested" && latestReview.note.trim()
+      ? `REQUESTED CHANGES\n${latestReview.note.trim()}\nRevise the current deliverables to address this review note. Preserve prior work that is not affected, keep source citations attached to material facts, and do not imply approval.`
+      : "";
   return [
     `WORK TASK GOAL\n${snapshot.task.goal}`,
     `CURRENT STEP\n${STEP_INSTRUCTIONS[stepIndex] ?? snapshot.task.current_plan[stepIndex]?.expected_output}`,
+    requestedChanges,
     completed.length
       ? `COMPLETED STEP CHECKPOINTS\n${completed.join("\n")}`
       : "",
