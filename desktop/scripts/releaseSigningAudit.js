@@ -183,6 +183,9 @@ function auditStaticLinkage() {
   assert.match(packagingScript, /signing:readiness/);
   assert.match(packagingScript, /signing:verify/);
   assert.match(packagingScript, /VERA_RELEASE_SIGNING/);
+  assert.match(packagingScript, /VERA_LOCAL_ZIP_ONLY/);
+  assert.match(packagingScript, /electron-builder --mac zip/);
+  assert.match(packagingScript, /ZIP-only mode explicitly enabled/);
   for (const key of [
     "CSC_NAME",
     "CSC_LINK",
