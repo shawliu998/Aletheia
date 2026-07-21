@@ -58,12 +58,12 @@ server.listen(0, "127.0.0.1", () => {
       )
     ) {
       rendererReady = true;
-      // Startup is the behavior under test. Ask Electron to terminate after
-      // readiness instead of relying on the renderer-driven auto-quit timer,
-      // which can be delayed by macOS application lifecycle events.
+      // Startup is the behavior under test. Force-stop the isolated Electron
+      // process after readiness: on macOS, SIGTERM and app.quit() can be held
+      // by the application lifecycle even though the renderer loaded.
       gracefulCleanupTimer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) {
-          cleanupSignal = "SIGTERM";
+          cleanupSignal = "SIGKILL";
           child.kill(cleanupSignal);
         }
       }, 100);
@@ -84,7 +84,7 @@ server.listen(0, "127.0.0.1", () => {
     assert.equal(timedOut, false, output);
     assert.ok(
       (signal === null && code === 0) ||
-        (cleanupSignal === "SIGTERM" && signal === "SIGTERM"),
+        (cleanupSignal === "SIGKILL" && signal === "SIGKILL"),
       output,
     );
     assert.equal(requestedPath, "/assistant");

@@ -39,7 +39,9 @@ const append = (chunk) => {
     rendererReady = true;
     cleanupTimer = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
-        cleanupSignal = "SIGTERM";
+        // Startup is the behavior under test. Force-stop the isolated app
+        // after readiness because macOS may defer SIGTERM or app.quit().
+        cleanupSignal = "SIGKILL";
         child.kill(cleanupSignal);
       }
     }, 100);
@@ -62,7 +64,7 @@ child.once("exit", (code, signal) => {
     assert.equal(rendererReady, true, output);
     assert.ok(
       (signal === null && code === 0) ||
-        (cleanupSignal === "SIGTERM" && signal === "SIGTERM"),
+        (cleanupSignal === "SIGKILL" && signal === "SIGKILL"),
       output,
     );
     assert.equal(
