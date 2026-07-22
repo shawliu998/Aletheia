@@ -4,6 +4,105 @@ This directory records a real Microsoft Word for Mac sideload attempt. Browser
 evidence and Office Host evidence are kept separate; no browser result is counted
 as an Office Host pass.
 
+## 2026-07-22 status update
+
+The user completed the distinct Office Add-ins gallery sign-in on 2026-07-22.
+After reinstalling the XML compatibility manifest, Word 16.111 activated
+`Vera Word Review`; the taskpane and `Review selected text` ribbon command both
+loaded. This supersedes the acquisition blocker described in the historical
+2026-07-21 record below.
+
+The real Host run then passed Vera credential sign-in, taskpane session recovery
+after close/reopen, Matter loading, selected-text read, DeepSeek V4 Flash review,
+saved Matter chat creation, native Word comment insertion, and native tracked
+replacement. Word displayed the deletion/insertion review markup and Vera stated
+that it had not accepted the change. The synthetic test used no client or
+confidential content.
+
+Implementation faults found and fixed during the run:
+
+- Office.js host methods (`displayDialogAsync`, `messageParent`, and `onReady`)
+  must retain their Office object receiver in Word for Mac.
+- The HTTPS taskpane must use an HTTPS local Supabase proxy plus the real
+  publishable key; the backend must retain its existing
+  `USER_API_KEYS_ENCRYPTION_SECRET` to decrypt saved model keys.
+- Chat persistence must omit the optional `workflow` field when a normal Word
+  request has no workflow. The previous unconditional null field targeted a
+  column absent from the current schema, silently dropping the user turn while
+  still saving the assistant turn; the routes now fail explicitly if the user
+  message cannot be saved.
+- Word exact-search anchors must be at most 255 characters. Vera now asks for
+  short verbatim one-paragraph anchors, rejects only an overlong item when other
+  items remain valid, and never truncates or paraphrases an anchor.
+- `Word.ParagraphCollection` does not expose `getItemAt` in the real Mac host.
+  Long-document anchors now load the documented `items` collection, validate the
+  saved paragraph text, and search only inside that paragraph before any write.
+  This fixed the real-host `The Word host does not support locate` failure without
+  weakening stale-anchor or ambiguous-match blocking.
+- Tool-loop progress text emitted before a tool call must not become Word
+  replacement text. The stream reader now keeps only the final post-tool content,
+  and saved-chat recovery restores the last assistant content event.
+- The global MFA gate now renders the same loader on the server and the first
+  client render. This removed a recoverable React hydration error that exposed a
+  Next.js development issue badge over the narrow taskpane controls.
+
+Current Host evidence:
+
+- `screenshots/word-host-taskpane-auth-gate-20260722.png`: activated taskpane
+  before Vera authentication.
+- `screenshots/word-host-vera-dialog-20260722.png`: real Word Office Dialog.
+- `screenshots/word-host-deepseek-tracked-change-20260722.png`: 768 × 926 real
+  Word Host result after DeepSeek generation, comment insertion, and tracked
+  replacement; Word exposes the pending deletion and Vera's non-acceptance
+  confirmation.
+- `screenshots/word-host-review-restored-20260722.png`: real Word 16.111 result
+  after closing and reopening the taskpane; Vera restored the pending suggestion
+  from its existing Matter chat without changing the document.
+- `screenshots/word-host-stale-anchor-rejected-20260722.png`: a moved selection
+  disabled both write actions and left the document unchanged.
+- `screenshots/word-host-tracked-change-applied-20260722.jpeg`: the final
+  post-tool replacement was inserted as a pending native tracked change.
+- `screenshots/word-host-save-reopen-restored-20260722.jpeg`: after save, close,
+  and reopen, Word retained the pending insertion/deletion and comment while Vera
+  restored the completed review decision.
+- `screenshots/word-host-125-percent-20260722.jpeg` and
+  `screenshots/word-host-150-percent-20260722.jpeg`: the real synthetic Word
+  document and narrow taskpane remained readable at both required zoom levels.
+  These two development captures still show Next's small `N` badge; the badge
+  was subsequently disabled because it overlapped a secondary action. The clean
+  authenticated completed-state recaptures listed below supersede them.
+- `screenshots/word-host-60k-normal-20260722.jpeg`,
+  `screenshots/word-host-60k-125-percent-20260722.jpeg`, and
+  `screenshots/word-host-60k-150-percent-20260722.jpeg`: clean authenticated
+  Word 16.111 captures of the completed 74k-character run after save/reopen.
+  The restored Review pane shows the late English suggestion as applied while
+  Word retains the pending native review markup.
+- `screenshots/word-host-60k-keyboard-focus-150-percent-20260722.jpeg`: real
+  Host keyboard traversal reached the main `Generate review` action at 150%; its
+  blue focus indicator remains fully visible in the narrow taskpane.
+
+A final disposable-copy confirmation run on 2026-07-22 is recorded in
+`word-host-final-normal-20260722.png`,
+`word-host-final-tracked-comment-20260722.png`,
+`word-host-final-125-percent-20260722.png`, and
+`word-host-final-150-percent-20260722.png`. It again loaded all 74,458
+characters, located both late clauses, added the Chinese suggestion as a native
+comment, and applied the English suggestion as an unaccepted tracked change.
+`word-host-final-keyboard-focus-150-percent-20260722.png` records the 150%
+keyboard traversal, but its focus outline is less legible than the earlier
+`word-host-60k-keyboard-focus-150-percent-20260722.jpeg`; the earlier capture
+remains the decisive keyboard evidence. The reusable fixture was not opened or
+modified during this confirmation run.
+
+Unified-package acquisition was not completed. Repository validation and the
+official manifest validator accepted `manifest.json`, and a package containing
+only the manifest plus its 32 px and 192 px icons passed ZIP integrity. The
+Agents Toolkit login then rejected the available personal Microsoft account
+because unified registration requests tenant-scoped `AppDefinitions.ReadWrite`
+permission and requires a work or school identity. No authentication or tenant
+boundary was bypassed. This remains a deployment-path condition and does not
+invalidate the successful XML compatibility run.
+
 ## Environment
 
 - Host: Microsoft Word for Mac 16.111 (`16.111.713.1000`), Chinese UI.
@@ -42,10 +141,31 @@ Real Word Host evidence captured in this pass:
   in the window-only screenshot, so this fact is recorded as Host accessibility
   evidence rather than presented as a screenshot pass.
 
-There is intentionally no 340 px Word taskpane screenshot: Word never activated
-the taskpane, so creating one would mislabel browser evidence as Host evidence.
+The historical pre-activation run did not produce a Word taskpane screenshot.
+The 2026-07-22 captures above supersede that limitation and are real Host
+evidence; browser-only 340 px reflow evidence remains labelled separately.
 
-## Acceptance matrix
+## 2026-07-22 successful Host acceptance
+
+| Check | Result |
+|---|---|
+| XML activation, ribbon, taskpane | **Pass** — Word 16.111 loaded both command and pane. |
+| Vera sign-in and taskpane reopen | **Pass** — Supabase session restored after closing/reopening the pane. |
+| Matter selection | **Pass** — existing Matter list loaded through the authenticated API. |
+| Read current selection | **Pass** — synthetic selected text was returned exactly. |
+| Review request | **Pass** — DeepSeek V4 Flash produced a replacement and a saved Matter-chat link. |
+| Review queue restore | **Pass** — closing and reopening the taskpane restored the instruction, suggestion, source link, active item, and `Skipped` disposition from the existing Matter chat plus a metadata-only local pointer. |
+| Insert comment | **Pass** — native Word comment contained the suggestion and instruction; document text was unchanged. |
+| Apply tracked change | **Pass** — native pending deletion/insertion appeared; Vera did not accept it. |
+| Selection drift protection | **Pass** — changing the Word selection disabled Apply/Comment and a write attempt was rejected without changing text. |
+| Save and reopen after mutations | **Pass** — ZIP integrity passed; `document.xml` retained native `w:ins`/`w:del`, `comments.xml` retained the Vera comment, and the marker/Chinese paragraph remained present. |
+| 125% / 150% zoom | **Pass** — clean authenticated real Word Host captures show no content overflow at normal, 125%, or 150% zoom. The development badge is absent, and keyboard traversal at 150% keeps the main action's focus indicator fully visible. |
+| Read-only document | **Host platform pass** — Word opened the mode-0444 synthetic copy as `只读` and disabled both Add-ins and the Vera ribbon command before the taskpane could load. The XML manifest correctly retains `ReadWriteDocument`, because editable documents need tracked changes/comments. Runtime write-error handling remains covered by bridge tests for the case where a loaded document later becomes non-writable. |
+| 60k document review | **Pass** — Word loaded 74,458 characters in six paragraph-boundary sections. DeepSeek V4 Flash returned exactly the late English fee-change and Chinese processing-purpose suggestions. The English anchor accepted a native tracked replacement and the Chinese anchor accepted a native comment. After save/close/reopen, ZIP integrity passed, `document.xml` retained one `w:ins` and one `w:del`, `comments.xml` retained one comment, Vera restored both decisions, and clean normal/125%/150% plus keyboard-focus captures showed no taskpane overflow. |
+| Unified manifest | **Static/package pass; acquisition externally blocked** — repository checks and the official validator accepted the 1.29 manifest, and the package ZIP contained exactly the manifest plus both required icons. Real registration requires a Microsoft 365 work/school tenant; the available personal account was rejected before authorization. The XML compatibility path remains active and fully Host-tested. |
+| MFA-on-login | **Remaining** — needs an enrolled non-production test account; it is not bypassed. |
+
+## 2026-07-21 historical acceptance matrix
 
 | # | Check | Real Mac Word result |
 |---|---|---|
@@ -60,11 +180,12 @@ the taskpane, so creating one would mislabel browser evidence as Host evidence.
 | 9 | Save and reopen | **Partial Host pass.** Word saved, closed, and reopened `vera-word-host-e2e-fixture.docx`; `E2E-SAVE-MARKER-2026-07-21` and the Chinese paragraph remained readable. This does not prove integrity after tracked/comment mutations because #6/#7 were blocked. |
 | 10 | 340 px pane, long Chinese, keyboard focus | **Partial Host pass.** Long Chinese rendered correctly in Word at 133%. The 340 px taskpane and keyboard focus were not Host-tested because the pane did not activate. Browser-only 340 px, 125%, 150%, focus, and Chinese evidence remains in the first-pass screenshot directory. |
 
-## Exact blockers and resume conditions
+## Historical blockers and resume conditions
 
-1. In this Word installation, activate a Microsoft 365 identity for Office Add-ins
-   and confirm that tenant/device policy permits developer add-ins. Word currently
-   says: `使用你的帐户登录，以使用 Office 应用商店中的外接程序。`
+1. Diagnose why the signed-in Word 16.111 host still exposes `Vera Word Review`
+   as disabled. Re-run acquisition with the unified package and keep the XML
+   manifest as the compatibility path; confirm tenant/device policy permits
+   developer add-ins.
 2. Provide an authorized non-production Vera environment: frontend Supabase URL
    and public key, backend Supabase URL and service secret, plus the configured
    model credentials needed by the existing review/rewrite API. No credentials
@@ -82,6 +203,23 @@ The supported manual Mac sideload procedure is documented by Microsoft at
 ## Fixtures and reproducibility
 
 - `build_fixture.py` creates the editable synthetic fixture using `python-docx`.
+- `build_long_fixture.py` creates the disposable 60k+ character fixture used for
+  the real-Host long-document run. It keeps two leading visually empty
+  paragraphs, puts the unique English fee clause after 20k characters and the
+  unique Chinese processing-purpose clause after 45k characters, and fails if a
+  paragraph reaches the add-in's 16k-character segmentation guardrail. It writes
+  outside the repository by default:
+
+  ```bash
+  PYTHONPATH="/Users/a1-6/.cache/codex-runtimes/codex-primary-runtime/dependencies/python" \
+    "/Users/a1-6/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3" \
+    office-addin/host-e2e/build_long_fixture.py
+  ```
+
+  This checks DOCX ZIP integrity and prints the character count, paragraph count,
+  target offsets, and longest paragraph length. It is the reproducible input
+  check; the authenticated Word Host result recorded above is the acceptance
+  proof.
 - `vera-word-host-e2e-read-only.docx` was derived with enforced WordprocessingML
   document protection for the read-only case.
 - `https-backend-proxy.mjs` avoids HTTPS-to-HTTP mixed content without modifying
@@ -90,6 +228,64 @@ The supported manual Mac sideload procedure is documented by Microsoft at
   Chinese rendering proof; the headless LibreOffice renderer in the document QA
   workflow omitted CJK glyphs despite the text and `w:eastAsia` font metadata being
   present, so its render was not counted as a Chinese-layout pass.
+
+## Manual 60k Host acceptance (completed run and safe reproduction)
+
+The 2026-07-22 Host run completed this acceptance. Any reproduction must run
+against a **new copy of the synthetic fixture**, never a user document and never
+the reusable fixture itself. The copy is intentionally placed outside the
+repository so its native Word comments, tracked changes, and save/reopen state
+cannot be confused with source material.
+
+1. Leave the already-configured HTTPS taskpane, HTTPS API proxy, backend, and
+   HTTPS Supabase proxy running. Before opening Word, confirm only availability
+   (the `-k` flag is for this local diagnostic; Word still requires the trusted
+   Office development certificate):
+
+   ```bash
+   curl -skS https://localhost:3000/office/word >/dev/null && \
+     curl -skS https://127.0.0.1:3002/health >/dev/null && \
+     curl -skS https://127.0.0.1:54322/auth/v1/health >/dev/null
+   ```
+
+2. Make the one-time synthetic copy and open **that exact copy** in Word:
+
+   ```bash
+   VERA_RUN_ID="$(date +%Y%m%d-%H%M%S)"
+   VERA_FIXTURE="/tmp/vera-word-60k-host-e2e.docx"
+   VERA_RUN_COPY="/tmp/vera-word-60k-host-e2e-run-${VERA_RUN_ID}.docx"
+   cp -p "$VERA_FIXTURE" "$VERA_RUN_COPY"
+   open -a "Microsoft Word" "$VERA_RUN_COPY"
+   ```
+
+   Do not substitute a client, personal, confidential, or previously edited
+   document for `VERA_FIXTURE`; do not save over it.
+
+3. In Word, open **Vera → Review selected text**, complete the existing Vera
+   sign-in only through the Office dialog, select the test Matter, then choose
+   **Whole document**. Use this narrowly scoped instruction so the run proves
+   both late-document anchors rather than asking the model for an open-ended
+   review:
+
+   > Review only the fee-adjustment clause and the Chinese processing-purpose
+   > clause. Require 30 days' prior written notice and a termination right for
+   > the fee change; require the customer's prior written consent for the
+   > processing-purpose change. Do not suggest any other changes.
+
+4. Wait for every displayed document section to finish. The fixture must produce
+   a run over text after 36,392 characters and after 48,741 characters. In the
+   Review tab, confirm that the late English and Chinese suggestions each show
+   their exact source text. Add a native Word comment to one of those late
+   suggestions and apply the other as a **tracked** change. Do not accept the
+   change in Word or through Vera.
+
+5. Save `VERA_RUN_COPY`, close only that disposable document, reopen the same
+   path, and verify the pending tracked change, the comment, and the restored
+   Vera review state. Capture the taskpane plus Word markup at normal, 125%, and
+   150% zoom; at each narrow taskpane size, use `Tab` to reach the main action
+   and confirm its focus indicator remains visible. If generation returns no
+   locatable late suggestion, or any write action is enabled after a source
+   mismatch, record the failure and do not mark this acceptance row as passed.
 
 Official tools used from temporary installs only (not added to project dependencies):
 
@@ -107,14 +303,14 @@ the published CLI; this did not change either lockfile.
 
 ```text
 office-addin-manifest validate office-addin/word-manifest.xml  PASS
-npx tsc --noEmit                                            PASS
-npm run build                                               COMPILE + TYPESCRIPT PASS;
-                                                            prerender blocked by
-                                                            missing Supabase URL
-unzip -t editable and read-only fixtures                    PASS
-Word save -> close -> reopen -> marker and Chinese present  PARTIAL HOST PASS
+npx tsc --noEmit                                             PASS
+frontend npm run test:word (49)                             PASS
+targeted ESLint                                              PASS
+frontend npm run build                                       PASS (26 routes)
+backend npm run build                                        PASS
+check-manifests.mjs                                          PASS
+git diff --check                                             PASS
+unzip -t mutation fixture                                    PASS
+Word comment + tracked change save/reopen                    REAL HOST PASS
+Word 60k sectioned review                                    REAL HOST PASS
 ```
-
-The production build reached successful compilation and finished TypeScript, then
-failed while prerendering the unrelated `/account/api-keys` page with
-`supabaseUrl is required`. No build configuration or unrelated page was changed.

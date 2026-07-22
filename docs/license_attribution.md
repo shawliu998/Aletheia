@@ -19,6 +19,14 @@ of that project. The original AGPL license file is retained in this repository.
 - Model provider and storage foundations.
 - Existing open-source application scaffolding.
 
+## Mike Workflow Definitions
+
+The 24 default system workflow definitions are synchronized at build time from
+`Open-Legal-Products/mike-workflows` under its MIT license. Vera pins commit
+`d27064ae8085d3e8ebca99d5a491c9804376cbc7` and keeps an explicit allowlist of
+13 assistant and 11 tabular workflows. Optional packs, including the Finnish
+law pack, are not part of Vera's default runtime workflow set.
+
 ## Aletheia-Specific Work
 
 - Aletheia product positioning for local-first professional agent workspaces.

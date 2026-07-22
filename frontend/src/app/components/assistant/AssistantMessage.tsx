@@ -6,11 +6,19 @@ import type { AssistantEvent, Citation, EditAnnotation } from "../shared/types";
 import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
 import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
-import { eventErrorMessage, toolCallLabel } from "./message/eventUtils";
+import {
+    eventErrorMessage,
+    hasAssistantWorkInProgress,
+    isVisibleAssistantEvent,
+    presentAssistantErrorMessage,
+} from "./message/eventUtils";
 import { preprocessCitations, internalCaseHref } from "./message/citationUtils";
 import { useSmoothedReveal } from "./message/useSmoothedReveal";
 import { MarkdownContent } from "./message/MarkdownContent";
-import { CitationsBlock, buildCitationAppendix } from "./message/CitationSources";
+import {
+    CitationsBlock,
+    buildCitationAppendix,
+} from "./message/CitationSources";
 import { EditCardsSection } from "./message/EditCardsSection";
 import {
     AskInputsBlock,
@@ -18,11 +26,7 @@ import {
     DocCreatedBlock,
     DocDownloadBlock,
     DocEditedBlock,
-    DocFindBlock,
-    DocReadBlock,
     DocReplicatedBlock,
-    EventBlock,
-    ReasoningBlock,
     WorkflowAppliedBlock,
     type CourtListenerBlockItem,
 } from "./message/EventBlocks";
@@ -139,12 +143,13 @@ export function AssistantMessage({
         errorMessage ??
         (
             (events ?? []).find((event) => event.type === "error") as
-                | Extract<AssistantEvent, { type: "error" }>
-                | undefined
+                Extract<AssistantEvent, { type: "error" }> | undefined
         )?.message ??
         null;
-    const effectiveErrorMessage =
-        topLevelErrorMessage ?? eventErrorMessages[0] ?? null;
+    const rawErrorMessage = topLevelErrorMessage ?? eventErrorMessages[0];
+    const effectiveErrorMessage = rawErrorMessage
+        ? presentAssistantErrorMessage(rawErrorMessage)
+        : null;
     const hasError = isError || !!effectiveErrorMessage;
     const status: StatusState = hasError
         ? "error"
@@ -157,6 +162,7 @@ export function AssistantMessage({
         event.type !== "ask_inputs_response" &&
         event.type !== "case_citation" &&
         event.type !== "case_opinions";
+    const showWorkingStatus = hasAssistantWorkInProgress(events, isStreaming);
 
     // Find the last content event so its raw text can be smoothed before
     // citation preprocessing — slicing already-preprocessed text would risk
@@ -276,10 +282,10 @@ export function AssistantMessage({
         }
     };
 
-    // Walk events in chronological order and group consecutive non-content
-    // events into their own PreResponseWrapper. Content events render
-    // between wrappers, so reasoning/tool chatter that arrives after the
-    // model has already streamed some prose gets its own wrapper.
+    // Keep the normal transcript chronological, but only render prose,
+    // interactions, completed work-product outcomes, and source outcomes.
+    // Internal events remain in the stream for recovery and are folded into
+    // the single live Working… status above.
     type EventGroup =
         | { kind: "pre"; events: AssistantEvent[]; indices: number[] }
         | {
@@ -292,7 +298,7 @@ export function AssistantMessage({
     if (events) {
         let current: Extract<EventGroup, { kind: "pre" }> | null = null;
         events.forEach((e, i) => {
-            if (!isRenderableEvent(e)) return;
+            if (!isVisibleAssistantEvent(e)) return;
             if (e.type === "content") {
                 if (current) {
                     groups.push(current);
@@ -340,93 +346,17 @@ export function AssistantMessage({
         allEvents: AssistantEvent[],
         globalIdx: number,
     ) => {
-        const nextEvent = allEvents[i + 1];
-        const showConnector =
-            nextEvent !== undefined && nextEvent.type !== "content";
+        const showConnector = allEvents
+            .slice(i + 1)
+            .some((nextEvent) => nextEvent.type !== "content");
 
-        if (event.type === "reasoning") {
+        if (event.type === "ask_inputs") {
+            const response = askInputsResponseFor(globalIdx);
             return (
-                <ReasoningBlock
+                <AskInputsBlock
                     key={globalIdx}
-                    text={event.text}
-                    isStreaming={!!event.isStreaming}
-                    showConnector={showConnector}
-                />
-            );
-        }
-        if (event.type === "tool_call_start") {
-            return (
-                <EventBlock
-                    key={globalIdx}
-                    showConnector={showConnector}
-                    isStreaming
-                >
-                    <span className="font-medium">
-                        {toolCallLabel(event.name)}
-                    </span>
-                </EventBlock>
-            );
-        }
-        if (event.type === "thinking") {
-            return (
-                <EventBlock
-                    key={globalIdx}
-                    showConnector={showConnector}
-                    isStreaming
-                >
-                    <span>Thinking...</span>
-                </EventBlock>
-            );
-        }
-        if (event.type === "mcp_tool_call") {
-            const isError = event.status === "error";
-            const label = event.connector_name
-                ? `${event.connector_name}: ${event.tool_name}`
-                : toolCallLabel(event.openai_tool_name);
-            return (
-                <EventBlock
-                    key={globalIdx}
-                    showConnector={showConnector}
-                    isStreaming={event.isStreaming}
-                    dotColor={isError ? "red" : "gray"}
-                >
-                    <span className="font-medium">
-                        {event.isStreaming ? "Using connector..." : label}
-                    </span>
-                    {isError && event.error && (
-                        <p className="mt-0.5 text-xs text-red-600">
-                            {event.error}
-                        </p>
-                    )}
-                </EventBlock>
-            );
-        }
-        if (event.type === "doc_read") {
-            const ann = citations.find(
-                (a) => a.kind !== "case" && a.filename === event.filename,
-            );
-            return (
-                <DocReadBlock
-                    key={globalIdx}
-                    filename={event.filename}
-                    isStreaming={event.isStreaming}
-                    onClick={
-                        !event.isStreaming && ann && onCitationClick
-                            ? () => onCitationClick(ann)
-                            : undefined
-                    }
-                    showConnector={showConnector}
-                />
-            );
-        }
-        if (event.type === "doc_find") {
-            return (
-                <DocFindBlock
-                    key={globalIdx}
-                    filename={event.filename}
-                    query={event.query}
-                    totalMatches={event.total_matches}
-                    isStreaming={!!event.isStreaming}
+                    event={event}
+                    response={response}
                     showConnector={showConnector}
                 />
             );
@@ -436,21 +366,26 @@ export function AssistantMessage({
                 <DocCreatedBlock
                     key={globalIdx}
                     filename={event.filename}
-                    isStreaming={event.isStreaming}
                     showConnector={showConnector}
                 />
             );
         }
+        if (event.type === "doc_download") {
+            return (
+                <div key={globalIdx} className="mt-1">
+                    <DocDownloadBlock
+                        filename={event.filename}
+                        download_url={event.download_url}
+                    />
+                </div>
+            );
+        }
         if (event.type === "doc_replicated") {
-            // The backend now does N copies in one tool call and reports
-            // count + copies on a single event, so no consecutive-event
-            // aggregation needed.
             return (
                 <DocReplicatedBlock
                     key={globalIdx}
                     filename={event.filename}
                     count={event.count}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                 />
@@ -461,7 +396,6 @@ export function AssistantMessage({
                 <DocEditedBlock
                     key={globalIdx}
                     filename={event.filename}
-                    isStreaming={event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                 />
@@ -481,38 +415,20 @@ export function AssistantMessage({
                 />
             );
         }
-        if (event.type === "ask_inputs") {
-            const response = askInputsResponseFor(globalIdx);
-            return (
-                <AskInputsBlock
-                    key={globalIdx}
-                    event={event}
-                    response={response}
-                    showConnector={showConnector}
-                />
-            );
-        }
         if (event.type === "courtlistener_search_case_law") {
             const count = event.result_count ?? 0;
-            const detail = event.isStreaming
-                ? event.query
-                    ? `for "${event.query}"`
-                    : undefined
-                : event.error
-                  ? event.error
-                  : `${count} ${count === 1 ? "result" : "results"}${event.query ? ` for "${event.query}"` : ""}`;
+            const detail = event.error
+                ? presentAssistantErrorMessage(event.error)
+                : `${count} ${count === 1 ? "result" : "results"}${event.query ? ` for \"${event.query}\"` : ""}`;
             return (
                 <CourtListenerBlock
                     key={globalIdx}
                     label={
-                        event.isStreaming
-                            ? "Searching case law"
-                            : event.error
-                              ? "Case law search failed"
-                              : "Searched case law"
+                        event.error
+                            ? "Case law search failed"
+                            : "Searched case law"
                     }
                     detail={detail}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                 />
@@ -520,10 +436,9 @@ export function AssistantMessage({
         }
         if (event.type === "courtlistener_get_cases") {
             const caseCount = event.case_count ?? event.cluster_ids.length;
-            const displayLabel = `${caseCount} ${
-                caseCount === 1 ? "case" : "cases"
-            }`;
-            const detail = event.error ? event.error : undefined;
+            const detail = event.error
+                ? presentAssistantErrorMessage(event.error)
+                : undefined;
             const items: CourtListenerBlockItem[] =
                 event.cases?.map((caseItem) => ({
                     caseName: caseItem.case_name,
@@ -542,14 +457,11 @@ export function AssistantMessage({
                 <CourtListenerBlock
                     key={globalIdx}
                     label={
-                        event.isStreaming
-                            ? `Fetching ${displayLabel}`
-                            : event.error
-                              ? "Case fetch failed"
-                              : `Fetched ${displayLabel}`
+                        event.error
+                            ? "Case fetch failed"
+                            : `Fetched ${caseCount} ${caseCount === 1 ? "case" : "cases"}`
                     }
                     detail={detail}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                     items={items.length > 0 ? items : undefined}
@@ -558,113 +470,54 @@ export function AssistantMessage({
         }
         if (event.type === "courtlistener_find_in_case") {
             const searches = event.searches ?? [];
-            if (searches.length > 0) {
-                const matches =
-                    event.total_matches ??
-                    searches.reduce(
-                        (sum, search) => sum + (search.total_matches ?? 0),
-                        0,
-                    );
-                const caseIds = new Set(
-                    searches.map(
-                        (search) =>
-                            search.cluster_id ??
-                            `${search.case_name ?? ""}|${search.citation ?? ""}`,
-                    ),
+            const matches =
+                event.total_matches ??
+                searches.reduce(
+                    (sum, search) => sum + (search.total_matches ?? 0),
+                    0,
                 );
-                const caseCount = caseIds.size || searches.length;
-                const searchLabel = `${searches.length} ${
-                    searches.length === 1 ? "search" : "searches"
-                } in ${caseCount} ${caseCount === 1 ? "case" : "cases"}`;
-                const detail = event.isStreaming
-                    ? undefined
-                    : event.error
-                      ? event.error
-                      : `(${matches} ${matches === 1 ? "match" : "matches"})`;
-                const items: CourtListenerBlockItem[] = searches.map(
-                    (search) => ({
-                        caseName: search.case_name ?? null,
-                        citation:
-                            search.citation ??
-                            (search.cluster_id
-                                ? `Cluster ${search.cluster_id}`
-                                : null),
-                        url: null,
-                        query: search.query,
-                        totalMatches: search.total_matches ?? 0,
-                        hasError: !!search.error,
-                    }),
-                );
-                return (
-                    <CourtListenerBlock
-                        key={globalIdx}
-                        label={
-                            event.isStreaming
-                                ? `Running ${searchLabel}`
-                                : event.error
-                                  ? "Case searches failed"
-                                  : `Ran ${searchLabel}`
-                        }
-                        detail={detail}
-                        isStreaming={!!event.isStreaming}
-                        hasError={!!event.error}
-                        showConnector={showConnector}
-                        items={items.length > 0 ? items : undefined}
-                    />
-                );
-            }
-            const matches = event.total_matches ?? 0;
-            const caseLabel =
-                [event.case_name, event.citation].filter(Boolean).join(", ") ||
-                (event.cluster_id ? `cluster ${event.cluster_id}` : "case");
-            const detail = event.isStreaming
-                ? event.query
-                    ? `for "${event.query}" in ${caseLabel}`
-                    : caseLabel
-                : event.error
-                  ? event.error
-                  : `${matches} ${matches === 1 ? "match" : "matches"}${event.query ? ` for "${event.query}"` : ""} in ${caseLabel}`;
+            const items: CourtListenerBlockItem[] = searches.map((search) => ({
+                caseName: search.case_name ?? null,
+                citation:
+                    search.citation ??
+                    (search.cluster_id ? `Cluster ${search.cluster_id}` : null),
+                url: null,
+                query: search.query,
+                totalMatches: search.total_matches ?? 0,
+                hasError: !!search.error,
+            }));
+            const detail = event.error
+                ? presentAssistantErrorMessage(event.error)
+                : `${matches} ${matches === 1 ? "match" : "matches"}`;
             return (
                 <CourtListenerBlock
                     key={globalIdx}
                     label={
-                        event.isStreaming
-                            ? "Searching case"
-                            : event.error
-                              ? "Case search failed"
-                              : "Searched case"
+                        event.error
+                            ? "Case search failed"
+                            : "Searched case sources"
                     }
                     detail={detail}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
+                    items={items.length > 0 ? items : undefined}
                 />
             );
         }
         if (event.type === "courtlistener_read_case") {
             const count = event.opinion_count ?? 0;
-            const caseLabel =
-                [event.case_name, event.citation].filter(Boolean).join(", ") ||
-                "case";
-            const detail = event.isStreaming
-                ? undefined
-                : event.error
-                  ? event.error
-                  : count > 0
-                    ? `(${count} ${count === 1 ? "opinion" : "opinions"})`
-                    : undefined;
+            const detail = event.error
+                ? presentAssistantErrorMessage(event.error)
+                : count > 0
+                  ? `${count} ${count === 1 ? "opinion" : "opinions"}`
+                  : undefined;
             return (
                 <CourtListenerBlock
                     key={globalIdx}
                     label={
-                        event.isStreaming
-                            ? `Reading case ${caseLabel}`
-                            : event.error
-                              ? `Case read failed ${caseLabel}`
-                              : `Read case ${caseLabel}`
+                        event.error ? "Case read failed" : "Read case source"
                     }
                     detail={detail}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                 />
@@ -673,39 +526,30 @@ export function AssistantMessage({
         if (event.type === "courtlistener_verify_citations") {
             const citations = event.citation_count ?? 0;
             const matches = event.match_count ?? 0;
-            const citationLabel = `${citations} ${citations === 1 ? "citation" : "citations"}`;
-            const detail = event.isStreaming
-                ? undefined
-                : event.error
-                  ? event.error
-                  : `(${matches} ${matches === 1 ? "match" : "matches"})`;
-            // Adjacent `case_citation` events are emitted between the start
-            // and final verify_citations events (one per matched citation) —
-            // collect them so the user can expand to see resolved cases.
             const items: CourtListenerBlockItem[] = [];
             if (events) {
                 for (let j = globalIdx + 1; j < events.length; j++) {
-                    const e = events[j];
-                    if (e.type !== "case_citation") break;
+                    const candidate = events[j];
+                    if (candidate.type !== "case_citation") break;
                     items.push({
-                        caseName: e.case_name,
-                        citation: e.citation,
-                        url: e.url || null,
+                        caseName: candidate.case_name,
+                        citation: candidate.citation,
+                        url: candidate.url || null,
                     });
                 }
             }
+            const detail = event.error
+                ? presentAssistantErrorMessage(event.error)
+                : `${matches} ${matches === 1 ? "match" : "matches"}`;
             return (
                 <CourtListenerBlock
                     key={globalIdx}
                     label={
-                        event.isStreaming
-                            ? `Verifying ${citationLabel}`
-                            : event.error
-                              ? "Citation verification failed"
-                              : `Verified ${citationLabel}`
+                        event.error
+                            ? "Citation verification failed"
+                            : `Verified ${citations} ${citations === 1 ? "citation" : "citations"}`
                     }
                     detail={detail}
-                    isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
                     items={items.length > 0 ? items : undefined}
@@ -719,6 +563,19 @@ export function AssistantMessage({
         <div style={{ minHeight }}>
             <ResponseStatus status={status} />
             <div className="w-full font-inter relative mt-2">
+                {showWorkingStatus && (
+                    <div
+                        role="status"
+                        aria-live="polite"
+                        className="mb-3 flex items-center gap-2 text-sm font-serif text-gray-500"
+                    >
+                        <span
+                            aria-hidden="true"
+                            className="h-1.5 w-1.5 shrink-0 rounded-full border border-gray-400 border-t-transparent animate-spin"
+                        />
+                        <span>Working…</span>
+                    </div>
+                )}
                 {events && events.length > 0 ? (
                     <div className="flex flex-col gap-4">
                         {groups.map((g, gIdx) => {
@@ -881,9 +738,9 @@ export function AssistantMessage({
                     </div>
                 ) : null}
 
-                {topLevelErrorMessage && (
+                {effectiveErrorMessage && (
                     <p className="mt-2 text-base font-serif leading-7 text-red-700">
-                        {topLevelErrorMessage}
+                        {effectiveErrorMessage}
                     </p>
                 )}
 

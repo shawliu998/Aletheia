@@ -245,7 +245,7 @@ agentTasksRouter.post(
 
       let artifactSnapshot: unknown[] = [];
       if (status === "approved") {
-        const { blockers } = await getApprovalBlockers(db, snapshot);
+        const { blockers } = await getApprovalBlockers(db, snapshot, userId);
         if (blockers.length) {
           return void res.status(409).json({
             detail: `Approval is blocked: ${blockers.join(" ")}`,
@@ -319,7 +319,7 @@ agentTasksRouter.get(
       if (!snapshot) {
         return void res.status(404).json({ detail: "Agent task not found" });
       }
-      const { blockers } = await getReviewBlockers(db, snapshot);
+      const { blockers } = await getReviewBlockers(db, snapshot, userId);
       if (blockers.length) {
         return void res.status(409).json({
           detail: `Final export is blocked: ${blockers.join(" ")}`,

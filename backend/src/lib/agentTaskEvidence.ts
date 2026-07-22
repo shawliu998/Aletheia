@@ -1,7 +1,10 @@
 import { extractDocxBodyText } from "./docxTrackedChanges";
 import { isSpreadsheetDocumentType } from "./documentTypes";
 import { extractPdfText } from "./chat/tools/documentOps";
-import { spreadsheetToLLMText } from "./spreadsheet";
+import {
+  spreadsheetCitationText,
+  spreadsheetToLLMText,
+} from "./spreadsheet";
 import { downloadFile } from "./storage";
 import { createServerSupabase } from "./supabase";
 
@@ -13,7 +16,7 @@ export type AgentEvidenceStatus =
   | "missing"
   | "version_mismatch";
 
-type CitationQuote = {
+export type CitationQuote = {
   page: number | string | null;
   quote: string;
   sheet: string | null;
@@ -29,6 +32,48 @@ function normalize(value: string) {
     .normalize("NFKC")
     .toLocaleLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+export function quotedAnchorLocated(
+  sourceText: string | null,
+  quote: string,
+) {
+  const anchor = normalize(quote).slice(0, 120);
+  return Boolean(sourceText && anchor && normalize(sourceText).includes(anchor));
+}
+
+export function pdfCitationPageText(
+  sourceText: string,
+  page: number | string | null,
+) {
+  const rawPage = typeof page === "number" ? String(page) : page?.trim() ?? "";
+  const match = rawPage.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+  if (!match) return null;
+  const start = Number.parseInt(match[1], 10);
+  const end = Number.parseInt(match[2] ?? match[1], 10);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 1 ||
+    end < start ||
+    end - start > 49
+  ) {
+    return null;
+  }
+
+  const pageText = new Map<number, string>();
+  const sectionPattern =
+    /(?:^|\n\n)\[Page ([1-9]\d*)\]\n([\s\S]*?)(?=\n\n\[Page [1-9]\d*\]\n|$)/g;
+  for (const section of sourceText.matchAll(sectionPattern)) {
+    pageText.set(Number.parseInt(section[1], 10), section[2]);
+  }
+  const selected: string[] = [];
+  for (let pageNumber = start; pageNumber <= end; pageNumber += 1) {
+    const text = pageText.get(pageNumber);
+    if (text === undefined) return null;
+    selected.push(text);
+  }
+  return selected.join("\n\n");
 }
 
 function citationQuotes(row: Record<string, unknown>): CitationQuote[] {
@@ -62,30 +107,116 @@ function citationQuotes(row: Record<string, unknown>): CitationQuote[] {
   ];
 }
 
-async function extractVersionText(version: {
+export type ExtractedVersionContent = {
+  text: string;
+  spreadsheet: Buffer | null;
+  pdf: boolean;
+};
+
+export function classifyAgentCitationRelocation(input: {
+  source: ExtractedVersionContent | null;
+  quote: CitationQuote;
+  versionId: string;
+  currentVersionId: string | null;
+}): { status: AgentEvidenceStatus; detail: string } {
+  if (!input.quote.quote) {
+    return {
+      status: "missing",
+      detail: "Citation data or its source is missing.",
+    };
+  }
+  if (!input.source) {
+    return {
+      status: "missing",
+      detail: "The cited source version content is unavailable.",
+    };
+  }
+
+  let relocationText: string | null;
+  if (input.source.spreadsheet) {
+    relocationText =
+      input.quote.sheet && input.quote.cell
+        ? spreadsheetCitationText(
+            input.source.spreadsheet,
+            input.quote.sheet,
+            input.quote.cell,
+          )
+        : null;
+  } else if (input.source.pdf) {
+    relocationText = pdfCitationPageText(input.source.text, input.quote.page);
+    if (relocationText === null) {
+      return {
+        status: "missing",
+        detail: "The cited PDF page or page range is missing or invalid.",
+      };
+    }
+  } else {
+    // DOCX extraction has no reliable page boundaries, so retain the existing
+    // full-document quote check instead of inventing a page locator.
+    relocationText = input.source.text;
+  }
+  if (!quotedAnchorLocated(relocationText, input.quote.quote)) {
+    return {
+      status: "drifted",
+      detail: input.source.spreadsheet
+        ? "The quoted anchor could not be relocated at the cited sheet and cell."
+        : input.source.pdf
+          ? "The quoted anchor could not be relocated on the cited PDF page or page range."
+          : "Source opened, but the quoted anchor could not be relocated.",
+    };
+  }
+  if (input.currentVersionId !== input.versionId) {
+    return {
+      status: "version_mismatch",
+      detail:
+        "Located in the cited version; the source now has a newer current version.",
+    };
+  }
+  return {
+    status: "exact",
+    detail: "Located in the cited source version.",
+  };
+}
+
+async function extractVersionContent(version: {
   storage_path: string | null;
   file_type: string | null;
-}) {
+}): Promise<ExtractedVersionContent | null> {
   if (!version.storage_path) return null;
-  const raw = await downloadFile(version.storage_path);
-  if (!raw) return null;
-  const fileType = (version.file_type ?? "").toLowerCase();
-  if (fileType === "pdf") return extractPdfText(raw);
-  if (fileType === "docx" || fileType === "doc") {
-    return extractDocxBodyText(Buffer.from(raw));
+  try {
+    const raw = await downloadFile(version.storage_path);
+    if (!raw) return null;
+    const fileType = (version.file_type ?? "").toLowerCase();
+    if (fileType === "pdf") {
+      return { text: await extractPdfText(raw), spreadsheet: null, pdf: true };
+    }
+    if (fileType === "docx" || fileType === "doc") {
+      return {
+        text: await extractDocxBodyText(Buffer.from(raw)),
+        spreadsheet: null,
+        pdf: false,
+      };
+    }
+    if (isSpreadsheetDocumentType(fileType)) {
+      const spreadsheet = Buffer.from(raw);
+      return {
+        text: spreadsheetToLLMText(spreadsheet),
+        spreadsheet,
+        pdf: false,
+      };
+    }
+    return null;
+  } catch {
+    return null;
   }
-  if (isSpreadsheetDocumentType(fileType)) {
-    return spreadsheetToLLMText(Buffer.from(raw));
-  }
-  return null;
 }
 
 export async function getAgentTaskEvidence(
   db: Db,
   input: {
     taskId: string;
-    userId: string;
     artifactId: string;
+    userId: string;
   },
 ) {
   const { data: task } = await db
@@ -173,7 +304,10 @@ export async function getAgentTaskEvidence(
   const versionById = new Map(
     (versions ?? []).map((version) => [version.id as string, version]),
   );
-  const extractedByVersion = new Map<string, Promise<string | null>>();
+  const extractedByVersion = new Map<
+    string,
+    Promise<ExtractedVersionContent | null>
+  >();
 
   const citations = [];
   for (const [citationIndex, rawCitation] of rawCitations.entries()) {
@@ -204,30 +338,20 @@ export async function getAgentTaskEvidence(
         const key = versionId as string;
         let extracted = extractedByVersion.get(key);
         if (!extracted) {
-          extracted = extractVersionText({
+          extracted = extractVersionContent({
             storage_path: (version?.storage_path as string | null) ?? null,
-            file_type:
-              (version?.file_type as string | null) ?? null,
+            file_type: (version?.file_type as string | null) ?? null,
           });
           extractedByVersion.set(key, extracted);
         }
-        const sourceText = await extracted;
-        const anchor = normalize(quote.quote).slice(0, 120);
-        const located = Boolean(
-          sourceText && anchor && normalize(sourceText).includes(anchor),
-        );
-        if (!located) {
-          status = "drifted";
-          detail =
-            "Source opened, but the quoted anchor could not be relocated.";
-        } else if (document?.current_version_id !== versionId) {
-          status = "version_mismatch";
-          detail =
-            "Located in the cited version; the source now has a newer current version.";
-        } else {
-          status = "exact";
-          detail = "Located in the cited source version.";
-        }
+        const source = await extracted;
+        ({ status, detail } = classifyAgentCitationRelocation({
+          source,
+          quote,
+          versionId: key,
+          currentVersionId:
+            (document?.current_version_id as string | null) ?? null,
+        }));
       }
 
       citations.push({

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OfficeAuthGate } from "@/app/components/office/OfficeAuthGate";
 import { WordTaskPane } from "@/app/components/office/WordTaskPane";
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function WordAddInPage() {
-    return <WordTaskPane />;
+    return (
+        <OfficeAuthGate>
+            <WordTaskPane />
+        </OfficeAuthGate>
+    );
 }

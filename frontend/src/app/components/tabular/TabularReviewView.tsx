@@ -28,7 +28,9 @@ import {
     regenerateTabularCell,
     streamTabularGeneration,
     updateTabularReview,
+    uploadProjectDocument,
     uploadReviewDocument,
+    type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
 import type {
     ColumnConfig,
@@ -59,11 +61,16 @@ import { TRTable } from "./TRTable";
 import type { TRTableHandle } from "./TRTable";
 import { TRChatPanel } from "./TRChatPanel";
 import { TabularReviewDetailsModal } from "./TabularReviewDetailsModal";
-import { exportTabularReviewToExcel } from "./exportToExcel";
+import {
+    buildTabularReviewExcel,
+    exportTabularReviewToExcel,
+    isTabularReviewExcelWithinUploadLimit,
+} from "./exportToExcel";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { resolveCellCitationFromExcerpt } from "./citation-utils";
 
 interface Props {
     reviewId: string;
@@ -112,6 +119,9 @@ export function TRView({ reviewId, projectId }: Props) {
     const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<
         string[]
     >([]);
+    const [saveExcelToMatterStatus, setSaveExcelToMatterStatus] = useState<
+        "idle" | "saving" | "saved" | "too_large" | "error"
+    >("idle");
     const searchParams = useSearchParams();
     const initialChatParamRef = useRef<string | null>(searchParams.get("chat"));
     const [chatOpen, setChatOpen] = useState(!!initialChatParamRef.current);
@@ -507,9 +517,75 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
-    function handleTabularCitationClick(colIdx: number, rowIdx: number) {
+    function handleTabularCitationClick(citation: TRCitationAnnotation) {
+        const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
+        const matchingDocuments = documents.filter(
+            (candidate) => candidate.filename === citation.doc_name,
+        );
+        const indexedDocument = documents[citation.row_index];
+        const document =
+            matchingDocuments.length === 1
+                ? matchingDocuments[0]
+                : indexedDocument?.filename === citation.doc_name
+                  ? indexedDocument
+                  : undefined;
+        const matchingColumns = sortedColumns.filter(
+            (candidate) => candidate.name === citation.col_name,
+        );
+        const indexedColumn = sortedColumns[citation.col_index];
+        const column =
+            matchingColumns.length === 1
+                ? matchingColumns[0]
+                : indexedColumn?.name === citation.col_name
+                  ? indexedColumn
+                  : undefined;
+        const targetCell =
+            document && column
+                ? cells.find(
+                      (candidate) =>
+                          candidate.document_id === document.id &&
+                          candidate.column_index === column.index,
+                  )
+                : undefined;
+        const resolvedColIdx = column
+            ? columns.findIndex(
+                  (candidate) => candidate.index === column.index,
+              )
+            : -1;
+        const resolvedRowIdx = document
+            ? documents.findIndex(
+                  (candidate) => candidate.id === document.id,
+              )
+            : -1;
+        const colIdx =
+            resolvedColIdx >= 0 ? resolvedColIdx : citation.col_index;
+        const rowIdx =
+            resolvedRowIdx >= 0 ? resolvedRowIdx : citation.row_index;
+
         setSearch("");
         setHighlightedCell({ colIdx, rowIdx });
+        if (targetCell) {
+            const sourceCitation = resolveCellCitationFromExcerpt(
+                targetCell.content?.summary,
+                targetCell.content?.reasoning,
+                citation.quote,
+            );
+            setExpandedCell(targetCell);
+            setExpandedCellCitation(
+                sourceCitation
+                    ? {
+                          quote: sourceCitation.quote,
+                          page: sourceCitation.page,
+                          sheet: sourceCitation.sheet,
+                          cell: sourceCitation.cell,
+                          citationRef: sourceCitation.citationRef,
+                      }
+                    : undefined,
+            );
+        } else {
+            setExpandedCell(null);
+            setExpandedCellCitation(undefined);
+        }
         setTimeout(() => {
             tableRef.current?.scrollToCell(colIdx, rowIdx);
         }, 50);
@@ -670,6 +746,53 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
+    const matterSourcesVerified = Boolean(
+        projectId &&
+            review?.project_id === projectId &&
+            project?.id === projectId &&
+            documents.length > 0 &&
+            documents.every((document) => document.project_id === projectId),
+    );
+
+    async function handleSaveExcelToMatter() {
+        if (!projectId || !matterSourcesVerified) return;
+
+        setSaveExcelToMatterStatus("saving");
+        try {
+            const excelExport = await buildTabularReviewExcel({
+                reviewTitle: review?.title || "Tabular Review",
+                columns,
+                documents,
+                cells,
+            });
+            if (!isTabularReviewExcelWithinUploadLimit(excelExport.blob)) {
+                setSaveExcelToMatterStatus("too_large");
+                return;
+            }
+            await uploadProjectDocument(
+                projectId,
+                new File([excelExport.blob], excelExport.filename, {
+                    type: excelExport.blob.type,
+                }),
+            );
+            setSaveExcelToMatterStatus("saved");
+        } catch (error) {
+            console.error("Failed to save tabular review Excel to Matter", error);
+            setSaveExcelToMatterStatus("error");
+        }
+    }
+
+    const saveExcelToMatterMessage =
+        saveExcelToMatterStatus === "saving"
+            ? "Saving…"
+            : saveExcelToMatterStatus === "saved"
+              ? "Saved to Matter"
+              : saveExcelToMatterStatus === "too_large"
+                ? "Export exceeds 100 MB"
+                : saveExcelToMatterStatus === "error"
+                  ? "Couldn’t save — retry"
+                  : null;
+
     const q = search.toLowerCase();
     const filteredDocuments = q
         ? documents.filter((d) => d.filename.toLowerCase().includes(q))
@@ -744,49 +867,92 @@ export function TRView({ reviewId, projectId }: Props) {
                             {
                                 type: "custom",
                                 render: (
-                                    <HeaderActionsMenu
-                                        items={[
-                                            {
-                                                label: "Edit details",
-                                                icon: Pencil,
-                                                onSelect: requestReviewDetails,
-                                            },
-                                            {
-                                                label: "Apply workflow",
-                                                icon: WandSparkles,
-                                                onSelect: requestWorkflow,
-                                            },
-                                            {
-                                                label: "Export",
-                                                icon: Download,
-                                                onSelect: () =>
-                                                    exportTabularReviewToExcel({
-                                                        reviewTitle:
-                                                            review?.title ||
-                                                            "Tabular Review",
-                                                        columns,
-                                                        documents,
-                                                        cells,
-                                                    }),
-                                                disabled:
-                                                    columns.length === 0 ||
-                                                    documents.length === 0,
-                                            },
-                                            {
-                                                label: "Clear results",
-                                                icon: X,
-                                                onSelect: handleClearAllResults,
-                                                disabled:
-                                                    documents.length === 0,
-                                            },
-                                            {
-                                                label: "Delete",
-                                                icon: Trash2,
-                                                onSelect: requestReviewDelete,
-                                                variant: "danger",
-                                            },
-                                        ]}
-                                    />
+                                    <div className="flex items-center gap-1.5">
+                                        {saveExcelToMatterMessage && (
+                                            <span
+                                                role="status"
+                                                aria-live="polite"
+                                                className={
+                                                    saveExcelToMatterStatus ===
+                                                    "error"
+                                                        ? "max-w-40 truncate text-xs text-red-600"
+                                                        : saveExcelToMatterStatus ===
+                                                            "too_large"
+                                                          ? "max-w-40 truncate text-xs text-amber-700"
+                                                          : "max-w-40 truncate text-xs text-gray-500"
+                                                }
+                                            >
+                                                {saveExcelToMatterMessage}
+                                            </span>
+                                        )}
+                                        <HeaderActionsMenu
+                                            items={[
+                                                {
+                                                    label: "Edit details",
+                                                    icon: Pencil,
+                                                    onSelect:
+                                                        requestReviewDetails,
+                                                },
+                                                {
+                                                    label: "Apply workflow",
+                                                    icon: WandSparkles,
+                                                    onSelect: requestWorkflow,
+                                                },
+                                                {
+                                                    label: "Export",
+                                                    icon: Download,
+                                                    onSelect: () =>
+                                                        exportTabularReviewToExcel(
+                                                            {
+                                                                reviewTitle:
+                                                                    review?.title ||
+                                                                    "Tabular Review",
+                                                                columns,
+                                                                documents,
+                                                                cells,
+                                                            },
+                                                        ),
+                                                    disabled:
+                                                        columns.length === 0 ||
+                                                        documents.length === 0,
+                                                },
+                                                ...(projectId
+                                                    ? [
+                                                          {
+                                                              label: matterSourcesVerified
+                                                                  ? saveExcelToMatterStatus ===
+                                                                    "saving"
+                                                                      ? "Saving Excel to Matter…"
+                                                                      : "Save Excel to Matter"
+                                                                  : "Save unavailable — verify Matter sources",
+                                                              icon: Upload,
+                                                              onSelect:
+                                                                  handleSaveExcelToMatter,
+                                                              disabled:
+                                                                  !matterSourcesVerified ||
+                                                                  saveExcelToMatterStatus ===
+                                                                      "saving",
+                                                          },
+                                                      ]
+                                                    : []),
+                                                {
+                                                    label: "Clear results",
+                                                    icon: X,
+                                                    onSelect:
+                                                        handleClearAllResults,
+                                                    disabled:
+                                                        documents.length === 0,
+                                                },
+                                                {
+                                                    label: "Delete",
+                                                    icon: Trash2,
+                                                    onSelect:
+                                                        requestReviewDelete,
+                                                    variant: "danger",
+                                                },
+                                            ]}
+                                        />
+                                    </div>
                                 ),
                             },
                         ],

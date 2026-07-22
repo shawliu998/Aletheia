@@ -23,6 +23,50 @@ function cellDisplayText(cell: XLSX.CellObject | undefined): string {
   return String(cell.v);
 }
 
+/**
+ * Return the displayed values at one cited A1 cell/range in a workbook.
+ *
+ * Citation verification uses this instead of searching the whole rendered
+ * workbook, so a value that exists on another sheet or at another address does
+ * not make a stale spreadsheet citation appear relocatable.
+ */
+export function spreadsheetCitationText(
+  buffer: Buffer,
+  sheetName: string,
+  cellAddress: string,
+): string | null {
+  const normalizedSheet = sheetName.trim();
+  const normalizedCell = cellAddress.trim().toUpperCase();
+  if (
+    !normalizedSheet ||
+    !/^[A-Z]{1,3}[1-9]\d*(?::[A-Z]{1,3}[1-9]\d*)?$/.test(normalizedCell)
+  ) {
+    return null;
+  }
+
+  try {
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const worksheet = workbook.Sheets[normalizedSheet];
+    if (!worksheet) return null;
+    const range = XLSX.utils.decode_range(normalizedCell);
+    const cellCount =
+      (range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1);
+    if (cellCount > 10_000) return null;
+
+    const values: string[] = [];
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      for (let column = range.s.c; column <= range.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        const value = cellDisplayText(worksheet[address]).trim();
+        if (value) values.push(value);
+      }
+    }
+    return values.join("\n");
+  } catch {
+    return null;
+  }
+}
+
 /** Escape a cell value so it can't break the markdown table layout. */
 function sanitizeCellText(value: string): string {
   return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();

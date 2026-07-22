@@ -1,14 +1,35 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import {
+    useEffect,
+    useState,
+    useSyncExternalStore,
+    type ReactNode,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { needsMfaVerification } from "../popups/MfaVerificationPopup";
 
 type GateState = "idle" | "checking" | "required" | "verified";
+type GateResolution = {
+    userId: string;
+    state: "required" | "verified";
+};
 const MFA_VERIFIED_AT_KEY = "mike:mfa-verified-at";
 const MFA_VERIFIED_GRACE_MS = 60_000;
+
+function subscribeHydration() {
+    return () => {};
+}
+
+function clientHydrationSnapshot() {
+    return true;
+}
+
+function serverHydrationSnapshot() {
+    return false;
+}
 
 export function MfaLoginGate({ children }: { children: ReactNode }) {
     const router = useRouter();
@@ -16,39 +37,56 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
     const searchParams = useSearchParams();
     const { user } = useAuth();
     const { profile, loading } = useUserProfile();
-    const [gateState, setGateState] = useState<GateState>("idle");
+    const hydrated = useSyncExternalStore(
+        subscribeHydration,
+        clientHydrationSnapshot,
+        serverHydrationSnapshot,
+    );
+    const [gateResolution, setGateResolution] =
+        useState<GateResolution | null>(null);
     const isVerifyPage = pathname === "/verify-mfa";
+    const userId = user?.id ?? null;
+    const hasRecentVerification =
+        hydrated &&
+        !!userId &&
+        profile?.mfaOnLogin === true &&
+        hasRecentMfaVerification();
+    const gateState: GateState =
+        !userId || !profile?.mfaOnLogin
+            ? "idle"
+            : hasRecentVerification
+              ? "verified"
+              : gateResolution?.userId === userId
+                ? gateResolution.state
+                : "checking";
 
     useEffect(() => {
-        if (!user) {
-            setGateState("idle");
-            return;
-        }
-        if (loading) {
-            return;
-        }
-        if (!profile?.mfaOnLogin) {
-            setGateState("idle");
-            return;
-        }
-
-        if (hasRecentMfaVerification()) {
-            setGateState("verified");
-            return;
-        }
+        const activeUserId = userId;
+        if (
+            !activeUserId ||
+            loading ||
+            !profile?.mfaOnLogin ||
+            hasRecentVerification
+        ) return;
+        const checkedUserId = activeUserId;
 
         let cancelled = false;
-        setGateState((previous) =>
-            previous === "verified" ? "verified" : "checking",
-        );
 
         async function checkLoginMfa() {
             try {
                 const required = await needsMfaVerification();
                 if (cancelled) return;
-                setGateState(required ? "required" : "verified");
+                setGateResolution({
+                    userId: checkedUserId,
+                    state: required ? "required" : "verified",
+                });
             } catch {
-                if (!cancelled) setGateState("required");
+                if (!cancelled) {
+                    setGateResolution({
+                        userId: checkedUserId,
+                        state: "required",
+                    });
+                }
             }
         }
 
@@ -57,16 +95,12 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [loading, profile?.mfaOnLogin, user?.id]);
+    }, [hasRecentVerification, loading, profile?.mfaOnLogin, userId]);
 
     useEffect(() => {
         if (!user || loading || !profile?.mfaOnLogin) return;
 
         if (gateState === "required" && !isVerifyPage) {
-            if (hasRecentMfaVerification()) {
-                setGateState("verified");
-                return;
-            }
             const search = searchParams.toString();
             const next = `${pathname}${search ? `?${search}` : ""}`;
             router.replace(`/verify-mfa?next=${encodeURIComponent(next)}`);
@@ -85,7 +119,7 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         user,
     ]);
 
-    if (user && loading) {
+    if (!hydrated || (user && loading)) {
         return gateState === "verified" ? (
             <>{children}</>
         ) : (

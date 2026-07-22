@@ -8,11 +8,9 @@ import type {
     AssistantEvent,
     Chat,
     ChatDetailOut,
-    Citation,
     Document,
     Folder,
     LibraryFolder,
-    Message,
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
     Project,
@@ -21,21 +19,15 @@ import type {
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
+import {
+    mapChatMessages,
+    type ChatMessageWire,
+} from "@/app/lib/chatMessageMapping";
 
 // Server-side shape before mapping
-interface ServerMessage {
-    id: string;
-    chat_id: string;
-    role: "user" | "assistant";
-    content: string | AssistantEvent[] | null;
-    files?: { filename: string; document_id?: string }[] | null;
-    workflow?: { id: string; title: string } | null;
-    citations?: Citation[] | null;
-    created_at: string;
-}
 interface ServerChatDetailOut {
     chat: Chat;
-    messages: ServerMessage[];
+    messages: ChatMessageWire[];
 }
 
 const API_BASE =
@@ -872,32 +864,7 @@ export async function listProjectChats(projectId: string): Promise<Chat[]> {
 
 export async function getChat(chatId: string): Promise<ChatDetailOut> {
     const raw = await apiRequest<ServerChatDetailOut>(`/chat/${chatId}`);
-    const messages: Message[] = raw.messages.map((m) => {
-        if (m.role === "user") {
-            return {
-                id: m.id,
-                role: "user",
-                content: typeof m.content === "string" ? m.content : "",
-                files: m.files ?? undefined,
-                workflow: m.workflow ?? undefined,
-            };
-        }
-        const events = Array.isArray(m.content)
-            ? (m.content as AssistantEvent[])
-            : undefined;
-        return {
-            id: m.id,
-            role: "assistant",
-            content:
-                events
-                    ?.filter((e) => e.type === "content")
-                    .map((e) => (e as { type: "content"; text: string }).text)
-                    .join("") ?? "",
-            citations: m.citations ?? undefined,
-            events,
-        };
-    });
-    return { chat: raw.chat, messages };
+    return { chat: raw.chat, messages: mapChatMessages(raw.messages) };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {

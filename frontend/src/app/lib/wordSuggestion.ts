@@ -1,11 +1,66 @@
 import type { Citation } from "@/app/components/shared/types";
 
 export type WordReviewMode = "review" | "rewrite";
+export type WordReviewScope = "selection" | "document";
+
+export interface WordSuggestionItem {
+    id: string;
+    original: string;
+    replacement: string;
+    reason: string;
+    /**
+     * A compact position hint lets a document-wide Word search disambiguate a
+     * repeated standard clause without exposing document internals in the UI.
+     */
+    locator?: Readonly<Record<string, unknown>>;
+}
+
+export const MAX_WORD_SUGGESTION_ANCHOR_CHARS = 255;
+export const TARGET_WORD_DOCUMENT_SEGMENT_CHARS = 14_000;
+export const WORD_DOCUMENT_CHUNK_MIN_CHARS = 12_000;
+export const WORD_DOCUMENT_CHUNK_MAX_CHARS = 16_000;
+
+export type WordDocumentSegment = {
+    index: number;
+    paragraphStart: number;
+    paragraphEnd: number;
+    text: string;
+};
+
+/**
+ * Split Word body text using the separator that the active surface actually
+ * provides. Office.js uses carriage returns for paragraphs, while persisted
+ * prompts use blank lines so paragraph boundaries remain legible to a model.
+ */
+export function splitWordDocumentParagraphs(documentText: string): string[] {
+    if (/\r/.test(documentText)) {
+        return documentText.replace(/\r\n/g, "\r").split("\r");
+    }
+    if (/\n\n/.test(documentText)) {
+        return documentText.split("\n\n");
+    }
+    return documentText.split("\n");
+}
 
 export interface WordSuggestionStreamResult {
     text: string;
     chatId: string | null;
     citations: Citation[];
+}
+
+export class WordSuggestionStreamError extends Error {
+    readonly chatId: string | null;
+    readonly status: number | null;
+
+    constructor(
+        message: string,
+        options?: { chatId?: string | null; status?: number | null },
+    ) {
+        super(message);
+        this.name = "WordSuggestionStreamError";
+        this.chatId = options?.chatId ?? null;
+        this.status = options?.status ?? null;
+    }
 }
 
 export function buildWordSuggestionPrompt(args: {
@@ -27,8 +82,124 @@ Selected Word text:
 <selection>
 ${args.selection}
 </selection>
+<vera_word_source tag="selection" chars="${args.selection.length}" />
 
 Do not edit or create any project document. Return only the replacement text, with no heading, explanation, quotation marks, Markdown fence, or citation markers.`;
+}
+
+export function buildWordDocumentReviewPrompt(args: {
+    mode: WordReviewMode;
+    documentText: string;
+    instruction: string;
+    documentTextTruncated?: boolean;
+    paragraphStart?: number;
+    segmentIndex?: number;
+    segmentCount?: number;
+}): string {
+    const task =
+        args.mode === "review"
+            ? "Review the Word document and propose the smallest precise replacements that address the instruction."
+            : "Identify the Word passages that should be rewritten to satisfy the instruction while preserving legal meaning unless a substantive change is required.";
+    const truncationNote = args.documentTextTruncated
+        ? "Only the first part of the document is available. Review only the supplied text and do not infer changes outside it."
+        : "Review only the supplied document text.";
+    const segmentNote =
+        typeof args.paragraphStart === "number"
+            ? `This is segment ${(args.segmentIndex ?? 0) + 1} of ${args.segmentCount ?? 1}, beginning at document paragraph ${args.paragraphStart + 1}. Only review this supplied segment.\n<vera_word_segment index="${args.segmentIndex ?? 0}" count="${args.segmentCount ?? 1}" paragraph_start="${args.paragraphStart}" source_chars="${args.documentText.length}" />`
+            : `<vera_word_source tag="document" chars="${args.documentText.length}" />`;
+
+    return `${task}
+
+Instruction:
+${args.instruction.trim()}
+
+Word document text:
+<document>
+${args.documentText}
+</document>
+
+${truncationNote}
+${segmentNote}
+
+Return one JSON object with a \"suggestions\" array containing 0 to 5 items. Each item must contain exactly these string fields:
+- \"original\": copy an exact, verbatim, uniquely occurring short passage from one paragraph of the supplied document text. It must be directly searchable in Word, contain no line break or tab, and be at most ${MAX_WORD_SUGGESTION_ANCHOR_CHARS} characters. Never shorten, paraphrase, or combine a passage to fit this limit; choose a different exact passage instead.
+- \"replacement\": the complete text that should replace exactly the quoted \"original\" passage; preserve any context needed inside that passage, do not repeat text outside it, and include no line break
+- \"reason\": one concise sentence explaining the legal or drafting issue
+
+Suggestions must not repeat or overlap the same document text. Return at most one suggestion for each paragraph; combine related changes within that paragraph into one exact replacement.
+
+Do not edit or create any project document. Do not include Markdown, citation markers, headings, or text outside the JSON object.`;
+}
+
+/**
+ * Break a Word body into model-sized, paragraph-preserving slices. Paragraphs
+ * are kept whole; chunks aim for 12k–16k characters. The text sent to the model
+ * uses `\n\n` between paragraphs so the model can see paragraph boundaries
+ * clearly while the stored paragraph index maps back to Word body text.
+ */
+export function segmentWordDocumentText(
+    documentText: string,
+    options?: {
+        minChars?: number;
+        targetChars?: number;
+        maxChars?: number;
+    },
+): WordDocumentSegment[] {
+    const target =
+        options?.targetChars ?? TARGET_WORD_DOCUMENT_SEGMENT_CHARS;
+    const min = options?.minChars ?? WORD_DOCUMENT_CHUNK_MIN_CHARS;
+    const max = options?.maxChars ?? WORD_DOCUMENT_CHUNK_MAX_CHARS;
+
+    if (!Number.isFinite(target) || target < 1) {
+        throw new Error("Word document segment size must be positive.");
+    }
+
+    const paragraphs = splitWordDocumentParagraphs(documentText);
+    const segments: WordDocumentSegment[] = [];
+    let paragraphStart = 0;
+    let current: string[] = [];
+    let currentLength = 0;
+
+    const flush = (paragraphEnd: number) => {
+        if (!current.length) return;
+        segments.push({
+            index: segments.length,
+            paragraphStart,
+            paragraphEnd,
+            text: current.join("\n\n"),
+        });
+        current = [];
+        currentLength = 0;
+    };
+
+    for (const [index, paragraph] of paragraphs.entries()) {
+        if (paragraph.length > max) {
+            throw new Error(
+                `One Word paragraph is longer than ${max.toLocaleString()} characters. Select the relevant text in Word and review it as Selected text.`,
+            );
+        }
+        const separatorLength = current.length ? 2 : 0;
+        const addedLength = paragraph.length + separatorLength;
+        const nextLength = currentLength + addedLength;
+
+        if (current.length === 0) {
+            current.push(paragraph);
+            currentLength = addedLength;
+        } else if (nextLength <= target) {
+            current.push(paragraph);
+            currentLength = nextLength;
+        } else if (currentLength < min && nextLength <= max) {
+            current.push(paragraph);
+            currentLength = nextLength;
+        } else {
+            flush(index - 1);
+            paragraphStart = index;
+            current.push(paragraph);
+            currentLength = paragraph.length;
+        }
+    }
+    flush(paragraphs.length - 1);
+    return segments;
 }
 
 export function cleanSuggestionText(value: string): string {
@@ -42,13 +213,195 @@ export function cleanSuggestionText(value: string): string {
     return text.trim();
 }
 
+function exactOccurrenceCount(source: string, quote: string): number {
+    let count = 0;
+    let start = 0;
+    while (start <= source.length - quote.length) {
+        const index = source.indexOf(quote, start);
+        if (index === -1) break;
+        count += 1;
+        start = index + Math.max(quote.length, 1);
+    }
+    return count;
+}
+
+function paragraphLocatorForExactQuote(
+    source: string,
+    quote: string,
+): { index: number; text: string } | null {
+    const paragraphs = splitWordDocumentParagraphs(source);
+    const matches = paragraphs
+        .map((paragraph, index) =>
+            exactOccurrenceCount(paragraph, quote) === 1
+                ? { index, text: paragraph }
+                : null,
+        )
+        .filter(
+            (match): match is { index: number; text: string } => match !== null,
+        );
+    return matches.length === 1 ? matches[0] : null;
+}
+
+function extractJsonObject(value: string): string {
+    const cleaned = cleanSuggestionText(value);
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end <= start) {
+        throw new Error(
+            "Vera did not return a review list. Try generating the document review again.",
+        );
+    }
+    return cleaned.slice(start, end + 1);
+}
+
+export function parseWordDocumentSuggestions(
+    value: string,
+    documentText: string,
+    options?: { paragraphStart?: number; idOffset?: number },
+): WordSuggestionItem[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(extractJsonObject(value));
+    } catch (error) {
+        if (error instanceof Error && /review list/i.test(error.message)) {
+            throw error;
+        }
+        throw new Error(
+            "Vera returned an incomplete review list. Try generating the document review again.",
+        );
+    }
+
+    const suggestions =
+        parsed && typeof parsed === "object" && "suggestions" in parsed
+            ? (parsed as { suggestions?: unknown }).suggestions
+            : null;
+    if (!Array.isArray(suggestions) || suggestions.length > 5) {
+        throw new Error("A document review must contain between 0 and 5 suggestions.");
+    }
+
+    const usedOriginals = new Set<string>();
+    const usedParagraphIndexes = new Set<number>();
+    const usedRanges: Array<{ start: number; end: number }> = [];
+    const accepted: WordSuggestionItem[] = [];
+    const overlongIndexes: number[] = [];
+
+    for (const [index, candidate] of suggestions.entries()) {
+        if (!candidate || typeof candidate !== "object") {
+            throw new Error(`Suggestion ${index + 1} is incomplete. Generate the review again.`);
+        }
+        const item = candidate as Record<string, unknown>;
+        const original = typeof item.original === "string" ? item.original.trim() : "";
+        const replacement =
+            typeof item.replacement === "string" ? item.replacement.trim() : "";
+        const reason = typeof item.reason === "string" ? item.reason.trim() : "";
+        if (!original || !replacement || !reason) {
+            throw new Error(`Suggestion ${index + 1} is incomplete. Generate the review again.`);
+        }
+        if (original === replacement) {
+            throw new Error(`Suggestion ${index + 1} does not change the quoted text.`);
+        }
+        if (original.length > MAX_WORD_SUGGESTION_ANCHOR_CHARS) {
+            // Word exact-search anchors cannot exceed this limit. Do not trim the
+            // model's quote: that could create a different, unreviewed anchor.
+            // Preserve other independently valid suggestions in the same result.
+            overlongIndexes.push(index + 1);
+            continue;
+        }
+        if (/[\r\n\t]/.test(original)) {
+            throw new Error(
+                `Suggestion ${index + 1} spans more than one paragraph. Generate the review again so Vera can locate one exact passage.`,
+            );
+        }
+        if (
+            typeof options?.paragraphStart === "number" &&
+            /[\r\n]/.test(replacement)
+        ) {
+            throw new Error(
+                `Suggestion ${index + 1} replaces more than one paragraph. Generate the document review again with a single-paragraph replacement, or review that text as a selection.`,
+            );
+        }
+        if (usedOriginals.has(original)) {
+            throw new Error(
+                `Suggestion ${index + 1} repeats an earlier document passage. Generate the review again so each passage is reviewed once.`,
+            );
+        }
+        usedOriginals.add(original);
+        const occurrences = exactOccurrenceCount(documentText, original);
+        if (occurrences === 0) {
+            throw new Error(
+                `Suggestion ${index + 1} no longer matches the loaded document. Refresh the document and generate the review again.`,
+            );
+        }
+        if (occurrences > 1) {
+            throw new Error(
+                `Suggestion ${index + 1} matches more than one passage. Generate the review again so Vera can identify one exact location.`,
+            );
+        }
+        const start = documentText.indexOf(original);
+        const end = start + original.length;
+        if (usedRanges.some((range) => start < range.end && end > range.start)) {
+            throw new Error(
+                `Suggestion ${index + 1} overlaps an earlier suggestion. Generate the review again so each change can be reviewed independently.`,
+            );
+        }
+        usedRanges.push({ start, end });
+        const paragraphLocator =
+            typeof options?.paragraphStart === "number"
+                ? paragraphLocatorForExactQuote(documentText, original)
+                : null;
+        if (typeof options?.paragraphStart === "number" && !paragraphLocator) {
+            throw new Error(
+                `Suggestion ${index + 1} could not be tied to one document paragraph. Generate the review again so Vera can verify the location before writing.`,
+            );
+        }
+        if (
+            paragraphLocator &&
+            usedParagraphIndexes.has(paragraphLocator.index)
+        ) {
+            throw new Error(
+                `Suggestion ${index + 1} adds a second change to the same paragraph. Generate the review again so changes in one paragraph are combined into one suggestion.`,
+            );
+        }
+        if (paragraphLocator) usedParagraphIndexes.add(paragraphLocator.index);
+        accepted.push({
+            id: `word-suggestion-${(options?.idOffset ?? 0) + accepted.length + 1}`,
+            original,
+            replacement,
+            reason,
+            ...(typeof options?.paragraphStart === "number"
+                ? {
+                      locator: {
+                          paragraph_index:
+                              options.paragraphStart +
+                              (paragraphLocator?.index ?? 0),
+                          paragraph_text: paragraphLocator?.text ?? "",
+                      },
+                  }
+                : {}),
+        });
+    }
+
+    if (accepted.length === 0 && overlongIndexes.length > 0) {
+        throw new Error(
+            `No suggestion could be located because ${overlongIndexes.length === 1 ? "its quote is" : "their quotes are"} more than ${MAX_WORD_SUGGESTION_ANCHOR_CHARS} characters. Generate the review again using shorter exact document passages.`,
+        );
+    }
+
+    return accepted;
+}
+
 export async function readWordSuggestionStream(
     response: Response,
     onText?: (text: string) => void,
 ): Promise<WordSuggestionStreamResult> {
     if (!response.ok) {
         const detail = await response.text();
-        throw new Error(detail || `Suggestion request failed (${response.status}).`);
+        throw new WordSuggestionStreamError(
+            detail
+                ? `Suggestion request failed (${response.status}): ${detail}`
+                : `Suggestion request failed (${response.status}).`,
+            { status: response.status },
+        );
     }
     const reader = response.body?.getReader();
     if (!reader) throw new Error("Suggestion response did not include a stream.");
@@ -76,6 +429,15 @@ export async function readWordSuggestionStream(
             chatId = data.chatId;
             return;
         }
+        if (data.type === "tool_call_start") {
+            // Text emitted before a tool call is a progress preface, not the
+            // replacement Word should insert. The next content block is the
+            // model's answer after the tool result.
+            text = "";
+            citations = [];
+            onText?.(text);
+            return;
+        }
         if (data.type === "content_delta" && typeof data.text === "string") {
             text += data.text;
             onText?.(text);
@@ -86,10 +448,11 @@ export async function readWordSuggestionStream(
             return;
         }
         if (data.type === "error") {
-            throw new Error(
+            throw new WordSuggestionStreamError(
                 typeof data.message === "string"
                     ? data.message
                     : "Vera could not generate a suggestion.",
+                { chatId },
             );
         }
     };

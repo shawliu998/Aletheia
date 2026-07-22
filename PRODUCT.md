@@ -1,50 +1,78 @@
-# Vera Product Context
+# Vera 产品定义与能力路线图
 
-This file is the single authoritative product context for Vera. Historical product and research documents under `docs/` are implementation records, not current product or UI direction.
+本文件是 Vera 唯一权威的产品上下文。`docs/` 下的历史研究、演示和实现记录不构成当前产品或 UI 方向。
 
-## North star
+## 一句话定位
 
-Vera helps legal professionals complete legal work and deliver checkable Word, Excel, and conclusion outputs. Sources should be easy to verify in place, with approval added only when the risk of a final or externally controlled output requires it.
+Vera 是基于 Mike 的开放式法律工作成果 Agent：围绕 Matter，把材料转化为可核查的 Word、Excel 和法律结论；Agent 负责有限、可恢复的多步执行，律师在来源核查和最终交付时保持控制。
 
-Mike is the default baseline for information architecture, navigation, visual design, components, density, interaction rhythm, and workflow. Vera adds only the smallest legal-Agent capability that Mike does not already provide, embedded in existing Mike surfaces whenever possible.
+Vera 面向律师个人、法律团队，以及希望掌握部署方式和模型选择的机构。它不是通用聊天机器人、完整 CLM、法律数据库替代品或企业治理平台。
 
-## Product order
+## 产品承诺
 
-Default screen priority is:
+Vera 帮助法律专业人员更快完成一项法律工作，并交付可以继续编辑、检查来源和最终确认的成果。默认界面优先级固定为：
 
-1. Matter and work objective;
-2. Word, Excel, and conclusion outputs;
-3. one-action source verification;
-4. approval or requested changes when necessary.
+1. 当前 Matter、材料范围和工作目标；
+2. Word、Excel 和结论成果；
+3. 一次操作回到支持结论的原始证据；
+4. 仅在最终、外发或受控成果需要时批准或退回修改。
 
-Technical detail appears only when it helps resolve a failure or explains a controlled export. It is not a regular product layer.
+普通草稿和内部查看应保持顺畅。执行层只显示目标、三至六步计划、成果、进度和需要用户处理的阻塞；不得展示思维链、工具调用流水或开发者控制台。
 
-The execution layer stays thin: show the objective, three to six steps, outputs, and blockers requiring user action. Do not expose chain of thought, tool-call streams, or developer controls.
+## 产品与设计基线
 
-Evidence is core but restrained. Prefer precise source deep links and brief location states over a separate evidence workspace. Human review appears according to risk, principally for final, external, or controlled outputs; ordinary drafts and internal viewing should remain frictionless.
+Mike 是 Vera 的信息架构、导航、页面布局、组件、视觉密度、动效节奏和基础交互基线。Vera 默认复用 Mike 的 Assistant、Projects、Library、Tabular Review、Workflows、路由、对象和数据契约，只在现有界面内加入 Mike 缺少的最小法律 Agent 能力。
 
-Vera does not claim to be fully offline. When a user chooses a cloud model such as DeepSeek or Kimi, relevant content leaves the device for model processing; the product must state that fact at the point of configuration or egress. Existing SQLCipher support may remain for compatibility, but it is not a product claim and should not be expanded without a concrete need.
+Vera 借鉴 Legora 的跨工具连续性、Harvey 的 Work Task 与 Word 工作方式、CoCounsel 的来源严谨性，以及 Spellbook 的 Word 内直接操作；不追求这些产品的全部功能，也不建立第二套 Vera 视觉系统。
 
-System Keychain storage for API keys, localhost binding, Matter ownership checks, file-path validation, and factual cloud-model data notices are necessary engineering baselines. SHA-256 is an internal integrity check for approved-version exports, not normal UI content. The single-user stage does not add roles or RBAC.
+## 当前能力基线
 
-## Decision filter
+- **Matter 工作空间：** 文档、聊天、Tabular Review、Workflow 和 Work Task 共享同一项目上下文。
+- **Assistant：** 读取材料、回答问题、生成带来源的分析和可下载成果。
+- **Tabular Review：** 文档作为行、问题作为列进行批量提取；支持结果对话、单元格审阅和一键打开原始合同证据。
+- **Work Task：** 将目标拆成三至六个短步骤，支持暂停、恢复、补充材料、失败重试、503/429 有界等待、应用重启恢复、成果关联和最终 Verifier。
+- **Word 加载项：** 读取选区或全文，生成分节建议，添加评论或未接受的修订，保留来源，并支持进度、取消、恢复和长文档处理。
+- **成果：** 以可继续编辑的 Word、Excel 和明确结论为主要输出；成果必须属于当前 Matter。
+- **最终控制：** 普通草稿不强制审批；最终、外发或受控输出可要求人工批准或退回修改。
 
-Ship a feature only if it does at least one of the following:
+只有经过真实流程验收的能力才能作为对外产品能力；实验页面、历史数据层和仅存在于代码中的接口不得进入产品宣传。
 
-- shortens time to complete the legal task;
-- improves work-product quality;
-- makes sources easier to verify;
-- controls a consequential final action.
+## 能力路线图
 
-If none apply, do not build it. Reuse existing Mike routes, objects, and components before creating a new abstraction.
+### 当前优先级：完成核心闭环
 
-## Non-goals
+1. 稳定 `Matter 材料 → Work Task → Word/Excel/结论 → 来源核查 → 必要审批 → 导出` 全流程。
+2. 完成 Word Playbook 审阅：识别条款、说明偏差、提出可定位修改，由律师逐条接受、跳过或评论。
+3. 打通 Tabular Review 到 Memo/报告：从批量结论直接形成带来源的可编辑 Word 成果。
+4. 让模板、先例和既有成果在当前 Matter 内可复用，减少重复上传和重复提示。
+5. 持续验证真实合同、长中文、长文档、失败恢复、窄窗、键盘和 125%/150% 缩放。
 
-- Agent consoles, governance centers, or audit consoles;
-- multi-Agent control panels or tool-call timelines;
-- evidence graphs or confidence dashboards;
-- approval at every step or on routine drafts;
-- promoting `local-first` on every page;
-- technical IDs, hashes, or internal state on primary screens;
-- security centers, encryption dashboards, or enterprise RBAC without a defined need;
-- a Vera-specific visual system that diverges from Mike.
+### 下一阶段：在真实使用证明需要后扩展
+
+- 可配置但克制的 Workflow 模板和组织 Playbook；
+- Matter 内的先例、模板和机构知识检索；
+- 有明确权威来源时的法律研究连接器；
+- 多人使用成立后再加入评论、共享和轻量权限；
+- 有目标客户和规模指标后再接入 iManage、NetDocuments、SharePoint 等 DMS。
+
+### 明确不做
+
+- Agent 控制台、多 Agent 拓扑、工具调用时间线；
+- 独立 Evidence、Governance、Audit 或 Security 中心；
+- 证据图谱、置信度仪表盘和每一步审批；
+- 完整合同生命周期管理或自动对外谈判；
+- 与 Westlaw、Practical Law 正面竞争的通用法律数据库；
+- 未有真实需求的企业 RBAC、加密仪表盘或合规页面；
+- 在普通页面宣传 `local-first`、加密、哈希、内部 ID 或技术状态。
+
+## 产品决策过滤器
+
+一项功能只有在满足至少一个条件时才进入开发：缩短法律任务完成时间、提高成果质量、使来源更容易核查，或控制具有实际后果的最终动作。否则不开发。
+
+增加页面、表、状态、面板或通用框架前，必须先证明现有 Matter、Task、Artifact、Document、Citation、Review 或 Workflow 对象无法承载需求。UI 调整不得顺带改变 API、认证、权限、安全边界、导出门禁或法律免责声明。
+
+## 数据与工程边界
+
+Vera 不声称完全离线。用户选择 DeepSeek、Kimi 等云模型时，相关内容会离开设备用于模型处理，产品必须在配置或数据外发点如实说明。
+
+System Keychain 的 API Key 存储、localhost 绑定、Matter 所有权检查和文件路径验证是必要工程基线。现有 SQLCipher 可为兼容保留，但不是产品卖点；SHA-256 只用于批准版本的内部完整性检查，不出现在普通界面。单用户阶段不新增角色或 RBAC。

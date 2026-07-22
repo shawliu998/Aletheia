@@ -117,7 +117,11 @@ export async function advanceAgentTaskExecution(input: {
   }
 
   if (current.task.status === "verifying") {
-    execution.citationCheck = await verifyTaskCitationLinks(db, current);
+    execution.citationCheck = await verifyTaskCitationLinks(
+      db,
+      current,
+      userId,
+    );
     const allArtifacts = [...current.artifacts, ...execution.artifacts];
     const deliverableState = async () =>
       evaluateTaskDeliverables(db, { ...current, artifacts: allArtifacts });
@@ -204,16 +208,20 @@ export async function advanceAgentTaskExecution(input: {
         });
         const afterRecheck = await taskCanContinue(db, taskId, userId);
         if (!afterRecheck.active) return afterRecheck.snapshot;
-        recheck.citationCheck = await verifyTaskCitationLinks(db, {
-          ...repairedSnapshot,
-          artifacts: [
-            ...repairedSnapshot.artifacts,
-            ...recheck.artifacts.map((artifact) => ({
-              task_id: taskId,
-              ...artifact,
-            })),
-          ],
-        });
+        recheck.citationCheck = await verifyTaskCitationLinks(
+          db,
+          {
+            ...repairedSnapshot,
+            artifacts: [
+              ...repairedSnapshot.artifacts,
+              ...recheck.artifacts.map((artifact) => ({
+                task_id: taskId,
+                ...artifact,
+              })),
+            ],
+          },
+          userId,
+        );
       } catch (error) {
         if (isAgentTaskExecutionInterrupted(error)) {
           return getAgentTaskSnapshot(db, taskId, userId);

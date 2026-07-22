@@ -84,6 +84,38 @@ export interface ApplyTrackedEditsResult {
     errors: EditError[];
 }
 
+export interface DocxRevisionMarkup {
+    kind: "insertion" | "deletion";
+    id: string | null;
+    author: string | null;
+    date: string | null;
+    text: string;
+    paragraphIndex: number;
+    finalStart: number;
+    finalEnd: number;
+}
+
+export interface DocxCommentMarkup {
+    kind: "comment";
+    id: string;
+    author: string | null;
+    date: string | null;
+    text: string;
+    anchorText: string;
+    paragraphStart: number | null;
+    paragraphEnd: number | null;
+    finalStart: number | null;
+    finalEnd: number | null;
+}
+
+export type DocxReviewMarkupItem = DocxRevisionMarkup | DocxCommentMarkup;
+
+export interface DocxReviewMarkupResult {
+    /** Accepted/final text, byte-for-byte equivalent to extractDocxBodyText. */
+    finalText: string;
+    items: DocxReviewMarkupItem[];
+}
+
 // ---------------------------------------------------------------------------
 // Preserve-order tree helpers
 // ---------------------------------------------------------------------------
@@ -747,6 +779,208 @@ export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
     };
     collect(bodyChildren);
     return lines.join("\n");
+}
+
+function descendantText(node: XNode, textElement: "w:t" | "w:delText"): string {
+    let out = "";
+    const visit = (current: XNode) => {
+        if (elName(current) === textElement) {
+            out += getTextContent(current);
+            return;
+        }
+        for (const child of elChildren(current)) visit(child);
+    };
+    visit(node);
+    return out;
+}
+
+function commentText(comment: XNode): string {
+    const paragraphs: string[] = [];
+    const visit = (nodes: XNode[]) => {
+        for (const node of nodes) {
+            const name = elName(node);
+            if (!name) continue;
+            if (name === "w:p") {
+                paragraphs.push(flattenParagraph(elChildren(node)).paraText);
+            } else {
+                visit(elChildren(node));
+            }
+        }
+    };
+    visit(elChildren(comment));
+    return paragraphs.join("\n");
+}
+
+function readComments(tree: XNode[]): Map<string, DocxCommentMarkup> {
+    const comments = new Map<string, DocxCommentMarkup>();
+    const visit = (nodes: XNode[]) => {
+        for (const node of nodes) {
+            if (elName(node) === "w:comment") {
+                const attrs = elAttrs(node);
+                const rawId = attrs["@_w:id"];
+                if (rawId == null) continue;
+                const id = String(rawId);
+                comments.set(id, {
+                    kind: "comment",
+                    id,
+                    author: attrs["@_w:author"] ?? null,
+                    date: attrs["@_w:date"] ?? null,
+                    text: commentText(node),
+                    anchorText: "",
+                    paragraphStart: null,
+                    paragraphEnd: null,
+                    finalStart: null,
+                    finalEnd: null,
+                });
+                continue;
+            }
+            visit(elChildren(node));
+        }
+    };
+    visit(tree);
+    return comments;
+}
+
+/**
+ * Extract tracked insertions, deletions, and classic OOXML comments without
+ * changing the accepted/final text used by read_document and edit anchors.
+ *
+ * The first version intentionally follows extractDocxBodyText's body-only
+ * paragraph traversal. Comment replies/commentsExtended and markup in
+ * headers, footers, footnotes, or text boxes remain out of scope.
+ */
+export async function extractDocxReviewMarkup(
+    bytes: Buffer,
+): Promise<DocxReviewMarkupResult> {
+    const zip = await JSZip.loadAsync(bytes);
+    const docXmlFile = getZipEntry(zip, "word/document.xml");
+    if (!docXmlFile) return { finalText: "", items: [] };
+
+    const parser = createParser();
+    const documentTree = parser.parse(
+        await docXmlFile.async("string"),
+    ) as XNode[];
+    const bodyChildren = findBody(documentTree);
+    if (!bodyChildren) return { finalText: "", items: [] };
+
+    const commentsFile = getZipEntry(zip, "word/comments.xml");
+    const comments = commentsFile
+        ? readComments(
+              parser.parse(await commentsFile.async("string")) as XNode[],
+          )
+        : new Map<string, DocxCommentMarkup>();
+    const activeComments = new Map<string, DocxCommentMarkup>();
+    const revisions: DocxRevisionMarkup[] = [];
+    const lines: string[] = [];
+    let finalOffset = 0;
+    let paragraphIndex = 0;
+
+    const appendToActiveComments = (text: string) => {
+        if (!text) return;
+        for (const comment of activeComments.values()) {
+            comment.anchorText += text;
+        }
+    };
+
+    const collect = (nodes: XNode[]) => {
+        for (const node of nodes) {
+            const name = elName(node);
+            if (!name) continue;
+            if (name === "w:p") {
+                if (lines.length > 0) {
+                    finalOffset += 1;
+                    appendToActiveComments("\n");
+                }
+                const flat = flattenParagraph(elChildren(node));
+                lines.push(flat.paraText);
+                let paragraphOffset = 0;
+
+                for (const child of elChildren(node)) {
+                    const childName = elName(child);
+                    if (childName === "w:commentRangeStart") {
+                        const id = elAttrs(child)["@_w:id"];
+                        const comment = id == null ? undefined : comments.get(String(id));
+                        if (comment) {
+                            comment.paragraphStart = paragraphIndex;
+                            comment.finalStart = finalOffset + paragraphOffset;
+                            activeComments.set(comment.id, comment);
+                        }
+                        continue;
+                    }
+                    if (childName === "w:commentRangeEnd") {
+                        const id = elAttrs(child)["@_w:id"];
+                        const comment = id == null ? undefined : activeComments.get(String(id));
+                        if (comment) {
+                            comment.paragraphEnd = paragraphIndex;
+                            comment.finalEnd = finalOffset + paragraphOffset;
+                            activeComments.delete(comment.id);
+                        }
+                        continue;
+                    }
+                    if (childName === "w:del") {
+                        revisions.push({
+                            kind: "deletion",
+                            id: elAttrs(child)["@_w:id"] ?? null,
+                            author: elAttrs(child)["@_w:author"] ?? null,
+                            date: elAttrs(child)["@_w:date"] ?? null,
+                            text: descendantText(child, "w:delText"),
+                            paragraphIndex,
+                            finalStart: finalOffset + paragraphOffset,
+                            finalEnd: finalOffset + paragraphOffset,
+                        });
+                        continue;
+                    }
+
+                    let visibleText = "";
+                    if (childName === "w:ins") {
+                        visibleText = descendantText(child, "w:t");
+                        revisions.push({
+                            kind: "insertion",
+                            id: elAttrs(child)["@_w:id"] ?? null,
+                            author: elAttrs(child)["@_w:author"] ?? null,
+                            date: elAttrs(child)["@_w:date"] ?? null,
+                            text: visibleText,
+                            paragraphIndex,
+                            finalStart: finalOffset + paragraphOffset,
+                            finalEnd:
+                                finalOffset + paragraphOffset + visibleText.length,
+                        });
+                    } else if (childName === "w:r") {
+                        visibleText = descendantText(child, "w:t");
+                    }
+
+                    appendToActiveComments(visibleText);
+                    paragraphOffset += visibleText.length;
+                }
+
+                // The existing accepted-view flattener is authoritative. Keep
+                // global offsets aligned even if an unsupported run child was
+                // ignored by the review-markup walker above.
+                finalOffset += flat.paraText.length;
+                paragraphIndex += 1;
+            } else if (
+                name === "w:tbl" ||
+                name === "w:tr" ||
+                name === "w:tc" ||
+                name === "w:sdt" ||
+                name === "w:sdtContent"
+            ) {
+                collect(elChildren(node));
+            }
+        }
+    };
+    collect(bodyChildren);
+
+    const items: DocxReviewMarkupItem[] = [
+        ...revisions,
+        ...comments.values(),
+    ];
+    items.sort((left, right) => {
+        const leftStart = left.finalStart ?? Number.MAX_SAFE_INTEGER;
+        const rightStart = right.finalStart ?? Number.MAX_SAFE_INTEGER;
+        return leftStart - rightStart;
+    });
+    return { finalText: lines.join("\n"), items };
 }
 
 /**

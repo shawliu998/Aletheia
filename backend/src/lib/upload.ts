@@ -14,10 +14,42 @@ const memoryUpload = multer({
   },
 });
 
+/**
+ * Busboy/Multer can expose a UTF-8 multipart filename as a latin1 string.
+ * Recover only a conservative case: the latin1 bytes form valid UTF-8 and
+ * the result contains a character outside latin1. This fixes CJK/emoji names
+ * while leaving ASCII, ordinary latin1, and invalid byte sequences untouched.
+ */
+export function restoreUtf8MulterFilename(filename: string): string {
+  if (!/[\x80-\xFF]/.test(filename)) return filename;
+
+  try {
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.from(filename, "latin1"),
+    );
+    if (
+      decoded !== filename &&
+      [...decoded].some((character) => character.codePointAt(0)! > 0xff)
+    ) {
+      return decoded;
+    }
+  } catch {
+    // Invalid UTF-8 bytes are not safe to reinterpret.
+  }
+  return filename;
+}
+
 export function singleFileUpload(fieldName: string): RequestHandler {
   return (req, res, next) => {
     memoryUpload.single(fieldName)(req, res, (err) => {
-      if (!err) return next();
+      if (!err) {
+        if (req.file?.originalname) {
+          req.file.originalname = restoreUtf8MulterFilename(
+            req.file.originalname,
+          );
+        }
+        return next();
+      }
 
       if (err instanceof multer.MulterError) {
         if (err.code === "LIMIT_FILE_SIZE") {

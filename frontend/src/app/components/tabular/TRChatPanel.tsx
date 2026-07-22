@@ -29,12 +29,7 @@ import {
 import type { AssistantEvent, ColumnConfig, Document } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
-import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
-import {
-    DocReadBlock,
-    EventBlock,
-    ReasoningBlock,
-} from "../assistant/message/EventBlocks";
+import { hasAssistantWorkInProgress } from "../assistant/message/eventUtils";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
@@ -123,7 +118,7 @@ interface Props {
     projectName?: string | null;
     columns: ColumnConfig[];
     documents: Document[];
-    onCitationClick: (colIdx: number, rowIdx: number) => void;
+    onCitationClick: (citation: TRCitationAnnotation) => void;
     onClose: () => void;
     initialChatId?: string | null;
     onChatIdChange?: (chatId: string | null) => void;
@@ -164,15 +159,24 @@ function TRResponseStatus({ isActive }: { isActive: boolean }) {
 
     useEffect(() => {
         if (wasActiveRef.current && !isActive) {
-            setShowDone(true);
-            setDoneVisible(true);
-            const t = setTimeout(() => setDoneVisible(false), 1500);
+            const showDoneTimer = setTimeout(() => {
+                setShowDone(true);
+                setDoneVisible(true);
+            }, 0);
+            const hideDoneTimer = setTimeout(() => setDoneVisible(false), 1500);
             wasActiveRef.current = isActive;
-            return () => clearTimeout(t);
+            return () => {
+                clearTimeout(showDoneTimer);
+                clearTimeout(hideDoneTimer);
+            };
         }
         if (!wasActiveRef.current && isActive) {
-            setShowDone(false);
-            setDoneVisible(false);
+            const resetDoneTimer = setTimeout(() => {
+                setShowDone(false);
+                setDoneVisible(false);
+            }, 0);
+            wasActiveRef.current = isActive;
+            return () => clearTimeout(resetDoneTimer);
         }
         wasActiveRef.current = isActive;
     }, [isActive]);
@@ -193,20 +197,12 @@ function TRResponseStatus({ isActive }: { isActive: boolean }) {
 // TRAssistantMessage
 // ---------------------------------------------------------------------------
 
-type TREventGroup =
-    | { kind: "pre"; events: AssistantEvent[]; indices: number[] }
-    | {
-          kind: "content";
-          event: Extract<AssistantEvent, { type: "content" }>;
-          index: number;
-      };
-
 function TRAssistantMessage({
     msg,
     onCitationClick,
 }: {
     msg: TRMessage;
-    onCitationClick: (colIdx: number, rowIdx: number) => void;
+    onCitationClick: (citation: TRCitationAnnotation) => void;
 }) {
     const annotations = msg.annotations ?? [];
     const citationsList: TRCitationAnnotation[] = [];
@@ -219,81 +215,10 @@ function TRAssistantMessage({
     );
 
     const events = msg.events ?? [];
-
-    // Group consecutive non-content events together so they share a single
-    // PreResponseWrapper. Content events render between wrappers.
-    const groups: TREventGroup[] = [];
-    {
-        let current: Extract<TREventGroup, { kind: "pre" }> | null = null;
-        events.forEach((e, i) => {
-            if (e.type === "content") {
-                if (current) {
-                    groups.push(current);
-                    current = null;
-                }
-                groups.push({ kind: "content", event: e, index: i });
-            } else {
-                if (!current)
-                    current = { kind: "pre", events: [], indices: [] };
-                current.events.push(e);
-                current.indices.push(i);
-            }
-        });
-        if (current) groups.push(current);
-    }
-
-    const hasContentAfter = (groupIdx: number): boolean => {
-        for (let i = groupIdx + 1; i < groups.length; i++) {
-            const g = groups[i];
-            if (g.kind === "content") return true;
-        }
-        return false;
-    };
-
-    const renderPreEvent = (
-        event: AssistantEvent,
-        index: number,
-        allEvents: AssistantEvent[],
-        key: number,
-    ) => {
-        const nextEvent = allEvents[index + 1];
-        const showConnector =
-            nextEvent !== undefined && nextEvent.type !== "content";
-
-        if (event.type === "reasoning") {
-            return (
-                <ReasoningBlock
-                    key={key}
-                    text={event.text}
-                    isStreaming={!!event.isStreaming && !!msg.isStreaming}
-                    showConnector={showConnector}
-                />
-            );
-        }
-        if (event.type === "doc_read") {
-            return (
-                <DocReadBlock
-                    key={key}
-                    filename={event.filename}
-                    isStreaming={event.isStreaming}
-                    showConnector={showConnector}
-                    showFileIcon={false}
-                />
-            );
-        }
-        if (event.type === "thinking") {
-            return (
-                <EventBlock
-                    key={key}
-                    showConnector={showConnector}
-                    isStreaming
-                >
-                    <span>Thinking...</span>
-                </EventBlock>
-            );
-        }
-        return null;
-    };
+    const showWorkingStatus = hasAssistantWorkInProgress(
+        events,
+        !!msg.isStreaming,
+    );
 
     const renderContent = (text: string, key: number) => (
         <div
@@ -333,14 +258,11 @@ function TRAssistantMessage({
                             if (cit) {
                                 return (
                                     <button
-                                        onClick={() =>
-                                            onCitationClick(
-                                                cit.col_index,
-                                                cit.row_index,
-                                            )
-                                        }
+                                        type="button"
+                                        onClick={() => onCitationClick(cit)}
                                         title={`${cit.col_name} · ${cit.doc_name.replace(/\.[^.]+$/, "")}`}
-                                        className="mx-0.5 inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px] font-medium bg-gray-100 text-gray-900 hover:bg-gray-200 transition-colors align-super font-serif"
+                                        aria-label={`Open source for citation ${cit.ref}: ${cit.col_name}, ${cit.doc_name}`}
+                                        className="mx-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-gray-100 align-super font-serif text-[10px] font-medium text-gray-900 transition-colors hover:bg-gray-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
                                     >
                                         {cit.ref}
                                     </button>
@@ -363,43 +285,29 @@ function TRAssistantMessage({
     return (
         <div className="text-gray-900 font-serif">
             <TRResponseStatus isActive={!!msg.isStreaming} />
-            {groups.length > 0 && (
+            {showWorkingStatus && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="mb-2 flex items-center gap-2 text-sm text-gray-500"
+                >
+                    <span
+                        aria-hidden="true"
+                        className="h-1.5 w-1.5 shrink-0 animate-spin rounded-full border border-gray-400 border-t-transparent"
+                    />
+                    <span>Working…</span>
+                </div>
+            )}
+            {events.length > 0 && (
                 <div className="flex flex-col gap-2.5">
-                    {groups.map((g, gIdx) => {
-                        if (g.kind === "content") {
+                    {events.map((event, index) => {
+                        if (event.type === "content") {
                             return renderContent(
-                                processedTexts[g.index],
-                                g.index,
+                                processedTexts[index],
+                                index,
                             );
                         }
-                        const subsequentContent = hasContentAfter(gIdx);
-                        // "Working" while at least one event in *this*
-                        // wrapper is actively streaming. Gaps between real
-                        // events are bridged by `pushThinkingPlaceholder`
-                        // so this check stays continuously true through
-                        // the whole pre-content phase.
-                        const wrapperIsStreaming = g.events.some(
-                            (event) =>
-                                "isStreaming" in event && !!event.isStreaming,
-                        );
-                        return (
-                            <PreResponseWrapper
-                                key={`p-${g.indices[0]}`}
-                                stepCount={g.events.length}
-                                shouldMinimize={subsequentContent}
-                                isStreaming={wrapperIsStreaming}
-                                compact
-                            >
-                                {g.events.map((event, i) =>
-                                    renderPreEvent(
-                                        event,
-                                        i,
-                                        g.events,
-                                        g.indices[i],
-                                    ),
-                                )}
-                            </PreResponseWrapper>
-                        );
+                        return null;
                     })}
                 </div>
             )}
@@ -416,7 +324,7 @@ function MessageBubble({
     onCitationClick,
 }: {
     msg: TRMessage;
-    onCitationClick: (colIdx: number, rowIdx: number) => void;
+    onCitationClick: (citation: TRCitationAnnotation) => void;
 }) {
     if (msg.role === "user") {
         return (

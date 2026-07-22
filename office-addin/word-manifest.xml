@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="TaskPaneApp">
   <Id>6bf488ac-2916-4f3e-bdc0-8d7f66e7ab2e</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.1.0.0</Version>
   <ProviderName>Vera</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Vera Word Review" />
-  <Description DefaultValue="Review selected Word text with a Vera Matter and keep every proposed change subject to lawyer review." />
+  <Description DefaultValue="Review selected Word text with a Vera Matter after signing in through Vera's secure Office dialog." />
   <IconUrl DefaultValue="https://localhost:3000/office/vera-word-32.png" />
   <SupportUrl DefaultValue="https://localhost:3000/support" />
   <AppDomains>
@@ -81,7 +81,7 @@
         <bt:String id="Vera.OpenTaskpane.Label" DefaultValue="Review selected text" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="Review a Word selection with a Vera Matter and keep the proposed change pending for lawyer review." />
+        <bt:String id="GetStarted.Description" DefaultValue="Sign in to Vera, review a Word selection with a Matter, and keep every proposed change pending for lawyer review." />
         <bt:String id="Vera.OpenTaskpane.Description" DefaultValue="Open Vera to draft a reviewable tracked replacement or comment for the current Word selection." />
       </bt:LongStrings>
     </Resources>

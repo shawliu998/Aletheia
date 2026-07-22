@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">The </w:t></w:r>
+      <w:del w:id="10" w:author="Original drafter" w:date="2026-07-20T08:00:00Z">
+        <w:r><w:delText>old</w:delText></w:r>
+      </w:del>
+      <w:ins w:id="11" w:author="Review lawyer" w:date="2026-07-21T09:30:00Z">
+        <w:r><w:t>new</w:t></w:r>
+      </w:ins>
+      <w:r><w:t xml:space="preserve"> clause </w:t></w:r>
+      <w:commentRangeStart w:id="12"/>
+      <w:r><w:t>requires notice</w:t></w:r>
+      <w:commentRangeEnd w:id="12"/>
+      <w:r><w:commentReference w:id="12"/></w:r>
+      <w:r><w:t>.</w:t></w:r>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>

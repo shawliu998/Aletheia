@@ -24,6 +24,7 @@ import {
   inferGoalProfile,
   resolveAgentWorkflowConstraint,
 } from "./agentTaskPlanner";
+import { getAgentTaskEvidence } from "./agentTaskEvidence";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -160,9 +161,40 @@ export type AgentStepExecutionResult = {
   citationCheck: { total: number; relocatable: number; missing: number };
 };
 
+type RelocatedCitation = {
+  document_id: string | null;
+  status: "exact" | "drifted" | "missing" | "version_mismatch";
+};
+
+export function summarizeTaskCitationRelocation(
+  citations: RelocatedCitation[],
+  sourceIds: string[],
+  unavailableSnapshots = 0,
+) {
+  const sourceBacked = citations.some(
+    (citation) =>
+      citation.document_id !== null && sourceIds.includes(citation.document_id),
+  );
+  const relocatable = citations.filter(
+    (citation) =>
+      citation.status === "exact" &&
+      citation.document_id !== null &&
+      sourceIds.includes(citation.document_id),
+  ).length;
+  const total = citations.length + unavailableSnapshots;
+  const missing =
+    total === 0 ? 0 : sourceBacked ? total - relocatable : total;
+  return {
+    total,
+    relocatable,
+    missing,
+  };
+}
+
 export async function verifyTaskCitationLinks(
   db: Db,
   snapshot: NonNullable<TaskSnapshot>,
+  userId: string,
 ) {
   const sourceIds = snapshot.artifacts
     .filter(
@@ -171,96 +203,28 @@ export async function verifyTaskCitationLinks(
         artifact.purpose === "Source document",
     )
     .map((artifact) => artifact.artifact_id);
-  const allowedDocumentIds = Array.from(
-    new Set(
-      snapshot.artifacts
-        .filter((artifact) =>
-          ["document", "draft", "tabular_review"].includes(
-            artifact.artifact_type,
-          ),
-        )
-        .map((artifact) => artifact.artifact_id),
-    ),
-  );
   const messageIds = snapshot.artifacts
     .filter((artifact) => artifact.artifact_type === "citation_snapshot")
     .map((artifact) => artifact.artifact_id);
   if (!messageIds.length) return { total: 0, relocatable: 0, missing: 0 };
-  const [
-    { data: messages, error: messageError },
-    { data: documents, error: documentError },
-  ] = await Promise.all([
-    db.from("chat_messages").select("id,citations").in("id", messageIds),
-    db
-      .from("documents")
-      .select("id,current_version_id")
-      .in("id", allowedDocumentIds),
-  ]);
-  if (messageError) throw new Error(messageError.message);
-  if (documentError) throw new Error(documentError.message);
-  const currentVersions = new Map(
-    (documents ?? []).map((document) => [
-      document.id as string,
-      document.current_version_id as string | null,
-    ]),
+  const snapshots = await Promise.all(
+    messageIds.map((artifactId) =>
+      getAgentTaskEvidence(db, {
+        taskId: snapshot.task.id,
+        artifactId,
+        userId,
+      }),
+    ),
   );
-  const citations: unknown[] = [];
-  for (const message of messages ?? []) {
-    const original = Array.isArray(message.citations) ? message.citations : [];
-    let changed = false;
-    const normalized = original.map((citation) => {
-      if (!citation || typeof citation !== "object") return citation;
-      const row = citation as Record<string, unknown>;
-      const documentId =
-        typeof row.document_id === "string" ? row.document_id : null;
-      const currentVersionId = documentId
-        ? currentVersions.get(documentId)
-        : null;
-      if (
-        documentId &&
-        currentVersionId &&
-        typeof row.version_id !== "string"
-      ) {
-        changed = true;
-        return { ...row, version_id: currentVersionId };
-      }
-      return citation;
-    });
-    if (changed) {
-      const { error: updateError } = await db
-        .from("chat_messages")
-        .update({ citations: normalized })
-        .eq("id", message.id);
-      if (updateError) throw new Error(updateError.message);
-    }
-    citations.push(...normalized);
-  }
-  const relocatable = citations.filter((citation) => {
-    if (!citation || typeof citation !== "object") return false;
-    const row = citation as Record<string, unknown>;
-    const documentId =
-      typeof row.document_id === "string" ? row.document_id : null;
-    return Boolean(
-      documentId &&
-      allowedDocumentIds.includes(documentId) &&
-      typeof row.version_id === "string" &&
-      currentVersions.get(documentId) === row.version_id &&
-      typeof row.quote === "string" &&
-      row.quote.trim(),
-    );
-  }).length;
-  const sourceBacked = citations.filter((citation) => {
-    if (!citation || typeof citation !== "object") return false;
-    const row = citation as Record<string, unknown>;
-    return (
-      typeof row.document_id === "string" && sourceIds.includes(row.document_id)
-    );
-  }).length;
-  return {
-    total: citations.length,
-    relocatable,
-    missing: citations.length - relocatable + (sourceBacked > 0 ? 0 : 1),
-  };
+  const citations = snapshots.flatMap((evidence) => evidence?.citations ?? []);
+  const unavailableSnapshots = snapshots.filter(
+    (evidence) => evidence === null,
+  ).length;
+  return summarizeTaskCitationRelocation(
+    citations,
+    sourceIds,
+    unavailableSnapshots,
+  );
 }
 
 export function isTransientModelError(error: unknown) {

@@ -12,7 +12,13 @@
     "test:agent-task-input": "tsx scripts/agentTaskInputSmoke.ts",
     "test:agent-task-review-version": "tsx scripts/agentTaskReviewVersionSmoke.ts",
     "test:agent-task-runner": "tsx scripts/agentTaskRunnerSmoke.ts",
+    "test:docx-review-markup": "tsx scripts/docxReviewMarkupSmoke.ts",
+    "test:office-document-adapter": "tsx scripts/officeDocumentAdapterSmoke.ts",
+    "test:upload-filename": "tsx --test src/lib/upload.test.ts",
+    "test:workflow-sync": "node --test ../scripts/build-workflows.test.js",
     "test:verifier-guards": "tsx scripts/verifierGuardSmoke.ts",
+    "workflows:check": "node ../scripts/build-workflows.js --check",
+    "workflows:sync": "node ../scripts/build-workflows.js --write",
     "start": "node dist/index.js"
   },
   "dependencies": {

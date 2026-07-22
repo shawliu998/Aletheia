@@ -68,8 +68,12 @@ export function approvedArtifactBytesMatch(
   return sha256(bytes) === artifact.sha256;
 }
 
-export async function getApprovalBlockers(db: Db, snapshot: TaskSnapshot) {
-  const base = await getReviewBlockers(db, snapshot);
+export async function getApprovalBlockers(
+  db: Db,
+  snapshot: TaskSnapshot,
+  userId: string,
+) {
+  const base = await getReviewBlockers(db, snapshot, userId);
   const versionState = await getAgentReviewVersionState(db, snapshot);
   const unavailable = versionState.current_artifacts.filter(
     (artifact) => !artifact.current_version_available,
@@ -86,7 +90,11 @@ export async function getApprovalBlockers(db: Db, snapshot: TaskSnapshot) {
   };
 }
 
-export async function getReviewBlockers(db: Db, snapshot: TaskSnapshot) {
+export async function getReviewBlockers(
+  db: Db,
+  snapshot: TaskSnapshot,
+  userId: string,
+) {
   const blockers: string[] = [];
   if (snapshot.task.status !== "completed") {
     blockers.push(
@@ -118,7 +126,11 @@ export async function getReviewBlockers(db: Db, snapshot: TaskSnapshot) {
     );
   }
 
-  const citationCheck = await verifyTaskCitationLinks(db, snapshot as never);
+  const citationCheck = await verifyTaskCitationLinks(
+    db,
+    snapshot as never,
+    userId,
+  );
   const hasSources = snapshot.artifacts.some(
     (artifact) =>
       artifact.artifact_type === "document" &&

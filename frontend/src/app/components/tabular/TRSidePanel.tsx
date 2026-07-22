@@ -1,6 +1,7 @@
 "use client";
 
 import {
+    type CSSProperties,
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
     useEffect,
@@ -257,23 +258,27 @@ export function TRSidePanel({
         <div
             ref={panelRef}
             className={cn(
-                "fixed z-100 flex flex-row",
+                "fixed z-100 flex flex-col md:flex-row",
                 LIQUID_PANEL_SURFACE_CLASS,
-                "right-3 top-3 bottom-3 overflow-hidden",
+                "inset-x-3 top-3 bottom-3 max-w-[calc(100vw-1.5rem)] overflow-hidden md:left-auto",
             )}
         >
             {/* Resizable document panel — left */}
             {documentPaneOpen && (
                 <div
-                    className="relative flex shrink-0 flex-col border-r border-white/30 px-3 pb-3"
-                    style={{ width: documentPaneWidth }}
+                    className="relative flex min-h-0 w-full flex-1 shrink flex-col border-b border-white/30 px-3 pb-3 md:w-[min(var(--document-pane-width),calc(100vw-324px))] md:flex-none md:shrink-0 md:border-b-0 md:border-r"
+                    style={
+                        {
+                            "--document-pane-width": `${documentPaneWidth}px`,
+                        } as CSSProperties
+                    }
                 >
                     <div
                         onPointerDown={handleDocumentResizePointerDown}
                         onPointerMove={handleDocumentResizePointerMove}
                         onPointerUp={handleDocumentResizePointerEnd}
                         onPointerCancel={handleDocumentResizePointerEnd}
-                        className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-blue-400/60"
+                        className="absolute inset-y-0 left-0 z-20 hidden w-1.5 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-blue-400/60 md:block"
                         title="Resize document pane"
                     />
                     {/* Doc header */}
@@ -352,7 +357,14 @@ export function TRSidePanel({
             )}
 
             {/* Info column — right, 300px fixed */}
-            <div className="flex w-[300px] shrink-0 flex-col overflow-hidden">
+            <div
+                className={cn(
+                    "flex min-h-0 w-full shrink-0 flex-col overflow-hidden md:w-[300px]",
+                    documentPaneOpen
+                        ? "max-h-[42%] md:max-h-none"
+                        : "h-full flex-1 md:h-auto md:flex-none",
+                )}
+            >
                 {/* Header */}
                 <div className="mb-2 flex min-h-11 shrink-0 items-center justify-end gap-1.5 border-b border-white/30 px-3">
                     <button

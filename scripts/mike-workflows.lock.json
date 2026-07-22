@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/Open-Legal-Products/mike-workflows.git",
+  "commit": "d27064ae8085d3e8ebca99d5a491c9804376cbc7",
+  "license": "MIT",
+  "selection": {
+    "assistant": [
+      "commercial-lease-review",
+      "compare-documents",
+      "corporate-approvals-review",
+      "credit-agreement-review",
+      "draft-cp-checklist",
+      "draft-from-template",
+      "draft-issues-list",
+      "employment-agreement-review",
+      "extract-key-terms",
+      "guarantee-agreement-review",
+      "nda-review",
+      "proofread",
+      "shareholder-agreement-review"
+    ],
+    "tabular": [
+      "change-of-control-tabular-review",
+      "commercial-agreement-tabular-review",
+      "commercial-lease-tabular-review",
+      "credit-agreement-tabular-review",
+      "e-discovery-tabular-review",
+      "employment-agreement-tabular-review",
+      "limited-partnership-agreement-tabular-review",
+      "nda-tabular-review",
+      "shareholder-agreement-tabular-review",
+      "spa-tabular-review",
+      "supply-agreement-tabular-review"
+    ]
+  },
+  "expected": {
+    "workflowCount": 24,
+    "assistantCount": 13,
+    "tabularCount": 11,
+    "semanticSha256": "b9bfb16f3633c20c01991826a9aaf9904d64d985d0047c5e6c6d86d27d18366f",
+    "generatedFileSha256": "5b8acab9e781985098dc3c6a72367ef2172430829bbb622f8817612b363a883b"
+  }
+}

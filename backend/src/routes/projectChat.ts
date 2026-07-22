@@ -107,13 +107,23 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             askInputsResponse,
         );
     } else if (lastUser) {
-        await db.from("chat_messages").insert({
+        const { error: userMessageError } = await db.from("chat_messages").insert({
             chat_id: chatId,
             role: "user",
             content: lastUser.content,
             files: lastUser.files ?? null,
-            workflow: lastUser.workflow ?? null,
+            // Workflow remains request context. The existing Mike schema records
+            // an applied workflow in assistant events, not on chat_messages.
         });
+        if (userMessageError) {
+            console.error(
+                "[project-chat/stream] failed to save user message",
+                safeErrorLog(userMessageError),
+            );
+            return void res
+                .status(500)
+                .json({ detail: "Failed to save chat message" });
+        }
     }
 
     const { docIndex, docStore, folderPaths } = await buildProjectDocContext(
