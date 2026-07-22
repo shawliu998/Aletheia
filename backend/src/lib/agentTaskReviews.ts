@@ -223,7 +223,6 @@ export async function loadApprovedExport(
     .from("agent_task_review_decisions")
     .select("id,status,artifact_snapshot,created_at")
     .eq("task_id", taskId)
-    .eq("status", "approved")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(1)
@@ -232,6 +231,11 @@ export async function loadApprovedExport(
   if (!decision) {
     throw new Error(
       "Final export is blocked until the authenticated task owner records an approval.",
+    );
+  }
+  if (decision.status !== "approved") {
+    throw new Error(
+      "Final export is blocked because the most recent review decision requests changes.",
     );
   }
   const artifacts = Array.isArray(decision.artifact_snapshot)
